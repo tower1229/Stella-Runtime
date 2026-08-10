@@ -48,14 +48,23 @@ schemas use `cognitive-runtime.*`; `stella.*` is not a canonical public namespac
 
 | Layer | Owns | Must not own |
 | --- | --- | --- |
-| Stella Runtime repository | Generic Plugin source, contracts and generated types, CLI, framework-admission Skill, compatibility manifest, synthetic tests, package and release automation | Personal facts, private Agent identity, real conversations, credentials, instance paths, live databases |
-| Private authority repository | Durable personal knowledge, Agent identity and configuration, Runtime version pin, migration maps, de-identified instance tests, restore intent | Generic Runtime source, copied public contracts, forked public test Runner, live secrets |
+| Stella Runtime repository | Generic Plugin source, contracts and generated types, CLI, framework-admission Skill, compatibility manifest, authoritative-state recovery contract, synthetic tests, package and release automation | Personal facts, private Agent identity, real conversations, credentials, instance paths, live databases |
+| Private authority repository | Durable personal knowledge, Agent identity and configuration, Runtime version pin, migration maps, de-identified instance tests, restore intent and private migration artifacts | Generic Runtime source, copied public contracts, forked public test Runner, live secrets in ordinary Git files |
 | Git-external runtime storage | Current State events, immutable state views, generated registries and indexes, traces, raw experience records | Canonical source code, a replacement for the authority repository |
 
 The private authority repository is the durable backup source for knowledge and
-configuration. It is not a full live-runtime backup: sessions, credentials,
-provider or channel authentication, service-manager state, and Git-external
-databases need an explicit capture/rebuild contract.
+configuration. Cross-host reconstruction additionally uses an immutable private
+migration artifact. Stella Runtime must contribute a Runtime Recovery Snapshot
+for its Authoritative Runtime State; OpenClaw sessions, credentials, provider or
+channel authentication, and service-manager state remain separate migration
+classes with their own capture or reconstruction contracts.
+
+The Runtime owns snapshot semantics and storage migration. The authority
+repository's migration tooling may invoke `backup`, `verify`, and `restore`, but
+must not copy a live database or understand its tables. Rebuildable generations,
+registries, indexes, caches, traces, logs, and raw experience records are excluded
+from the required authoritative snapshot unless a future contract explicitly
+promotes one of them.
 
 ## V1 runtime shape
 
@@ -102,11 +111,14 @@ The future private-instance cutover must be staged and reversible:
 1. build and test a package from this repository using synthetic fixtures;
 2. install the exact package version and pin it in the authority repository;
 3. validate private instance configuration and de-identified instance tests;
-4. run in `observe` mode without injecting private cognitive context;
-5. build and checksum a generation from one authority revision;
-6. switch the private main-session boundary to `enforce` only after all gates pass;
-7. preserve the pre-cutover configuration and index path for one rollback;
-8. after acceptance, remove the old implementation instead of maintaining a
+4. export and verify a Runtime Recovery Snapshot while the source instance is in
+   a consistent state;
+5. restore and verify that snapshot on the target before serving a new Run;
+6. run in `observe` mode without injecting private cognitive context;
+7. rebuild and checksum a generation from one authority revision;
+8. switch the private main-session boundary to `enforce` only after all gates pass;
+9. preserve the pre-cutover configuration and index path for one rollback;
+10. after acceptance, remove the old implementation instead of maintaining a
    permanent parallel architecture.
 
 Code rollback installs the last verified package version. Data rollback restores
@@ -124,6 +136,10 @@ authority repository or discards append-only Current State events.
   exact-host capability smoke pass before any beta publish.
 - The Runtime repository never requires access to the private authority corpus in
   its CI or release process.
+- Recovery export is transactionally consistent, versioned, checksummed, free of
+  credentials, and verified before the source snapshot is accepted.
+- Restore rejects incompatible schema/package/contract versions, is rollback-safe,
+  and proves authoritative state continuity before a target serves a new Run.
 
 ## Requirement handoff and work tracking
 
@@ -133,6 +149,8 @@ The implementation sequence is tracked in this repository's GitHub Issues:
 2. [#2: `contracts/v1`, authority parser, and verified host ports](https://github.com/tower1229/Stella-Runtime/issues/2);
 3. [#3: generic test Runner with an external instance-test seam](https://github.com/tower1229/Stella-Runtime/issues/3);
 4. [#4: pack-install and exact-host smoke](https://github.com/tower1229/Stella-Runtime/issues/4).
+5. [#5: authoritative Runtime state export, verification, and restore](https://github.com/tower1229/Stella-Runtime/issues/5)
+   follows after the recovery contract is frozen.
 
 Private-instance configuration, migration maps, deployment, rollback evidence,
 and product acceptance remain tracked in the private authority repository. Public
@@ -150,9 +168,9 @@ handoff needs these follow-up deliverables:
    directory; private CI invokes it without uploading private fixtures.
 3. **Release integrity**: protected release workflow, npm provenance/trusted
    publishing, tarball allowlist, dependency review, and rollback version policy.
-4. **Backup and restore matrix**: explicitly classify Git-tracked authority,
-   rebuildable projections, live runtime state, secrets, and external host or
-   channel configuration; give each class a restore owner and verification step.
+4. **Backup and restore integration**: connect the accepted Runtime Recovery
+   Snapshot contract to the private migration orchestrator without exposing
+   Runtime storage internals.
 5. **Migration rehearsal**: test `off -> observe -> enforce -> rollback` against a
    non-production clone before touching the live private Agent.
 6. **Compatibility ownership**: every supported OpenClaw exact version receives a

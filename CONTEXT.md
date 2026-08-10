@@ -34,10 +34,22 @@ records.
 _Avoid_: Runtime repository, live state directory, generated index
 
 **Runtime State**:
-Private, Git-external operational data such as Current State events, traces, and
-active generation pointers. It is not source code and is not fully recoverable
-from the Runtime repository alone.
+Private, Git-external data owned by one Private Instance, including authoritative
+Current State and rebuildable operational projections. It is not source code and
+is recovered through a Runtime Recovery Snapshot rather than ordinary Git files.
 _Avoid_: authority repository, repository backup, source of truth
+
+**Authoritative Runtime State**:
+The minimal Git-external state whose loss would change the instance's current
+meaning or leave a committed correction unfinished. It excludes projections that
+can be rebuilt from the Authority Repository.
+_Avoid_: all runtime files, cache, generated index
+
+**Runtime Recovery Snapshot**:
+A private, versioned, checksummed artifact exported and restored by the Runtime
+to preserve Authoritative Runtime State across hosts without exposing its storage
+implementation to the migration orchestrator.
+_Avoid_: database copy, generation archive, authority repository
 
 **Active Generation**:
 The immutable, checksummed projection of one authority revision that is visible

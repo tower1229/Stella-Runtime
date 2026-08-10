@@ -27,12 +27,17 @@ uses `cognitive-runtime.*`; it must not encode a specific private Agent or user.
 ## Repository boundary
 
 - This repository owns generic Runtime source, contracts, CLI, Plugin Skill,
-  synthetic fixtures, compatibility manifests, and package/release validation.
+  synthetic fixtures, compatibility manifests, authoritative Runtime recovery
+  contracts, and package/release validation.
 - A separate authority repository owns each private Agent's knowledge, identity,
   configuration, version pin, migration map, and de-identified instance tests.
 - Git-external runtime storage owns Current State events, compiled generations,
   traces, and raw experience records. Derived generations are rebuildable and
   are never a second authority source.
+
+The Runtime must export, verify, and restore its authoritative Git-external state
+through a versioned private recovery snapshot. The private migration orchestrator
+stores and transports that snapshot; it never reads Runtime database internals.
 
 Private data, credentials, live state databases, real conversations, and
 instance-specific cognitive content must never enter this repository or its npm
@@ -42,6 +47,7 @@ tarball.
 
 - [Project background](docs/PROJECT-BACKGROUND.md)
 - [Domain language](CONTEXT.md)
+- [Runtime recovery ownership decision](docs/adr/0001-runtime-owns-state-recovery.md)
 - [Implementation issues](https://github.com/tower1229/Stella-Runtime/issues)
 
 The first implementation slice is the buildable single-package scaffold. It
