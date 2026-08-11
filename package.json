@@ -1,0 +1,63 @@
+{
+  "name": "@tower1229/stella-cognitive-runtime",
+  "version": "0.0.0",
+  "description": "Instance-neutral cognitive runtime for OpenClaw",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": "^22.19.0 || ^24.0.0"
+  },
+  "files": [
+    "dist",
+    "compatibility",
+    "contracts/v1",
+    "docs/evidence/openclaw-2026.6.34.md",
+    "skills/framework-admission",
+    "LICENSE",
+    "README.md",
+    "openclaw.plugin.json"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./compatibility": "./compatibility/openclaw.json",
+    "./contracts/v1/*": "./contracts/v1/*",
+    "./package.json": "./package.json"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/openclaw/index.js"
+    ]
+  },
+  "peerDependencies": {
+    "openclaw": "2026.6.34"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && npm run build && node --test tests/**/*.test.mjs",
+    "test:unit": "npm run build && node --test tests/unit/*.test.mjs",
+    "test:contract": "npm run typecheck && npm run build && node --test tests/contract/*.test.mjs",
+    "test:integration": "npm run build && node --test tests/integration/*.test.mjs",
+    "test:pack-install": "npm run build && node --test tests/pack-install/*.test.mjs",
+    "prepack": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tower1229/Stella-Runtime.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tower1229/Stella-Runtime/issues"
+  },
+  "homepage": "https://github.com/tower1229/Stella-Runtime#readme",
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

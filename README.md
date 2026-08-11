@@ -6,8 +6,8 @@ verification infrastructure without embedding any user's private data or
 instance-specific worldview.
 
 > Status: pre-alpha. The repository identity, architecture boundary, V1
-> requirements, and implementation roadmap are frozen; the executable package
-> scaffold has not been implemented yet.
+> requirements, implementation roadmap, and executable single-package scaffold
+> are in place; business modules remain contract-only or unimplemented.
 
 ## Identity
 

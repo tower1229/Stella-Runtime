@@ -1,0 +1,6 @@
+{
+  "synthetic": true,
+  "instanceId": "instance-synthetic-example",
+  "package": "@tower1229/stella-cognitive-runtime",
+  "pluginId": "cognitive-runtime"
+}

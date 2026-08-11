@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "cognitive-runtime.openclaw-compatibility/v1",
+  "packageVersion": "0.0.0",
+  "hosts": [
+    {
+      "releaseChannel": "extended-stable",
+      "openclawVersion": "2026.6.34",
+      "evidence": "docs/evidence/openclaw-2026.6.34.md",
+      "capabilityExpectations": {
+        "typedHooks": {
+          "status": "required",
+          "hooks": [
+            "before_prompt_build",
+            "after_tool_call",
+            "before_agent_finalize",
+            "agent_end"
+          ]
+        },
+        "hostModelCompletion": {
+          "status": "required",
+          "interface": "llm.complete"
+        },
+        "memoryReferences": {
+          "status": "required",
+          "sources": [
+            "content",
+            "details"
+          ]
+        },
+        "runContextRoundTrip": {
+          "status": "unsupported"
+        },
+        "nativeStructuredOutput": {
+          "status": "unsupported"
+        },
+        "persistedSessionEmbeddedAdmission": {
+          "status": "unsupported"
+        },
+        "hostNextTurnInjection": {
+          "status": "unsupported"
+        },
+        "commandSuccessor": {
+          "status": "required"
+        },
+        "uiNormalRpcSuccessor": {
+          "status": "required"
+        }
+      }
+    }
+  ]
+}

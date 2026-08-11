@@ -1,0 +1,23 @@
+{
+  "id": "cognitive-runtime",
+  "name": "Stella Runtime",
+  "description": "Instance-neutral cognitive runtime for OpenClaw",
+  "version": "0.0.0",
+  "skills": [
+    "skills/framework-admission"
+  ],
+  "activation": {
+    "onStartup": true,
+    "onCommands": [
+      "cognitive"
+    ],
+    "onCapabilities": [
+      "hook"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

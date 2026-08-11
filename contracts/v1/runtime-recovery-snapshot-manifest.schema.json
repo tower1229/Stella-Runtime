@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cognitive-runtime.runtime-recovery-snapshot-manifest/v1",
+  "title": "Runtime Recovery Snapshot Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "snapshot_schema_version",
+    "storage_schema_version",
+    "package_version",
+    "contract_version",
+    "instance_id",
+    "authority_revision",
+    "state_boundary",
+    "files",
+    "pending_outbox_summary",
+    "created_at",
+    "projections_requiring_rebuild"
+  ],
+  "properties": {
+    "snapshot_schema_version": {
+      "const": "cognitive-runtime.runtime-recovery-snapshot-manifest/v1"
+    },
+    "storage_schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "package_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contract_version": {
+      "const": "v1"
+    },
+    "instance_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "authority_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "state_boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_seq",
+        "state_view_version",
+        "checksum"
+      ],
+      "properties": {
+        "active_seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state_view_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checksum": {
+          "$ref": "#/$defs/checksum"
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "size",
+          "checksum"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "checksum": {
+            "$ref": "#/$defs/checksum"
+          }
+        }
+      }
+    },
+    "pending_outbox_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pending_count",
+        "in_flight_count"
+      ],
+      "properties": {
+        "pending_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "in_flight_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "projections_requiring_rebuild": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "checksum": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  }
+}
