@@ -3,8 +3,10 @@ import {
   createRuntimeVerifyOptions,
   createRuntimeRecoveryPort,
   openRuntimeRecoverySnapshot,
+  recoverInterruptedRuntimeRestore,
   RUNTIME_RECOVERY_COMPATIBILITY,
 } from "../recovery/index.js";
+import { markRuntimeInstanceRunServed } from "../state/index.js";
 import type { CognitiveRuntimePluginApi } from "./plugin-api.js";
 
 export { MemoryObservationAdapter } from "./ports.js";
@@ -21,6 +23,7 @@ interface RecoveryInstanceConfig {
 
 interface RecoveryPluginConfig {
   readonly stateRoot: string;
+  readonly activeInstanceId: string;
   readonly instances: Readonly<Record<string, RecoveryInstanceConfig>>;
 }
 
@@ -48,7 +51,11 @@ const readRecoveryConfig = (
   pluginConfig: Readonly<Record<string, unknown>> | undefined,
 ): RecoveryPluginConfig => {
   const recovery = pluginConfig?.recovery;
-  if (!isRecord(recovery) || typeof recovery.stateRoot !== "string") {
+  if (
+    !isRecord(recovery) ||
+    typeof recovery.stateRoot !== "string" ||
+    typeof recovery.activeInstanceId !== "string"
+  ) {
     throw new Error("RECOVERY_CONFIG_REQUIRED");
   }
   if (!isRecord(recovery.instances)) {
@@ -66,7 +73,14 @@ const readRecoveryConfig = (
       authorityRevision: value.authorityRevision,
     };
   }
-  return { stateRoot: recovery.stateRoot, instances };
+  if (instances[recovery.activeInstanceId] === undefined) {
+    throw new Error("RECOVERY_ACTIVE_INSTANCE_NOT_CONFIGURED");
+  }
+  return {
+    stateRoot: recovery.stateRoot,
+    activeInstanceId: recovery.activeInstanceId,
+    instances,
+  };
 };
 
 const requireInstance = (
@@ -86,6 +100,27 @@ const plugin = {
   description: "Instance-neutral cognitive runtime for OpenClaw",
   register(api: CognitiveRuntimePluginApi): void {
     const packageVersion = api.version ?? "0.0.0";
+    if (api.on !== undefined && api.pluginConfig?.recovery !== undefined) {
+      const recoveryConfig = readRecoveryConfig(api.pluginConfig);
+      api.on("before_prompt_build", async (_event, context) => {
+        if (context.runId === undefined || context.runId.length === 0) {
+          return;
+        }
+        if (
+          await recoverInterruptedRuntimeRestore({
+            stateRoot: recoveryConfig.stateRoot,
+            instanceId: recoveryConfig.activeInstanceId,
+          })
+        ) {
+          throw new Error("INTERRUPTED_RESTORE_ROLLED_BACK_RETRY_RUN");
+        }
+        markRuntimeInstanceRunServed({
+          stateRoot: recoveryConfig.stateRoot,
+          instanceId: recoveryConfig.activeInstanceId,
+          runId: context.runId,
+        });
+      });
+    }
     api.registerCli(
       ({ program }) => {
         const cognitive = program

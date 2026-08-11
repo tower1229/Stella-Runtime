@@ -22,6 +22,13 @@ export interface CognitiveRuntimePluginApi {
       complete(params: unknown): Promise<unknown>;
     };
   };
+  readonly on?: (
+    event: "before_prompt_build",
+    handler: (
+      event: unknown,
+      context: { readonly runId?: string },
+    ) => void | Promise<void>,
+  ) => void;
   registerCli(
     registrar: (context: { program: CliCommand }) => void | Promise<void>,
     options: { readonly descriptors: readonly CliDescriptor[] },

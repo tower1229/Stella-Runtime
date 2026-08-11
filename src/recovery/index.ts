@@ -16,9 +16,14 @@ import { DatabaseSync } from "node:sqlite";
 
 import type {
   RuntimeRecoverySnapshotManifest,
-  RuntimeRecoveryVerificationOrRestoreReport,
+  RuntimeRecoveryVerificationOrRestoreReportV2,
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
+import {
+  initializeRuntimeRunGuard,
+  runtimeDatabasePath,
+  runtimeRestoreLockPath,
+} from "../state/index.js";
 
 export const AUTHORITATIVE_RUNTIME_STATE_CONTENTS = [
   "current_state_event_ledger",
@@ -44,7 +49,7 @@ export const RUNTIME_RECOVERY_SNAPSHOT_EXCLUDED_CONTENTS = [
 const SNAPSHOT_SCHEMA_VERSION =
   "cognitive-runtime.runtime-recovery-snapshot-manifest/v1" as const;
 const REPORT_SCHEMA_VERSION =
-  "cognitive-runtime.runtime-recovery-report/v1" as const;
+  "cognitive-runtime.runtime-recovery-report/v2" as const;
 const CONTRACT_VERSION = "v1" as const;
 export const RUNTIME_RECOVERY_COMPATIBILITY = {
   snapshotSchemaVersions: [SNAPSHOT_SCHEMA_VERSION],
@@ -62,6 +67,14 @@ const PROJECTIONS_REQUIRING_REBUILD = [
   "cache",
 ] as const;
 const instanceIdPattern = /^[a-z0-9][a-z0-9._-]{0,127}$/;
+const forbiddenCredentialKeys = new Set([
+  "api_key",
+  "access_token",
+  "refresh_token",
+  "password",
+  "secret",
+  "credential",
+]);
 
 const portableSchema = `
 CREATE TABLE state_events (
@@ -154,7 +167,7 @@ export interface RuntimeRecoveryPort<
   TVerifyOptions = RuntimeVerifyOptions,
   TRestoreOptions = RuntimeRestoreOptions,
   TSnapshot = RuntimeRecoverySnapshot,
-  TReport = RuntimeRecoveryVerificationOrRestoreReport,
+  TReport = RuntimeRecoveryVerificationOrRestoreReportV2,
 > {
   backup(options: TBackupOptions): Promise<TSnapshot>;
   verify(snapshot: TSnapshot, options: TVerifyOptions): Promise<TReport>;
@@ -176,6 +189,10 @@ interface SnapshotState {
 interface RestoreJournal {
   readonly restore_hash: string;
   readonly target_existed: boolean;
+}
+
+interface RestoreLock {
+  readonly pid: number;
 }
 
 const sha256 = (value: string | Uint8Array): string =>
@@ -201,6 +218,26 @@ const toSqlValue = (
 const isAborted = (
   signal: Pick<AbortSignal, "aborted"> | undefined,
 ): boolean => signal?.aborted === true;
+
+const containsCredentialMaterial = (value: unknown): boolean => {
+  if (typeof value === "string") {
+    return (
+      /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(value) ||
+      /AKIA[0-9A-Z]{16}/.test(value)
+    );
+  }
+  if (Array.isArray(value)) {
+    return value.some(containsCredentialMaterial);
+  }
+  if (!isRecord(value)) {
+    return false;
+  }
+  return Object.entries(value).some(
+    ([key, child]) =>
+      forbiddenCredentialKeys.has(key.toLowerCase()) ||
+      containsCredentialMaterial(child),
+  );
+};
 
 const readString = (row: Row, key: string): string => {
   const value = row[key];
@@ -229,7 +266,7 @@ const emptyReport = (
   operation: "verify" | "restore",
   compatibilityReasons: readonly string[],
   integrityReasons: readonly string[],
-): RuntimeRecoveryVerificationOrRestoreReport => ({
+): RuntimeRecoveryVerificationOrRestoreReportV2 => ({
   report_schema_version: REPORT_SCHEMA_VERSION,
   operation,
   authority_revision: null,
@@ -243,9 +280,9 @@ const emptyReport = (
 });
 
 const withOperation = (
-  report: RuntimeRecoveryVerificationOrRestoreReport,
+  report: RuntimeRecoveryVerificationOrRestoreReportV2,
   operation: "verify" | "restore",
-): RuntimeRecoveryVerificationOrRestoreReport => ({ ...report, operation });
+): RuntimeRecoveryVerificationOrRestoreReportV2 => ({ ...report, operation });
 
 export function createRuntimeVerifyOptions(
   packageVersion: string,
@@ -271,7 +308,7 @@ const databasePathFor = (stateRoot: string, instanceId: string): string => {
   if (!instanceIdPattern.test(instanceId)) {
     throw new Error("INSTANCE_ID_INVALID");
   }
-  return join(stateRoot, instanceId, "runtime.sqlite");
+  return runtimeDatabasePath(stateRoot, instanceId);
 };
 
 const fileExists = async (path: string): Promise<boolean> => {
@@ -317,6 +354,34 @@ const readRestoreJournal = async (path: string): Promise<RestoreJournal> => {
   };
 };
 
+const readRestoreLock = async (path: string): Promise<RestoreLock> => {
+  const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+  if (!isRecord(parsed) || !Number.isInteger(parsed.pid) || Number(parsed.pid) <= 0) {
+    throw new Error("RESTORE_LOCK_INVALID");
+  }
+  return { pid: Number(parsed.pid) };
+};
+
+const isProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    return !(isRecord(error) && error.code === "ESRCH");
+  }
+};
+
+const acquireRestoreLock = async (lockPath: string): Promise<void> => {
+  if (await fileExists(lockPath)) {
+    const lock = await readRestoreLock(lockPath);
+    if (isProcessAlive(lock.pid)) {
+      throw new Error("TARGET_RESTORE_BUSY");
+    }
+    await unlink(lockPath);
+  }
+  await writeDurableJson(lockPath, { pid: process.pid });
+};
+
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -335,10 +400,27 @@ const insertRows = (
   }
 };
 
-const readSnapshotState = (database: DatabaseSync): SnapshotState => {
+const readSnapshotState = (
+  database: DatabaseSync,
+  allowRuntimeRunGuard = false,
+): SnapshotState => {
   const integrity = database.prepare("PRAGMA integrity_check").get() as Row | undefined;
   if (integrity === undefined || Object.values(integrity)[0] !== "ok") {
     throw new Error("SQLITE_INTEGRITY_FAILED");
+  }
+  const allowedTables = new Set([
+    "state_events",
+    "state_head",
+    "reanswer_outbox",
+    ...(allowRuntimeRunGuard ? ["runtime_served_runs"] : []),
+  ]);
+  const tables = toRows(
+    database
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all(),
+  );
+  if (tables.some((row) => !allowedTables.has(readString(row, "name")))) {
+    throw new Error("SNAPSHOT_SCOPE_INVALID");
   }
   const head = database
     .prepare(
@@ -400,7 +482,7 @@ const readSnapshotState = (database: DatabaseSync): SnapshotState => {
 const authorityDigest = (databasePath: string): string => {
   const database = new DatabaseSync(databasePath, { readOnly: true });
   try {
-    const state = readSnapshotState(database);
+    const state = readSnapshotState(database, true);
     const events = toRows(
       database.prepare("SELECT * FROM state_events ORDER BY seq").all(),
     );
@@ -431,16 +513,24 @@ const targetRunGuardReason = async (
   if (!(await fileExists(targetPath))) {
     return null;
   }
-  const database = new DatabaseSync(targetPath, { readOnly: true });
+  const database = new DatabaseSync(targetPath);
   try {
+    database.exec("BEGIN IMMEDIATE");
     const row = database
       .prepare("SELECT count(*) AS count FROM runtime_served_runs")
       .get() as Row | undefined;
     if (row === undefined) {
+      database.exec("ROLLBACK");
       return "TARGET_RUN_STATE_UNKNOWN";
     }
-    return readNumber(row, "count") === 0 ? null : "TARGET_HAS_SERVED_RUN";
+    const reason =
+      readNumber(row, "count") === 0 ? null : "TARGET_HAS_SERVED_RUN";
+    database.exec("COMMIT");
+    return reason;
   } catch {
+    try {
+      database.exec("ROLLBACK");
+    } catch {}
     return "TARGET_RUN_STATE_UNKNOWN";
   } finally {
     database.close();
@@ -477,6 +567,33 @@ const recoverInterruptedRestore = async (
   return true;
 };
 
+export async function recoverInterruptedRuntimeRestore(options: {
+  readonly stateRoot: string;
+  readonly instanceId: string;
+}): Promise<boolean> {
+  const targetPath = databasePathFor(options.stateRoot, options.instanceId);
+  const targetDirectory = dirname(targetPath);
+  const lockPath = runtimeRestoreLockPath(targetPath);
+  if (await fileExists(lockPath)) {
+    const lock = await readRestoreLock(lockPath);
+    if (isProcessAlive(lock.pid)) {
+      throw new Error("TARGET_RESTORE_BUSY");
+    }
+  }
+  const rollbackDirectory = join(
+    options.stateRoot,
+    ".recovery-rollback",
+    options.instanceId,
+  );
+  const recovered = await recoverInterruptedRestore(
+    rollbackDirectory,
+    targetDirectory,
+    targetPath,
+  );
+  await unlink(lockPath).catch(() => {});
+  return recovered;
+}
+
 const migrateStorage = (
   database: DatabaseSync,
   sourceVersion: string,
@@ -494,15 +611,6 @@ const migrateStorage = (
     return ["STORAGE_SCHEMA_0_TO_1"];
   }
   throw new Error("STORAGE_MIGRATION_UNAVAILABLE");
-};
-
-const initializeRunGuard = (database: DatabaseSync): void => {
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS runtime_served_runs (
-      run_id TEXT PRIMARY KEY,
-      served_at TEXT NOT NULL
-    )
-  `);
 };
 
 const compatibilityReasons = (
@@ -600,6 +708,13 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
           .prepare("SELECT * FROM state_events WHERE seq <= ? ORDER BY seq")
           .all(readNumber(head, "active_seq")),
       );
+      if (
+        events.some((event) =>
+          containsCredentialMaterial(JSON.parse(readString(event, "payload"))),
+        )
+      ) {
+        throw new Error("SNAPSHOT_CREDENTIAL_MATERIAL_FORBIDDEN");
+      }
       const outbox = toRows(
         source
           .prepare(
@@ -743,7 +858,7 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
   async verify(
     snapshot: RuntimeRecoverySnapshot,
     options: RuntimeVerifyOptions,
-  ): Promise<RuntimeRecoveryVerificationOrRestoreReport> {
+  ): Promise<RuntimeRecoveryVerificationOrRestoreReportV2> {
     if (options.access !== "read_only") {
       return emptyReport("verify", [], ["VERIFY_NOT_READ_ONLY"]);
     }
@@ -849,7 +964,36 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
   async restore(
     snapshot: RuntimeRecoverySnapshot,
     options: RuntimeRestoreOptions,
-  ): Promise<RuntimeRecoveryVerificationOrRestoreReport> {
+  ): Promise<RuntimeRecoveryVerificationOrRestoreReportV2> {
+    const targetPath = databasePathFor(
+      this.#options.stateRoot,
+      options.targetInstanceId,
+    );
+    try {
+      if (
+        await recoverInterruptedRuntimeRestore({
+          stateRoot: this.#options.stateRoot,
+          instanceId: options.targetInstanceId,
+        })
+      ) {
+        return {
+          ...emptyReport("restore", [], ["RESTORE_INTERRUPTED"]),
+          rollback_result: {
+            status: "completed",
+            reason_codes: ["RESTORE_INTERRUPTED"],
+          },
+        };
+      }
+    } catch (error: unknown) {
+      const reason =
+        error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)
+          ? error.message
+          : "ROLLBACK_RECOVERY_FAILED";
+      return {
+        ...emptyReport("restore", [], [reason]),
+        rollback_result: { status: "failed", reason_codes: [reason] },
+      };
+    }
     const verification = await this.verify(snapshot, {
       expectedInstanceId: options.targetInstanceId,
       supportedSnapshotSchemaVersions: options.supportedSnapshotSchemaVersions,
@@ -858,10 +1002,6 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
       supportedContractVersions: options.supportedContractVersions,
       access: "read_only",
     });
-    const targetPath = databasePathFor(
-      this.#options.stateRoot,
-      options.targetInstanceId,
-    );
     if (
       verification.compatibility_result.status === "fail" ||
       verification.integrity_result.status === "fail"
@@ -881,36 +1021,23 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
     const journalPath = join(rollbackDirectory, "active.transaction.json");
     const rollbackPath = join(rollbackDirectory, `${restoreHash}.sqlite`);
     const absentMarkerPath = join(rollbackDirectory, `${restoreHash}.absent.json`);
+    const lockPath = runtimeRestoreLockPath(targetPath);
+    await mkdir(targetDirectory, { recursive: true, mode: 0o700 });
     try {
-      if (
-        await recoverInterruptedRestore(
-          rollbackDirectory,
-          targetDirectory,
-          targetPath,
-        )
-      ) {
-        return {
-          ...withOperation(verification, "restore"),
-          integrity_result: checkResult(["RESTORE_INTERRUPTED"]),
-          rollback_result: {
-            status: "completed",
-            reason_codes: ["RESTORE_INTERRUPTED"],
-          },
-        };
-      }
+      await acquireRestoreLock(lockPath);
     } catch (error: unknown) {
       const reason =
         error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)
           ? error.message
-          : "ROLLBACK_RECOVERY_FAILED";
+          : "TARGET_RESTORE_BUSY";
       return {
         ...withOperation(verification, "restore"),
-        integrity_result: checkResult([reason]),
-        rollback_result: { status: "failed", reason_codes: [reason] },
+        compatibility_result: checkResult([reason]),
       };
     }
     const runGuardReason = await targetRunGuardReason(targetPath);
     if (runGuardReason !== null) {
+      await unlink(lockPath).catch(() => {});
       return {
         ...withOperation(verification, "restore"),
         compatibility_result: checkResult([
@@ -945,8 +1072,8 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
              WHERE status = 'in_flight'`,
           )
           .run();
-        initializeRunGuard(staged);
-        readSnapshotState(staged);
+        initializeRuntimeRunGuard(staged);
+        readSnapshotState(staged, true);
       } finally {
         staged.close();
       }
@@ -1008,7 +1135,7 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
       const restored = new DatabaseSync(targetPath, { readOnly: true });
       let restoredState: SnapshotState;
       try {
-        restoredState = readSnapshotState(restored);
+        restoredState = readSnapshotState(restored, true);
       } finally {
         restored.close();
       }
@@ -1055,6 +1182,8 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
           reason_codes: [reason],
         },
       };
+    } finally {
+      await unlink(lockPath).catch(() => {});
     }
   }
 }

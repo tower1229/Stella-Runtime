@@ -43,7 +43,7 @@ test("recovery snapshot manifest freezes the authoritative state boundary", asyn
   ]);
 });
 
-test("recovery report exposes compatibility, integrity, restore, and rollback outcomes", async () => {
+test("recovery report v1 remains compatible and v2 adds authority revision", async () => {
   const schema = await readSchema("runtime-recovery-report");
 
   assert.equal(
@@ -54,7 +54,6 @@ test("recovery report exposes compatibility, integrity, restore, and rollback ou
   assert.deepEqual(schema.required, [
     "report_schema_version",
     "operation",
-    "authority_revision",
     "compatibility_result",
     "integrity_result",
     "restored_active_head",
@@ -63,4 +62,10 @@ test("recovery report exposes compatibility, integrity, restore, and rollback ou
     "rollback_result",
     "projections_requiring_rebuild",
   ]);
+  assert.equal("authority_revision" in schema.properties, false);
+
+  const v2 = await readSchema("runtime-recovery-report-v2");
+  assert.equal(v2.$id, "cognitive-runtime.runtime-recovery-report/v2");
+  assert.equal(v2.additionalProperties, false);
+  assert.ok(v2.required.includes("authority_revision"));
 });

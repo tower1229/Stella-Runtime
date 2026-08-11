@@ -13,6 +13,7 @@ export type { PersonalModel } from "./generated/personal-model.schema.js";
 export type { ReanswerOutbox } from "./generated/reanswer-outbox.schema.js";
 export type { RouterResult } from "./generated/router-result.schema.js";
 export type { RuntimeRecoveryVerificationOrRestoreReport } from "./generated/runtime-recovery-report.schema.js";
+export type { RuntimeRecoveryVerificationOrRestoreReportV2 } from "./generated/runtime-recovery-report-v2.schema.js";
 export type { RuntimeRecoverySnapshotManifest } from "./generated/runtime-recovery-snapshot-manifest.schema.js";
 export type { SemanticClaim } from "./generated/semantic.schema.js";
 
@@ -29,6 +30,7 @@ const contractNames = [
   "cognitive-provenance-overlay",
   "runtime-recovery-snapshot-manifest",
   "runtime-recovery-report",
+  "runtime-recovery-report-v2",
 ] as const;
 
 export type ContractName = (typeof contractNames)[number];

@@ -54,6 +54,10 @@ test("npm tarball contains only allowlisted and non-sensitive public assets", as
     true,
   );
   assert.equal(
+    paths.includes("contracts/v1/runtime-recovery-report-v2.schema.json"),
+    true,
+  );
+  assert.equal(
     paths.includes("skills/framework-admission/SKILL.md"),
     true,
   );

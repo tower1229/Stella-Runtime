@@ -279,9 +279,11 @@ state_view_version, files[{path, size, checksum}], pending_outbox_summary,
 created_at
 ```
 
-The verification/restore report includes authority revision, compatibility
-result, integrity result, restored active head, pending outbox state, storage
-migrations applied, rollback result, and projections requiring rebuild. It never exposes credentials, private
+The compatible V1 verification/restore report remains available. Recovery
+implementations use the V2 report contract to add authority revision alongside
+compatibility result, integrity result, restored active head, pending outbox
+state, storage migrations applied, rollback result, and projections requiring
+rebuild. The report never exposes credentials, private
 bodies, database table names, or live database paths.
 
 ## 12. Contract evolution

@@ -10,8 +10,12 @@ import test from "node:test";
 import {
   createRuntimeRecoveryPort,
   openRuntimeRecoverySnapshot,
+  recoverInterruptedRuntimeRestore,
 } from "../../dist/recovery/index.js";
-import { SqliteReanswerStore } from "../../dist/state/index.js";
+import {
+  markRuntimeInstanceRunServed,
+  SqliteReanswerStore,
+} from "../../dist/state/index.js";
 
 const zeroChecksum = `sha256:${"0".repeat(64)}`;
 const oneChecksum = `sha256:${"1".repeat(64)}`;
@@ -132,6 +136,46 @@ test("backup exports one immutable authoritative snapshot and verify is read-onl
   assert.deepEqual(report.pending_outbox_state, {
     pending_count: 1,
     in_flight_count: 0,
+  });
+});
+
+test("backup fails closed when authoritative payload contains a credential field", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-recovery-credential-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const stateRoot = join(root, "state");
+  const instanceDirectory = join(stateRoot, "instance-synthetic");
+  const { mkdir } = await import("node:fs/promises");
+  await mkdir(instanceDirectory, { recursive: true });
+  const store = new SqliteReanswerStore({
+    databasePath: join(instanceDirectory, "runtime.sqlite"),
+    initialHead,
+  });
+  await store.correct({
+    ...correction,
+    event: {
+      ...correction.event,
+      payload: { password: "synthetic-placeholder" },
+    },
+  });
+  store.close();
+  const recovery = createRuntimeRecoveryPort({
+    stateRoot,
+    packageVersion: "0.0.0",
+    storageSchemaVersion: "1",
+  });
+  const outputDirectory = join(root, "snapshot");
+
+  await assert.rejects(
+    recovery.backup({
+      instanceId: "instance-synthetic",
+      authorityRevision: "revision-synthetic-1",
+      outputDirectory,
+      consistency: "transactional_boundary",
+    }),
+    /SNAPSHOT_CREDENTIAL_MATERIAL_FORBIDDEN/,
+  );
+  await assert.rejects(readFile(join(outputDirectory, "manifest.json")), {
+    code: "ENOENT",
   });
 });
 
@@ -355,9 +399,21 @@ test("restore interruption rolls the original target back", async (t) => {
   originalStore.close();
   const before = await readFile(targetPath);
   let checks = 0;
+  let concurrentRunReason;
   const signal = {
     get aborted() {
       checks += 1;
+      if (checks === 2) {
+        try {
+          markRuntimeInstanceRunServed({
+            stateRoot: targetRoot,
+            instanceId: "instance-synthetic",
+            runId: "run-concurrent-with-restore",
+          });
+        } catch (error) {
+          concurrentRunReason = error.message;
+        }
+      }
       return checks >= 3;
     },
   };
@@ -376,6 +432,7 @@ test("restore interruption rolls the original target back", async (t) => {
   });
 
   assert.deepEqual(await readFile(targetPath), before);
+  assert.equal(concurrentRunReason, "RUNTIME_RESTORE_IN_PROGRESS");
   assert.equal(report.integrity_result.status, "fail");
   assert.deepEqual(report.rollback_result, {
     status: "completed",
@@ -427,6 +484,15 @@ test("a process crash after replacement is rolled back on the next restore", asy
   });
   assert.equal(exit.signal, "SIGKILL");
 
+  assert.equal(
+    await recoverInterruptedRuntimeRestore({
+      stateRoot: targetRoot,
+      instanceId: "instance-synthetic",
+    }),
+    true,
+  );
+  assert.deepEqual(await readFile(targetPath), before);
+
   const target = createRuntimeRecoveryPort({
     stateRoot: targetRoot,
     packageVersion: "0.0.0",
@@ -442,13 +508,6 @@ test("a process crash after replacement is rolled back on the next restore", asy
     supportedPackageVersions: verifyOptions.supportedPackageVersions,
     supportedContractVersions: verifyOptions.supportedContractVersions,
   };
-  const recovered = await target.restore(snapshot, options);
-  assert.deepEqual(recovered.rollback_result, {
-    status: "completed",
-    reason_codes: ["RESTORE_INTERRUPTED"],
-  });
-  assert.deepEqual(await readFile(targetPath), before);
-
   const retried = await target.restore(snapshot, options);
   assert.equal(retried.integrity_result.status, "pass");
   assert.equal(retried.restored_active_head.active_seq, 1);

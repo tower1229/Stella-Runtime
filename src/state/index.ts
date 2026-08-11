@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type {
@@ -99,11 +101,74 @@ CREATE TABLE IF NOT EXISTS reanswer_outbox (
 CREATE UNIQUE INDEX IF NOT EXISTS one_open_reanswer_per_session
   ON reanswer_outbox(session_key_hash)
   WHERE status IN ('pending', 'in_flight');
-CREATE TABLE IF NOT EXISTS runtime_served_runs (
-  run_id TEXT PRIMARY KEY,
-  served_at TEXT NOT NULL
-);
 `;
+
+export const runtimeDatabasePath = (
+  stateRoot: string,
+  instanceId: string,
+): string => join(stateRoot, instanceId, "runtime.sqlite");
+
+export const runtimeRestoreLockPath = (databasePath: string): string =>
+  `${databasePath}.restore.lock`;
+
+export const initializeRuntimeRunGuard = (database: DatabaseSync): void => {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS runtime_served_runs (
+      run_id TEXT PRIMARY KEY,
+      served_at TEXT NOT NULL
+    )
+  `);
+};
+
+const recordServedRun = (
+  database: DatabaseSync,
+  databasePath: string,
+  runId: string,
+  servedAt: string,
+): void => {
+  if (runId.length === 0) {
+    throw new Error("RUN_ID_REQUIRED");
+  }
+  if (existsSync(runtimeRestoreLockPath(databasePath))) {
+    throw new Error("RUNTIME_RESTORE_IN_PROGRESS");
+  }
+  initializeRuntimeRunGuard(database);
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    if (existsSync(runtimeRestoreLockPath(databasePath))) {
+      throw new Error("RUNTIME_RESTORE_IN_PROGRESS");
+    }
+    database
+      .prepare(
+        "INSERT OR IGNORE INTO runtime_served_runs(run_id, served_at) VALUES (?, ?)",
+      )
+      .run(runId, servedAt);
+    database.exec("COMMIT");
+  } catch (error: unknown) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+};
+
+export const markRuntimeInstanceRunServed = (options: {
+  readonly stateRoot: string;
+  readonly instanceId: string;
+  readonly runId: string;
+  readonly servedAt?: string;
+}): void => {
+  const databasePath = runtimeDatabasePath(options.stateRoot, options.instanceId);
+  const database = new DatabaseSync(databasePath);
+  try {
+    recordServedRun(
+      database,
+      databasePath,
+      options.runId,
+      options.servedAt ?? new Date().toISOString(),
+    );
+  } finally {
+    database.close();
+  }
+};
 
 const requireValidContract = (
   name: "current-state-event" | "current-state-head" | "reanswer-outbox",
@@ -148,14 +213,17 @@ export class SqliteReanswerStore
   implements ReanswerPort<ReanswerClaim, undefined>
 {
   readonly #database: DatabaseSync;
+  readonly #databasePath: string;
   readonly #now: () => string;
 
   constructor(options: SqliteReanswerStoreOptions) {
     requireValidContract("current-state-head", options.initialHead);
     this.#database = new DatabaseSync(options.databasePath);
+    this.#databasePath = options.databasePath;
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#database.exec("PRAGMA foreign_keys = ON");
     this.#database.exec(schema);
+    initializeRuntimeRunGuard(this.#database);
     this.#database
       .prepare(
         "INSERT OR IGNORE INTO state_head(singleton, active_seq, view_version, checksum, activated_at) VALUES (1, ?, ?, ?, ?)",
@@ -384,14 +452,7 @@ export class SqliteReanswerStore
   }
 
   markRunServed(runId: string): void {
-    if (runId.length === 0) {
-      throw new Error("RUN_ID_REQUIRED");
-    }
-    this.#database
-      .prepare(
-        "INSERT OR IGNORE INTO runtime_served_runs(run_id, served_at) VALUES (?, ?)",
-      )
-      .run(runId, this.#now());
+    recordServedRun(this.#database, this.#databasePath, runId, this.#now());
   }
 
   close(): void {

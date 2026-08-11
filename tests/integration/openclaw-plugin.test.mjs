@@ -127,6 +127,7 @@ test("OpenClaw recovery commands expose backup, read-only verify, and restore JS
     pluginConfig: {
       recovery: {
         stateRoot,
+        activeInstanceId: "instance-synthetic",
         instances: {
           "instance-synthetic": {
             authorityRevision: "revision-synthetic-1",
@@ -135,6 +136,10 @@ test("OpenClaw recovery commands expose backup, read-only verify, and restore JS
       },
     },
     runtime: { llm: { complete: async () => ({}) } },
+    on(event, handler) {
+      this.hooks ??= new Map();
+      this.hooks.set(event, handler);
+    },
     registerCli(registrar) {
       return registrar({ program });
     },
@@ -161,6 +166,14 @@ test("OpenClaw recovery commands expose backup, read-only verify, and restore JS
       snapshot: snapshotDirectory,
       json: true,
     });
+    await api.hooks.get("before_prompt_build")({}, {
+      runId: "run-synthetic-after-restore",
+    });
+    await cognitive.children.get("restore").handler({
+      instance: "instance-synthetic",
+      snapshot: snapshotDirectory,
+      json: true,
+    });
   } finally {
     console.log = originalLog;
   }
@@ -172,4 +185,8 @@ test("OpenClaw recovery commands expose backup, read-only verify, and restore JS
   assert.equal(output[2].operation, "restore");
   assert.equal(output[2].restored_active_head.active_seq, 0);
   assert.equal("live_database_path" in output[2], false);
+  assert.equal(output[3].compatibility_result.status, "fail");
+  assert.ok(
+    output[3].compatibility_result.reason_codes.includes("TARGET_HAS_SERVED_RUN"),
+  );
 });

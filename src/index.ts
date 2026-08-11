@@ -27,6 +27,7 @@ export type {
   RouterResult,
   RuntimeRecoverySnapshotManifest,
   RuntimeRecoveryVerificationOrRestoreReport,
+  RuntimeRecoveryVerificationOrRestoreReportV2,
   SemanticClaim,
 } from "./contracts/index.js";
 export { RunScratchMap } from "./core/index.js";
@@ -59,6 +60,7 @@ export {
   createRuntimeRecoveryPort,
   RUNTIME_RECOVERY_SNAPSHOT_EXCLUDED_CONTENTS,
   openRuntimeRecoverySnapshot,
+  recoverInterruptedRuntimeRestore,
   RUNTIME_RECOVERY_COMPATIBILITY,
 } from "./recovery/index.js";
 export type {
