@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cognitive-runtime.current-state-event/v1",
+  "title": "Current State Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "seq", "event_id", "state_id", "event_type", "payload", "observed_at", "source_kind", "idempotency_key", "created_at"],
+  "properties": {
+    "schema_version": { "const": "cognitive-runtime.current-state-event/v1" },
+    "seq": { "type": "integer", "minimum": 1 },
+    "event_id": { "$ref": "#/$defs/stableId" },
+    "state_id": { "$ref": "#/$defs/stableId" },
+    "event_type": { "type": "string", "minLength": 1, "pattern": "^(?!(?:semantic|cognitive)(?:[._-]|$)).+" },
+    "payload": { "type": "object" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "source_kind": { "type": "string", "minLength": 1, "not": { "const": "model_inference" } },
+    "source_ref": { "$ref": "#/$defs/stableId" },
+    "corrects_event_id": { "$ref": "#/$defs/stableId" },
+    "supersedes_event_id": { "$ref": "#/$defs/stableId" },
+    "idempotency_key": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": { "stableId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" } }
+}

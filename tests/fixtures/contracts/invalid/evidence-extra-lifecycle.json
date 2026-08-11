@@ -1,0 +1,1 @@
+{"schema_version":"cognitive-runtime.evidence/v1","source_id":"src-synthetic-note","source_type":"user_note","created_at":"2026-08-11","imported_at":"2026-08-11","sensitivity":"private","allowed_scenarios":["private_main_session"],"not_allowed_scenarios":[],"quote_policy":"paraphrase_only","status":"curated_summary","tags":[],"lifecycle":"active"}

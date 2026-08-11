@@ -1,7 +1,13 @@
 import { runSelfCheck } from "../cli/index.js";
 import type { CognitiveRuntimePluginApi } from "./plugin-api.js";
 
-export type { MemoryObservationPort } from "./ports.js";
+export { MemoryObservationAdapter } from "./ports.js";
+export type {
+  HostCapabilityManifest,
+  MemoryObservation,
+  MemoryObservationPort,
+  MemoryToolResult,
+} from "./ports.js";
 
 const plugin = {
   id: "cognitive-runtime",

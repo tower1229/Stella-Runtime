@@ -76,7 +76,7 @@
           "path": {
             "type": "string",
             "minLength": 1,
-            "pattern": "^(?!/)"
+            "pattern": "^(?!/)(?!.*(?:^|/)(?:credentials?|secrets?|cache|registry|index|generation)(?:/|$)).+$"
           },
           "size": {
             "type": "integer",
