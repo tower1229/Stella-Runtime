@@ -1,7 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
-import { extname, join, relative } from "node:path";
+import { join, relative } from "node:path";
 
-const textExtensions = new Set([".js", ".json", ".map", ".md", ".mjs", ".ts"]);
 const sensitivePatterns = [
   ["macOS home path", new RegExp("/" + "Users" + "/")],
   ["Linux home path", new RegExp("/" + "home" + "/")],
@@ -41,9 +40,6 @@ export async function findSensitiveMaterial(
 ) {
   const findings = [];
   for (const path of await listFiles(root, ignoredDirectories)) {
-    if (!textExtensions.has(extname(path))) {
-      continue;
-    }
     const content = await readFile(path, "utf8");
     for (const [name, pattern] of sensitivePatterns) {
       if (pattern.test(content)) {

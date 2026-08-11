@@ -3,15 +3,17 @@ import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFile,
+  mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   writeFile,
 } from "node:fs/promises";
-import { createServer } from "node:net";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 
@@ -21,6 +23,12 @@ const commandTimeoutMs = 120_000;
 const checksum = (value) =>
   createHash("sha256").update(value).digest("hex");
 const contractChecksum = (digit) => `sha256:${digit.repeat(64)}`;
+
+function parseJsonOutput(output) {
+  const start = output.indexOf("{");
+  assert.notEqual(start, -1, `JSON output missing: ${output}`);
+  return JSON.parse(output.slice(start));
+}
 
 async function run(command, arguments_, options = {}) {
   return execFileAsync(command, arguments_, {
@@ -65,112 +73,8 @@ async function waitForDeepGatewayProbe(environment) {
   throw lastError;
 }
 
-async function probeTypedHooks(openClawRoot) {
-  const runtime = await import(
-    pathToFileURL(
-      join(openClawRoot, "dist", "plugin-sdk", "plugin-runtime.js"),
-    ).href
-  );
-  const runId = "00000000-0000-4000-8000-000000000004";
-  const sessionKey = "agent:main:synthetic-smoke";
-  const observed = [];
-  const registration = (hookName, handler) => ({
-    pluginId: "cognitive-runtime-smoke-probe",
-    hookName,
-    handler,
-    source: "synthetic-pack-install-smoke",
-  });
-
-  runtime.initializeGlobalHookRunner({
-    hooks: [],
-    typedHooks: [
-      registration("before_prompt_build", (event, context) => {
-        observed.push({ hook: "before_prompt_build", event, context });
-      }),
-      registration("after_tool_call", (event, context) => {
-        observed.push({ hook: "after_tool_call", event, context });
-      }),
-      registration("before_agent_finalize", (event, context) => {
-        observed.push({ hook: "before_agent_finalize", event, context });
-      }),
-      registration("agent_end", (event, context) => {
-        observed.push({ hook: "agent_end", event, context });
-      }),
-    ],
-    plugins: [{ id: "cognitive-runtime-smoke-probe", status: "loaded" }],
-  });
-
-  try {
-    const runner = runtime.getGlobalHookRunner();
-    assert.ok(runner);
-    await runner.runBeforePromptBuild(
-      { prompt: "Synthetic prompt", messages: [] },
-      { runId, sessionKey, agentId: "main" },
-    );
-    await runner.runAfterToolCall(
-      {
-        toolName: "memory_search",
-        params: { query: "synthetic" },
-        runId,
-        toolCallId: "tool-memory-1",
-        result: {
-          content: [{ stable_refs: ["sem-synthetic"] }],
-          details: { results: [{ source_id: "src-synthetic" }] },
-        },
-      },
-      {
-        toolName: "memory_search",
-        runId,
-        toolCallId: "tool-memory-1",
-        sessionKey,
-      },
-    );
-    await runner.runBeforeAgentFinalize(
-      {
-        runId,
-        sessionId: "session-synthetic",
-        sessionKey,
-        stopHookActive: false,
-        messages: [],
-      },
-      { runId, sessionKey, agentId: "main" },
-    );
-    await runner.runAgentEnd(
-      { runId, messages: [], success: true },
-      { runId, sessionKey, agentId: "main" },
-    );
-  } finally {
-    runtime.resetGlobalHookRunner();
-  }
-
-  assert.deepEqual(
-    observed.map(({ hook }) => hook),
-    [
-      "before_prompt_build",
-      "after_tool_call",
-      "before_agent_finalize",
-      "agent_end",
-    ],
-  );
-  assert.equal(
-    observed.every(({ event, context }) =>
-      (event.runId ?? context.runId) === runId &&
-      context.runId === runId &&
-      context.sessionKey === sessionKey
-    ),
-    true,
-  );
-  return observed[1].event.result;
-}
-
-async function verifyPackedAdapters(pluginRoot, memoryResult) {
-  const runtime = await import(
-    pathToFileURL(join(pluginRoot, "dist", "index.js")).href
-  );
-  const stateRuntime = await import(
-    pathToFileURL(join(pluginRoot, "dist", "state", "index.js")).href
-  );
-  const routerResult = {
+function routerResult() {
+  return {
     memory_route: "none",
     state_refs: [],
     governing: null,
@@ -179,44 +83,396 @@ async function verifyPackedAdapters(pluginRoot, memoryResult) {
     confidence: 1,
     reason_codes: ["CURRENT_CONTEXT_SUFFICIENT"],
   };
-  const entries = [];
-  const registryChecksum = runtime.calculateRegistryChecksum(entries);
-  let completionCalls = 0;
-  const hostLlm = {
-    complete: async (prompt) => {
-      completionCalls += 1;
-      const requestPayload = JSON.parse(prompt);
-      assert.equal(
-        requestPayload.instruction,
-        "Return exactly one Router Result JSON object.",
-      );
-      assert.equal(requestPayload.current_message, "Synthetic decision");
-      return JSON.stringify(routerResult);
-    },
-  };
-  const router = new runtime.StrictRouter({ complete: hostLlm.complete });
-  const request = {
-    currentMessage: "Synthetic decision",
-    recentContext: [],
-    stateViewVersion: "view-1",
-    activeGoverningSystem: null,
-    syncGeneration: "generation-1",
-    expectedRegistryChecksum: registryChecksum,
-    registry: { checksum: registryChecksum, entries },
-  };
-  assert.deepEqual(await router.route(request), {
-    status: "ok",
-    result: routerResult,
+}
+
+function sendOpenAiResponse(response, body, content, toolCall) {
+  const id = "chatcmpl-synthetic";
+  const model = body.model ?? "synthetic-model";
+  if (body.stream === true) {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    const delta = toolCall === undefined
+      ? { role: "assistant", content }
+      : {
+          role: "assistant",
+          tool_calls: [{
+            index: 0,
+            id: "call-synthetic-memory",
+            type: "function",
+            function: {
+              name: toolCall,
+              arguments: JSON.stringify({ query: "synthetic" }),
+            },
+          }],
+        };
+    response.write(`data: ${JSON.stringify({
+      id,
+      object: "chat.completion.chunk",
+      created: 1,
+      model,
+      choices: [{ index: 0, delta, finish_reason: null }],
+    })}\n\n`);
+    response.write(`data: ${JSON.stringify({
+      id,
+      object: "chat.completion.chunk",
+      created: 1,
+      model,
+      choices: [{
+        index: 0,
+        delta: {},
+        finish_reason: toolCall === undefined ? "stop" : "tool_calls",
+      }],
+    })}\n\n`);
+    response.end("data: [DONE]\n\n");
+    return;
+  }
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(JSON.stringify({
+    id,
+    object: "chat.completion",
+    created: 1,
+    model,
+    choices: [{
+      index: 0,
+      message: toolCall === undefined
+        ? { role: "assistant", content }
+        : {
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id: "call-synthetic-memory",
+              type: "function",
+              function: {
+                name: toolCall,
+                arguments: JSON.stringify({ query: "synthetic" }),
+              },
+            }],
+          },
+      finish_reason: toolCall === undefined ? "stop" : "tool_calls",
+    }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+  }));
+}
+
+async function startSyntheticModelServer(port) {
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
+    const chunks = [];
+    for await (const chunk of request) {
+      chunks.push(chunk);
+    }
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    requests.push(body);
+    const latestUser = [...(body.messages ?? [])]
+      .reverse()
+      .find((message) => message.role === "user");
+    const latestUserContent = JSON.stringify(latestUser?.content ?? "");
+    if (latestUserContent.includes("PLAIN_RUN_ABORT")) {
+      response.writeHead(400, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        error: {
+          message: "Synthetic host abort",
+          type: "invalid_request_error",
+          code: "synthetic_host_abort",
+        },
+      }));
+      return;
+    }
+    if (latestUserContent.includes("ROUTER_INVALID")) {
+      sendOpenAiResponse(response, body, "not-json", undefined);
+      return;
+    }
+    if (latestUserContent.includes("ROUTER_VALID")) {
+      sendOpenAiResponse(response, body, JSON.stringify(routerResult()), undefined);
+      return;
+    }
+    const hasToolResult = (body.messages ?? []).some(
+      (message) => message.role === "tool",
+    );
+    if (latestUserContent.includes("MEMORY_RUN") && !hasToolResult) {
+      sendOpenAiResponse(response, body, undefined, "synthetic_memory");
+      return;
+    }
+    sendOpenAiResponse(response, body, "Synthetic host response", undefined);
   });
-  assert.equal(completionCalls, 1);
-  const degraded = new runtime.StrictRouter({
-    complete: async () => `not-json:${JSON.stringify(routerResult)}`,
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", resolve);
   });
-  assert.deepEqual(await degraded.route(request), {
+  return {
+    requests,
+    close: () => new Promise((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    ),
+  };
+}
+
+function spawnGateway(port, token, environment) {
+  return spawn(
+    "openclaw",
+    [
+      "gateway",
+      "run",
+      "--port",
+      String(port),
+      "--bind",
+      "loopback",
+      "--token",
+      token,
+    ],
+    { env: environment, stdio: "ignore" },
+  );
+}
+
+async function stopGateway(gateway) {
+  gateway.kill("SIGTERM");
+  await new Promise((resolve) => {
+    gateway.once("exit", resolve);
+    setTimeout(resolve, 5_000);
+  });
+}
+
+async function readProbeEvidence(evidencePath, minimumAgentEnds) {
+  let content = "";
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    content = await readFile(evidencePath, "utf8").catch(() => "");
+    const entries = content
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    if (entries.filter((entry) => entry.hook === "agent_end").length >= minimumAgentEnds) {
+      return entries;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`SYNTHETIC_HOST_PROBE_EVIDENCE_TIMEOUT\n${content}`);
+}
+
+async function verifyHostRouter(environment) {
+  const { stdout } = await run(
+    "openclaw",
+    ["cognitive-probe", "router"],
+    { env: environment },
+  );
+  const result = parseJsonOutput(stdout);
+  assert.deepEqual(result.valid, { status: "ok", result: routerResult() });
+  assert.deepEqual(result.invalid, {
     status: "degraded",
     reasonCode: "ROUTER_NON_JSON_OUTPUT",
   });
+}
 
+async function runHostSuccessors(environment, evidencePath, port, token) {
+  await run("openclaw", ["cognitive-probe", "seed", "command"], {
+    env: environment,
+  });
+  let abortedCommand;
+  try {
+    await run(
+      "openclaw",
+      [
+        "agent",
+        "--session-key",
+        environment.STELLA_RUNTIME_PROBE_SESSION_KEY,
+        "--message",
+        "PLAIN_RUN_ABORT",
+        "--json",
+        "--timeout",
+        "10",
+      ],
+      { env: environment },
+    );
+    assert.fail("Synthetic abort unexpectedly succeeded");
+  } catch (error) {
+    assert.match(error.stderr ?? "", /provider rejected the request/i);
+    abortedCommand = {
+      stdout: error.stdout ?? "",
+      stderr: error.stderr ?? "",
+    };
+  }
+  await readProbeEvidence(evidencePath, 1);
+  const commandResult = await run(
+    "openclaw",
+    [
+      "agent",
+      "--session-key",
+      environment.STELLA_RUNTIME_PROBE_SESSION_KEY,
+      "--message",
+      "PLAIN_RUN_RETRY",
+      "--json",
+      "--timeout",
+      "10",
+    ],
+    { env: environment },
+  );
+  await readProbeEvidence(evidencePath, 2);
+  await run("openclaw", ["cognitive-probe", "seed", "ui"], {
+    env: environment,
+  });
+  const uiResult = await run(
+    "openclaw",
+    [
+      "gateway",
+      "call",
+      "chat.send",
+      "--url",
+      `ws://127.0.0.1:${port}`,
+      "--token",
+      token,
+      "--expect-final",
+      "--json",
+      "--timeout",
+      "10000",
+      "--params",
+      JSON.stringify({
+        sessionKey: environment.STELLA_RUNTIME_PROBE_SESSION_KEY,
+        message: "MEMORY_RUN",
+        idempotencyKey: "00000000-0000-4000-8000-000000000004",
+      }),
+    ],
+    { env: environment },
+  );
+
+  let evidence;
+  try {
+    evidence = await readProbeEvidence(evidencePath, 3);
+  } catch (error) {
+    throw new Error([
+      error.message,
+      `ABORT_STDOUT=${abortedCommand.stdout}`,
+      `ABORT_STDERR=${abortedCommand.stderr}`,
+      `COMMAND_STDOUT=${commandResult.stdout}`,
+      `COMMAND_STDERR=${commandResult.stderr}`,
+      `UI_STDOUT=${uiResult.stdout}`,
+      `UI_STDERR=${uiResult.stderr}`,
+    ].join("\n"));
+  }
+  const promptEntries = evidence.filter(
+    (entry) => entry.hook === "before_prompt_build",
+  );
+  const abortedRun = promptEntries.find(
+    (entry) => entry.runKind === "command_abort",
+  );
+  const commandRun = promptEntries.find(
+    (entry) => entry.runKind === "command_retry",
+  );
+  const uiRun = promptEntries.find((entry) => entry.runKind === "memory");
+  const evidenceDiagnostic = JSON.stringify(evidence, null, 2);
+  assert.ok(abortedRun?.runId, evidenceDiagnostic);
+  assert.ok(commandRun?.runId, evidenceDiagnostic);
+  assert.ok(uiRun?.runId, evidenceDiagnostic);
+  assert.notEqual(abortedRun.runId, commandRun.runId);
+  assert.notEqual(commandRun.runId, uiRun.runId);
+  assert.equal(abortedRun.newViewVersion, "view-1");
+  assert.equal(abortedRun.claimAttempt, 1);
+  assert.equal(commandRun.newViewVersion, "view-1");
+  assert.equal(commandRun.claimAttempt, 2);
+  assert.equal(uiRun.newViewVersion, "view-2");
+  assert.equal(uiRun.claimAttempt, 1);
+
+  const uiHooks = evidence
+    .filter((entry) => entry.runId === uiRun.runId)
+    .map((entry) => entry.hook);
+  assert.deepEqual(uiHooks, [
+    "before_prompt_build",
+    "after_tool_call",
+    "before_agent_finalize",
+    "agent_end",
+  ]);
+  assert.equal(
+    evidence
+      .filter((entry) => [
+        abortedRun.runId,
+        commandRun.runId,
+        uiRun.runId,
+      ].includes(entry.runId))
+      .every(
+        (entry) =>
+          entry.sessionKey === environment.STELLA_RUNTIME_PROBE_SESSION_KEY,
+      ),
+    true,
+  );
+  const abortedEnd = evidence.find(
+    (entry) => entry.runId === abortedRun.runId && entry.hook === "agent_end",
+  );
+  assert.equal(abortedEnd?.disposition, "released");
+  assert.equal(abortedEnd?.outbox.status, "pending");
+  assert.equal(abortedEnd?.outbox.last_error_code, "HOST_ABORTED");
+  assert.equal(
+    evidence
+      .filter((entry) =>
+        entry.hook === "agent_end" && entry.runId !== abortedRun.runId
+      )
+      .every((entry) => entry.success && entry.activeRunCount === 0),
+    true,
+  );
+  const memoryTool = evidence.find(
+    (entry) => entry.runId === uiRun.runId && entry.hook === "after_tool_call",
+  );
+  assert.equal(memoryTool?.toolName, "synthetic_memory");
+  assert.equal(typeof memoryTool?.toolCallId, "string");
+  const { stdout: storeOutput } = await run(
+    "openclaw",
+    ["cognitive-probe", "inspect"],
+    { env: environment },
+  );
+  const store = parseJsonOutput(storeOutput);
+  assert.equal(store.command.status, "completed");
+  assert.equal(store.command.successor_run_id, commandRun.runId);
+  assert.equal(store.command.attempt_count, 2);
+  assert.equal(store.command.successful_completion_count, 1);
+  assert.equal(store.ui.status, "completed");
+  assert.equal(store.ui.successor_run_id, uiRun.runId);
+  assert.equal(store.ui.new_view_version, "view-2");
+  assert.equal(store.ui.successful_completion_count, 1);
+  assert.equal(store.head.view_version, "view-2");
+  assert.equal(store.eventCount, 2);
+  return {
+    abortedRunId: abortedRun.runId,
+    commandRunId: commandRun.runId,
+    uiRunId: uiRun.runId,
+    sessionKey: environment.STELLA_RUNTIME_PROBE_SESSION_KEY,
+    memoryResult: memoryTool.result,
+  };
+}
+
+async function listJavaScriptFiles(directory) {
+  const files = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await listJavaScriptFiles(path)));
+    } else if (entry.name.endsWith(".js")) {
+      files.push(path);
+    }
+  }
+  return files;
+}
+
+async function verifyRejectedPathsAbsent(pluginRoot) {
+  const source = (
+    await Promise.all(
+      (await listJavaScriptFiles(join(pluginRoot, "dist"))).map(
+        (path) => readFile(path, "utf8"),
+      ),
+    )
+  ).join("\n");
+  for (const rejectedPath of [
+    "runContext",
+    "enqueueNextTurnInjection",
+    "runEmbeddedAgent",
+    "scheduleSessionTurn",
+  ]) {
+    assert.equal(source.includes(rejectedPath), false);
+  }
+}
+
+async function verifyMemoryAdapter(runtime, memoryResult) {
   const memory = new runtime.MemoryObservationAdapter();
   assert.deepEqual(
     memory.observe({ toolCallId: "tool-memory-1", ...memoryResult }),
@@ -225,7 +481,10 @@ async function verifyPackedAdapters(pluginRoot, memoryResult) {
       stableRefs: ["sem-synthetic", "src-synthetic"],
     },
   );
+}
 
+async function verifyRunScratch(runtime, successors) {
+  const registryChecksum = runtime.calculateRegistryChecksum([]);
   const scratch = new runtime.RunScratchMap({ capacity: 2, ttlMs: 50 });
   const binding = {
     syncGeneration: "generation-1",
@@ -233,31 +492,46 @@ async function verifyPackedAdapters(pluginRoot, memoryResult) {
     stateViewVersion: "view-1",
     registryChecksum,
     stateView: { value: "fixed" },
-    routerResult,
+    routerResult: routerResult(),
   };
   await Promise.all([
-    scratch.acquire("run-command", binding),
-    scratch.acquire("run-ui", { ...binding, stateViewVersion: "view-2" }),
+    scratch.acquire(successors.commandRunId, binding),
+    scratch.acquire(successors.uiRunId, { ...binding, stateViewVersion: "view-2" }),
   ]);
-  const repeated = await scratch.acquire("run-command", structuredClone(binding));
+  const repeated = await scratch.acquire(
+    successors.commandRunId,
+    structuredClone(binding),
+  );
   assert.equal(repeated.binding.stateViewVersion, "view-1");
   await assert.rejects(
     scratch.acquire("run-over-capacity", binding),
     /RUN_SCRATCH_CAPACITY/,
   );
+  await assert.rejects(scratch.acquire("", binding), /RUN_ID_REQUIRED/);
+  await assert.rejects(
+    scratch.acquire(successors.commandRunId, {
+      ...binding,
+      stateViewVersion: "view-conflict",
+    }),
+    /RUN_BINDING_CONFLICT/,
+  );
   await Promise.all([
-    scratch.observe("run-command", {
+    scratch.observe(successors.commandRunId, {
       toolCallId: "tool-a",
       stableRefs: ["sem-a"],
     }),
-    scratch.observe("run-command", {
+    scratch.observe(successors.commandRunId, {
       toolCallId: "tool-a",
       stableRefs: ["sem-duplicate"],
     }),
   ]);
-  assert.equal(scratch.inspect("run-command")?.observations.length, 1);
-  await scratch.release("run-command");
-  assert.equal(scratch.inspect("run-command"), null);
+  assert.equal(
+    scratch.inspect(successors.commandRunId)?.observations.length,
+    1,
+  );
+  assert.equal(scratch.inspect(successors.sessionKey), null);
+  await scratch.release(successors.commandRunId);
+  assert.equal(scratch.inspect(successors.commandRunId), null);
   assert.equal(scratch.clearLifecycle("restart"), 1);
 
   let now = 1_000;
@@ -269,7 +543,9 @@ async function verifyPackedAdapters(pluginRoot, memoryResult) {
   await expiringScratch.acquire("run-expiring", binding);
   now += 11;
   assert.equal(expiringScratch.cleanupExpired(), 1);
+}
 
+async function verifyReanswerStore(runtime, stateRuntime, successors) {
   assert.equal(typeof runtime.SqliteReanswerStore, "undefined");
   assert.equal(typeof stateRuntime.SqliteReanswerStore, "function");
   const stateStore = new stateRuntime.SqliteReanswerStore({
@@ -282,7 +558,7 @@ async function verifyPackedAdapters(pluginRoot, memoryResult) {
     },
   });
   try {
-    const sessionKeyHash = contractChecksum("1");
+    const sessionKeyHash = `sha256:${checksum(successors.sessionKey)}`;
     const correction = (sequence, id) => ({
       event: {
         seq: sequence,
@@ -311,33 +587,71 @@ async function verifyPackedAdapters(pluginRoot, memoryResult) {
       },
     });
 
-    await stateStore.correct(correction(1, "command"));
-    const commandClaim = await stateStore.claim("correction-command", {
-      successorRunId: "run-command",
-      deliveryMode: "command_continuation",
-    });
+    const first = await stateStore.correct(correction(1, "command"));
+    assert.deepEqual(await stateStore.correct(correction(1, "command")), first);
+    await assert.rejects(
+      stateStore.correct(correction(2, "blocked")),
+      /REANSWER_SESSION_BUSY/,
+    );
+    assert.equal(stateStore.getEventCount(), 1);
+    assert.equal(stateStore.getHead().view_version, "view-1");
+
+    const commandClaims = await Promise.all([
+      stateStore.claim("correction-command", {
+        successorRunId: successors.commandRunId,
+        deliveryMode: "command_continuation",
+      }),
+      stateStore.claim("correction-command", {
+        successorRunId: "run-command-race",
+        deliveryMode: "command_continuation",
+      }),
+    ]);
+    assert.equal(commandClaims.filter(Boolean).length, 1);
+    const commandClaim = commandClaims.find(Boolean);
     assert.ok(commandClaim);
     await stateStore.release(commandClaim, "HOST_ABORTED");
     const retry = await stateStore.claim("correction-command", {
-      successorRunId: "run-command-retry",
+      successorRunId: successors.commandRunId,
       deliveryMode: "command_continuation",
     });
     assert.ok(retry);
     await stateStore.complete(retry);
+    await assert.rejects(stateStore.complete(retry), /REANSWER_CAS_FAILED/);
+    assert.equal(await stateStore.claim("correction-command", {
+      successorRunId: "run-command-after-complete",
+      deliveryMode: "command_continuation",
+    }), null);
 
     await stateStore.correct(correction(2, "ui"));
     const uiClaim = await stateStore.claim("correction-ui", {
-      successorRunId: "run-ui",
+      successorRunId: successors.uiRunId,
       deliveryMode: "ui_normal_rpc",
     });
     assert.ok(uiClaim);
     await stateStore.complete(uiClaim);
     assert.notEqual(retry.successorRunId, uiClaim.successorRunId);
-    assert.equal(stateStore.get("correction-command")?.instance_id, "instance-synthetic");
-    assert.equal(stateStore.get("correction-ui")?.instance_id, "instance-synthetic");
+    const commandRecord = stateStore.get("correction-command");
+    const uiRecord = stateStore.get("correction-ui");
+    assert.equal(commandRecord?.session_key_hash, sessionKeyHash);
+    assert.equal(uiRecord?.session_key_hash, sessionKeyHash);
+    assert.equal(uiRecord?.new_view_version, "view-2");
+    assert.equal(commandRecord?.successful_completion_count, 1);
+    assert.equal(uiRecord?.successful_completion_count, 1);
   } finally {
     stateStore.close();
   }
+}
+
+async function verifyPackedAdapters(pluginRoot, successors) {
+  const runtime = await import(
+    pathToFileURL(join(pluginRoot, "dist", "index.js")).href
+  );
+  const stateRuntime = await import(
+    pathToFileURL(join(pluginRoot, "dist", "state", "index.js")).href
+  );
+  await verifyMemoryAdapter(runtime, successors.memoryResult);
+  await verifyRunScratch(runtime, successors);
+  await verifyReanswerStore(runtime, stateRuntime, successors);
 }
 
 test("packed runtime passes the exact OpenClaw host smoke and restores configuration", async (t) => {
@@ -345,14 +659,56 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
   t.after(() => rm(root, { recursive: true, force: true }));
   const configPath = join(root, "openclaw.json");
   const backupPath = join(root, "pre-install-openclaw.json");
+  const evidencePath = join(root, "host-probe.jsonl");
+  const databasePath = join(root, "reanswer.sqlite");
+  const workspace = join(root, "workspace");
   const port = await reservePort();
+  const modelPort = await reservePort();
   const token = ["synthetic", "gateway", "token"].join("-");
+  const providerKey = ["synthetic", "provider", "credential"].join("-");
+  const sessionKey = "agent:main:synthetic-smoke";
+  await mkdir(workspace, { recursive: true });
+  await writeFile(join(workspace, "MEMORY.md"), "# Synthetic memory\n", "utf8");
   const originalConfig = `${JSON.stringify({
     gateway: {
       mode: "local",
       bind: "loopback",
       port,
       auth: { mode: "token", token },
+    },
+    agents: {
+      defaults: {
+        workspace,
+        model: { primary: "synthetic/synthetic-model" },
+        timeoutSeconds: 30,
+      },
+    },
+    models: {
+      mode: "merge",
+      providers: {
+        synthetic: {
+          baseUrl: `http://127.0.0.1:${modelPort}/v1`,
+          apiKey: providerKey,
+          api: "openai-completions",
+          models: [{
+            id: "synthetic-model",
+            name: "Synthetic Model",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 131072,
+            maxTokens: 4096,
+          }],
+        },
+      },
+    },
+    plugins: {
+      entries: {
+        "cognitive-runtime-host-probe": {
+          enabled: true,
+          hooks: { allowConversationAccess: true },
+        },
+      },
     },
   }, null, 2)}\n`;
   await writeFile(configPath, originalConfig, { mode: 0o600 });
@@ -364,9 +720,17 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
     OPENCLAW_CONFIG_PATH: configPath,
     OPENCLAW_STATE_DIR: join(root, "state"),
     OPENCLAW_GATEWAY_TOKEN: token,
+    STELLA_RUNTIME_PROBE_DATABASE: databasePath,
+    STELLA_RUNTIME_PROBE_EVIDENCE: evidencePath,
+    STELLA_RUNTIME_PROBE_SESSION_KEY: sessionKey,
     npm_config_cache: join(root, "npm-cache"),
   };
-  let installed = false;
+  const probeFixtureRoot = fileURLToPath(
+    new URL("../fixtures/openclaw-host-probe/", import.meta.url),
+  );
+  const modelServer = await startSyntheticModelServer(modelPort);
+  let runtimeInstalled = false;
+  let probeInstalled = false;
   let gateway;
 
   try {
@@ -382,20 +746,19 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
     );
     const [pack] = JSON.parse(packOutput);
     const tarball = join(root, pack.filename);
-
     await run(
       "openclaw",
       ["plugins", "install", `npm-pack:${tarball}`],
       { env: environment },
     );
-    installed = true;
+    runtimeInstalled = true;
 
     const { stdout: inspectOutput } = await run(
       "openclaw",
       ["plugins", "inspect", "cognitive-runtime", "--runtime", "--json"],
       { env: environment },
     );
-    const inspection = JSON.parse(inspectOutput);
+    const inspection = parseJsonOutput(inspectOutput);
     assert.equal(inspection.plugin.status, "loaded");
     assert.equal(
       inspection.plugin.source.endsWith("/dist/openclaw/index.js"),
@@ -404,15 +767,9 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
     assert.deepEqual(inspection.plugin.cliCommands, ["cognitive"]);
     assert.equal(inspection.plugin.configJsonSchema.additionalProperties, false);
     const pluginRoot = dirname(dirname(dirname(inspection.plugin.source)));
-    const installedPluginSource = await readFile(inspection.plugin.source, "utf8");
-    for (const rejectedPath of [
-      "runContext",
-      "enqueueNextTurnInjection",
-      "runEmbeddedAgent",
-      "scheduleSessionTurn",
-    ]) {
-      assert.equal(installedPluginSource.includes(rejectedPath), false);
-    }
+    environment.STELLA_RUNTIME_PROBE_ROOT = pluginRoot;
+    await verifyRejectedPathsAbsent(pluginRoot);
+
     const compatibility = JSON.parse(
       await readFile(join(pluginRoot, "compatibility", "openclaw.json"), "utf8"),
     );
@@ -433,31 +790,68 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       ["cognitive", "self-check"],
       { env: environment },
     );
-    assert.deepEqual(JSON.parse(selfCheckOutput.trim()), {
+    assert.deepEqual(parseJsonOutput(selfCheckOutput), {
       status: "ok",
       pluginId: "cognitive-runtime",
-      hostCapabilities: {
-        hostModelCompletion: "llm.complete",
-      },
+      hostCapabilities: { hostModelCompletion: "llm.complete" },
     });
-
     const { stdout: skillOutput } = await run(
       "openclaw",
       ["skills", "info", "framework-admission", "--json"],
       { env: environment },
     );
-    const skill = JSON.parse(skillOutput);
+    const skill = parseJsonOutput(skillOutput);
     assert.equal(skill.name, "framework-admission");
     assert.equal(skill.eligible, true);
 
-    const { stdout: npmRootOutput } = await run("npm", ["root", "-g"], {
+    await run("openclaw", ["plugins", "install", probeFixtureRoot], {
       env: environment,
     });
-    const openClawRoot = join(npmRootOutput.trim(), "openclaw");
-    const memoryResult = await probeTypedHooks(openClawRoot);
-    await verifyPackedAdapters(pluginRoot, memoryResult);
+    probeInstalled = true;
+    const { stdout: probeInspectionOutput } = await run(
+      "openclaw",
+      [
+        "plugins",
+        "inspect",
+        "cognitive-runtime-host-probe",
+        "--runtime",
+        "--json",
+      ],
+      { env: environment },
+    );
+    assert.equal(parseJsonOutput(probeInspectionOutput).plugin.status, "loaded");
+    await verifyHostRouter(environment);
+
+    gateway = spawnGateway(port, token, environment);
+    await waitForDeepGatewayProbe(environment);
+    const successors = await runHostSuccessors(
+      environment,
+      evidencePath,
+      port,
+      token,
+    );
+    await stopGateway(gateway);
+    gateway = undefined;
+    await verifyPackedAdapters(pluginRoot, successors);
+    assert.equal(
+      modelServer.requests.some((request) =>
+        (request.tools ?? []).some(
+          (tool) => tool.function?.name === "synthetic_memory",
+        )),
+      true,
+    );
   } finally {
-    if (installed) {
+    if (gateway !== undefined) {
+      await stopGateway(gateway);
+    }
+    if (probeInstalled) {
+      await run(
+        "openclaw",
+        ["plugins", "uninstall", "cognitive-runtime-host-probe", "--force"],
+        { env: environment },
+      );
+    }
+    if (runtimeInstalled) {
       await run(
         "openclaw",
         ["plugins", "uninstall", "cognitive-runtime", "--force"],
@@ -466,29 +860,12 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
     }
     await copyFile(backupPath, configPath);
     assert.equal(checksum(await readFile(configPath)), originalChecksum);
-
-    gateway = spawn(
-      "openclaw",
-      [
-        "gateway",
-        "run",
-        "--port",
-        String(port),
-        "--bind",
-        "loopback",
-        "--token",
-        token,
-      ],
-      { env: environment, stdio: "ignore" },
-    );
+    gateway = spawnGateway(port, token, environment);
     try {
       await waitForDeepGatewayProbe(environment);
     } finally {
-      gateway.kill("SIGTERM");
-      await new Promise((resolve) => {
-        gateway.once("exit", resolve);
-        setTimeout(resolve, 5_000);
-      });
+      await stopGateway(gateway);
     }
+    await modelServer.close();
   }
 });

@@ -76,16 +76,18 @@ test("OpenClaw registration does not use rejected host paths", async () => {
     "runEmbeddedAgent",
     "scheduleSessionTurn",
   ];
-  const api = new Proxy({
-    runtime: {
-      llm: { complete: async () => ({}) },
-    },
-    registerCli() {},
-  }, {
-    get(target, property, receiver) {
+  const rejectAccess = (target) => new Proxy(target, {
+    get(value, property, receiver) {
       assert.equal(rejected.includes(String(property)), false);
-      return Reflect.get(target, property, receiver);
+      return Reflect.get(value, property, receiver);
     },
+  });
+  const api = rejectAccess({
+    runtime: rejectAccess({
+      llm: rejectAccess({ complete: async () => ({}) }),
+      workflow: rejectAccess({}),
+    }),
+    registerCli() {},
   });
 
   await plugin.register(api);

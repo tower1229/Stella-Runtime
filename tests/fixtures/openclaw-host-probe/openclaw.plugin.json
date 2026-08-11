@@ -1,0 +1,31 @@
+{
+  "id": "cognitive-runtime-host-probe",
+  "name": "Cognitive Runtime Synthetic Host Probe",
+  "description": "Synthetic exact-host probe for Stella Runtime pack-install tests",
+  "version": "0.0.0",
+  "activation": {
+    "onStartup": true,
+    "onCommands": [
+      "cognitive-probe"
+    ],
+    "onCapabilities": [
+      "hook",
+      "tool"
+    ]
+  },
+  "contracts": {
+    "tools": [
+      "synthetic_memory"
+    ]
+  },
+  "toolMetadata": {
+    "synthetic_memory": {
+      "optional": false
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
