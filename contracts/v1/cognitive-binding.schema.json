@@ -4,8 +4,9 @@
   "title": "Cognitive Binding",
   "type": "object",
   "additionalProperties": false,
-  "required": ["active_governing_system"],
+  "required": ["schema_version", "active_governing_system"],
   "properties": {
+    "schema_version": { "const": "cognitive-runtime.cognitive-binding/v1" },
     "active_governing_system": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" }] }
   }
 }
