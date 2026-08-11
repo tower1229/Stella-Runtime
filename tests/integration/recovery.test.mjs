@@ -1,0 +1,338 @@
+import assert from "node:assert/strict";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import test from "node:test";
+
+import {
+  createRuntimeRecoveryPort,
+  openRuntimeRecoverySnapshot,
+} from "../../dist/recovery/index.js";
+import { SqliteReanswerStore } from "../../dist/state/index.js";
+
+const zeroChecksum = `sha256:${"0".repeat(64)}`;
+const oneChecksum = `sha256:${"1".repeat(64)}`;
+
+const initialHead = {
+  active_seq: 0,
+  view_version: "view-synthetic-0",
+  checksum: zeroChecksum,
+  activated_at: "2026-08-11T00:00:00.000Z",
+};
+
+const correction = {
+  event: {
+    seq: 1,
+    event_id: "event-synthetic-1",
+    state_id: "state-synthetic-1",
+    event_type: "correction",
+    payload: { status: "synthetic" },
+    observed_at: "2026-08-11T00:00:01.000Z",
+    source_kind: "user_explicit",
+    idempotency_key: "event-key-synthetic-1",
+    created_at: "2026-08-11T00:00:01.000Z",
+  },
+  newHead: {
+    active_seq: 1,
+    view_version: "view-synthetic-1",
+    checksum: oneChecksum,
+    activated_at: "2026-08-11T00:00:01.000Z",
+  },
+  outbox: {
+    correctionId: "correction-synthetic-1",
+    instanceId: "instance-synthetic",
+    sessionKeyHash: `sha256:${"2".repeat(64)}`,
+    priorRunId: "run-synthetic-1",
+    idempotencyKey: "outbox-key-synthetic-1",
+    createdAt: "2026-08-11T00:00:01.000Z",
+  },
+};
+
+const createFixture = async (t, name) => {
+  const root = await mkdtemp(join(tmpdir(), `stella-recovery-${name}-`));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const stateRoot = join(root, "state");
+  const instanceDirectory = join(stateRoot, "instance-synthetic");
+  const databasePath = join(instanceDirectory, "runtime.sqlite");
+  const { mkdir } = await import("node:fs/promises");
+  await mkdir(instanceDirectory, { recursive: true });
+  const store = new SqliteReanswerStore({ databasePath, initialHead });
+  await store.correct(correction);
+  store.close();
+  const recovery = createRuntimeRecoveryPort({
+    stateRoot,
+    packageVersion: "0.0.0",
+    storageSchemaVersion: "1",
+    now: () => "2026-08-11T00:00:05.000Z",
+  });
+  return { root, stateRoot, databasePath, recovery };
+};
+
+const verifyOptions = {
+  expectedInstanceId: "instance-synthetic",
+  supportedSnapshotSchemaVersions: [
+    "cognitive-runtime.runtime-recovery-snapshot-manifest/v1",
+  ],
+  supportedStorageSchemaVersions: ["1"],
+  supportedPackageVersions: ["0.0.0"],
+  supportedContractVersions: ["v1"],
+  access: "read_only",
+};
+
+test("backup exports one immutable authoritative snapshot and verify is read-only", async (t) => {
+  const fixture = await createFixture(t, "backup");
+  const live = new DatabaseSync(fixture.databasePath);
+  live.exec("CREATE TABLE generation_cache(value TEXT); INSERT INTO generation_cache VALUES ('synthetic-derived-only')");
+  live.close();
+  const outputDirectory = join(fixture.root, "snapshot");
+  const snapshot = await fixture.recovery.backup({
+    instanceId: "instance-synthetic",
+    authorityRevision: "revision-synthetic-1",
+    outputDirectory,
+    consistency: "transactional_boundary",
+  });
+
+  assert.equal(snapshot.directory, outputDirectory);
+  assert.equal(snapshot.manifest.state_boundary.active_seq, 1);
+  assert.deepEqual(snapshot.manifest.pending_outbox_summary, {
+    pending_count: 1,
+    in_flight_count: 0,
+  });
+  assert.deepEqual(snapshot.manifest.projections_requiring_rebuild, [
+    "state_view",
+    "generation",
+    "registry",
+    "index",
+    "cache",
+  ]);
+  assert.deepEqual(snapshot.manifest.files.map(({ path }) => path), [
+    "authoritative/state.sqlite",
+  ]);
+  const exported = new DatabaseSync(
+    join(outputDirectory, "authoritative/state.sqlite"),
+    { readOnly: true },
+  );
+  assert.equal(
+    exported.prepare("SELECT name FROM sqlite_master WHERE name = 'generation_cache'").get(),
+    undefined,
+  );
+  exported.close();
+
+  const before = await readFile(join(outputDirectory, "manifest.json"), "utf8");
+  const report = await fixture.recovery.verify(snapshot, verifyOptions);
+  const after = await readFile(join(outputDirectory, "manifest.json"), "utf8");
+  assert.equal(after, before);
+  assert.equal(report.compatibility_result.status, "pass");
+  assert.equal(report.integrity_result.status, "pass");
+  assert.deepEqual(report.pending_outbox_state, {
+    pending_count: 1,
+    in_flight_count: 0,
+  });
+});
+
+test("verify deterministically rejects checksum and compatibility damage", async (t) => {
+  const fixture = await createFixture(t, "verify-failures");
+  const snapshot = await fixture.recovery.backup({
+    instanceId: "instance-synthetic",
+    authorityRevision: "revision-synthetic-1",
+    outputDirectory: join(fixture.root, "snapshot"),
+    consistency: "transactional_boundary",
+  });
+  const artifactPath = join(snapshot.directory, "authoritative/state.sqlite");
+  await chmod(artifactPath, 0o600);
+  await writeFile(artifactPath, "damaged");
+
+  const damaged = await fixture.recovery.verify(snapshot, verifyOptions);
+  assert.equal(damaged.integrity_result.status, "fail");
+  assert.ok(damaged.integrity_result.reason_codes.includes("CHECKSUM_MISMATCH"));
+
+  const incompatible = await fixture.recovery.verify(snapshot, {
+    ...verifyOptions,
+    supportedStorageSchemaVersions: ["2"],
+  });
+  assert.equal(incompatible.compatibility_result.status, "fail");
+  assert.ok(
+    incompatible.compatibility_result.reason_codes.includes(
+      "STORAGE_SCHEMA_INCOMPATIBLE",
+    ),
+  );
+});
+
+test("restore preserves pending work, is idempotent, and rejects a used target", async (t) => {
+  const source = await createFixture(t, "restore-source");
+  const snapshot = await source.recovery.backup({
+    instanceId: "instance-synthetic",
+    authorityRevision: "revision-synthetic-1",
+    outputDirectory: join(source.root, "snapshot"),
+    consistency: "transactional_boundary",
+  });
+  const targetRoot = join(source.root, "target-state");
+  const target = createRuntimeRecoveryPort({
+    stateRoot: targetRoot,
+    packageVersion: "0.0.0",
+    storageSchemaVersion: "1",
+  });
+  const options = {
+    targetInstanceId: "instance-synthetic",
+    targetHasServedRun: false,
+    restoreIdempotencyKey: "restore-synthetic-1",
+    rollback: "required",
+    ...verifyOptions,
+  };
+
+  const restored = await target.restore(snapshot, options);
+  assert.equal(restored.integrity_result.status, "pass");
+  assert.deepEqual(restored.restored_active_head, {
+    active_seq: 1,
+    state_view_version: "view-synthetic-1",
+    checksum: oneChecksum,
+  });
+  assert.deepEqual(restored.pending_outbox_state, {
+    pending_count: 1,
+    in_flight_count: 0,
+  });
+
+  const repeated = await target.restore(snapshot, options);
+  assert.equal(repeated.integrity_result.status, "pass");
+  assert.deepEqual(repeated.rollback_result, {
+    status: "not_required",
+    reason_codes: ["RESTORE_ALREADY_APPLIED"],
+  });
+
+  const rejected = await target.restore(snapshot, {
+    ...options,
+    restoreIdempotencyKey: "restore-synthetic-2",
+    targetHasServedRun: true,
+  });
+  assert.equal(rejected.compatibility_result.status, "fail");
+  assert.ok(
+    rejected.compatibility_result.reason_codes.includes("TARGET_HAS_SERVED_RUN"),
+  );
+
+  const mismatched = await target.restore(snapshot, {
+    ...options,
+    targetInstanceId: "instance-other",
+    restoreIdempotencyKey: "restore-synthetic-3",
+  });
+  assert.equal(mismatched.compatibility_result.status, "fail");
+  assert.ok(
+    mismatched.compatibility_result.reason_codes.includes("INSTANCE_MISMATCH"),
+  );
+});
+
+test("restore releases a captured in-flight successor attempt back to pending", async (t) => {
+  const source = await createFixture(t, "in-flight-source");
+  const store = new SqliteReanswerStore({
+    databasePath: source.databasePath,
+    initialHead,
+  });
+  const claim = await store.claim("correction-synthetic-1", {
+    successorRunId: "run-synthetic-successor",
+    deliveryMode: "command_continuation",
+  });
+  assert.notEqual(claim, null);
+  store.close();
+  const snapshot = await source.recovery.backup({
+    instanceId: "instance-synthetic",
+    authorityRevision: "revision-synthetic-1",
+    outputDirectory: join(source.root, "snapshot"),
+    consistency: "transactional_boundary",
+  });
+  assert.deepEqual(snapshot.manifest.pending_outbox_summary, {
+    pending_count: 0,
+    in_flight_count: 1,
+  });
+  const target = createRuntimeRecoveryPort({
+    stateRoot: join(source.root, "target-state"),
+    packageVersion: "0.0.0",
+    storageSchemaVersion: "1",
+  });
+  const report = await target.restore(snapshot, {
+    targetInstanceId: "instance-synthetic",
+    targetHasServedRun: false,
+    restoreIdempotencyKey: "restore-in-flight",
+    rollback: "required",
+    supportedSnapshotSchemaVersions:
+      verifyOptions.supportedSnapshotSchemaVersions,
+    supportedStorageSchemaVersions: verifyOptions.supportedStorageSchemaVersions,
+    supportedPackageVersions: verifyOptions.supportedPackageVersions,
+    supportedContractVersions: verifyOptions.supportedContractVersions,
+  });
+  assert.deepEqual(report.pending_outbox_state, {
+    pending_count: 1,
+    in_flight_count: 0,
+  });
+});
+
+test("restore interruption rolls the original target back", async (t) => {
+  const source = await createFixture(t, "rollback-source");
+  const snapshot = await source.recovery.backup({
+    instanceId: "instance-synthetic",
+    authorityRevision: "revision-synthetic-1",
+    outputDirectory: join(source.root, "snapshot"),
+    consistency: "transactional_boundary",
+  });
+  const targetRoot = join(source.root, "target-state");
+  const targetDirectory = join(targetRoot, "instance-synthetic");
+  const { mkdir } = await import("node:fs/promises");
+  await mkdir(targetDirectory, { recursive: true });
+  const targetPath = join(targetDirectory, "runtime.sqlite");
+  const originalStore = new SqliteReanswerStore({
+    databasePath: targetPath,
+    initialHead,
+  });
+  originalStore.close();
+  const before = await readFile(targetPath);
+  let checks = 0;
+  const signal = {
+    get aborted() {
+      checks += 1;
+      return checks >= 3;
+    },
+  };
+  const target = createRuntimeRecoveryPort({
+    stateRoot: targetRoot,
+    packageVersion: "0.0.0",
+    storageSchemaVersion: "1",
+  });
+
+  const report = await target.restore(snapshot, {
+    targetInstanceId: "instance-synthetic",
+    targetHasServedRun: false,
+    restoreIdempotencyKey: "restore-interrupted",
+    rollback: "required",
+    signal,
+    ...verifyOptions,
+  });
+
+  assert.deepEqual(await readFile(targetPath), before);
+  assert.equal(report.integrity_result.status, "fail");
+  assert.deepEqual(report.rollback_result, {
+    status: "completed",
+    reason_codes: ["RESTORE_INTERRUPTED"],
+  });
+});
+
+test("snapshot loader rejects a changed manifest artifact identity", async (t) => {
+  const fixture = await createFixture(t, "manifest");
+  const snapshot = await fixture.recovery.backup({
+    instanceId: "instance-synthetic",
+    authorityRevision: "revision-synthetic-1",
+    outputDirectory: join(fixture.root, "snapshot"),
+    consistency: "transactional_boundary",
+  });
+  const copied = join(fixture.root, "copied-snapshot");
+  const { cp } = await import("node:fs/promises");
+  await cp(snapshot.directory, copied, { recursive: true });
+  const manifestPath = join(copied, "manifest.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  manifest.authority_revision = "revision-tampered";
+  await chmod(manifestPath, 0o600);
+  await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`);
+
+  await assert.rejects(
+    openRuntimeRecoverySnapshot(copied),
+    /SNAPSHOT_ARTIFACT_ID_MISMATCH/,
+  );
+});

@@ -18,6 +18,35 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "recovery": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stateRoot", "instances"],
+        "properties": {
+          "stateRoot": {
+            "type": "string",
+            "minLength": 1
+          },
+          "instances": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["authorityRevision", "hasServedRun"],
+              "properties": {
+                "authorityRevision": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "hasServedRun": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }

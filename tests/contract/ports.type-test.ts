@@ -52,6 +52,8 @@ const verifyOptions: RuntimeVerifyOptions = {
   expectedInstanceId: "instance-synthetic",
   supportedSnapshotSchemaVersions: ["cognitive-runtime.runtime-recovery-snapshot-manifest/v1"],
   supportedStorageSchemaVersions: ["1"],
+  supportedPackageVersions: ["0.0.0"],
+  supportedContractVersions: ["v1"],
   access: "read_only",
 };
 verifyOptions satisfies RuntimeVerifyOptions;
@@ -63,5 +65,7 @@ const restoreOptions: RuntimeRestoreOptions = {
   rollback: "required",
   supportedSnapshotSchemaVersions: ["cognitive-runtime.runtime-recovery-snapshot-manifest/v1"],
   supportedStorageSchemaVersions: ["1"],
+  supportedPackageVersions: ["0.0.0"],
+  supportedContractVersions: ["v1"],
 };
 restoreOptions satisfies RuntimeRestoreOptions;

@@ -1,7 +1,11 @@
 export interface CliCommand {
   command(name: string): CliCommand;
   description(value: string): CliCommand;
-  action(handler: () => void | Promise<void>): CliCommand;
+  requiredOption(flags: string, description: string): CliCommand;
+  option(flags: string, description: string): CliCommand;
+  action(
+    handler: (options: Readonly<Record<string, unknown>>) => void | Promise<void>,
+  ): CliCommand;
 }
 
 export interface CliDescriptor {
@@ -11,6 +15,8 @@ export interface CliDescriptor {
 }
 
 export interface CognitiveRuntimePluginApi {
+  readonly version?: string;
+  readonly pluginConfig?: Readonly<Record<string, unknown>>;
   readonly runtime: {
     readonly llm: {
       complete(params: unknown): Promise<unknown>;

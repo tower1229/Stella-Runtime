@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import plugin from "../../dist/openclaw/index.js";
+import { SqliteReanswerStore } from "../../dist/state/index.js";
 
 class FakeCommand {
   children = new Map();
@@ -19,6 +23,14 @@ class FakeCommand {
 
   action(handler) {
     this.handler = handler;
+    return this;
+  }
+
+  requiredOption() {
+    return this;
+  }
+
+  option() {
     return this;
   }
 }
@@ -91,4 +103,74 @@ test("OpenClaw registration does not use rejected host paths", async () => {
   });
 
   await plugin.register(api);
+});
+
+test("OpenClaw recovery commands expose backup, read-only verify, and restore JSON", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-openclaw-recovery-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const stateRoot = join(root, "state");
+  const sourceDirectory = join(stateRoot, "instance-synthetic");
+  await mkdir(sourceDirectory, { recursive: true });
+  const store = new SqliteReanswerStore({
+    databasePath: join(sourceDirectory, "runtime.sqlite"),
+    initialHead: {
+      active_seq: 0,
+      view_version: "view-synthetic-0",
+      checksum: `sha256:${"0".repeat(64)}`,
+      activated_at: "2026-08-11T00:00:00.000Z",
+    },
+  });
+  store.close();
+  const program = new FakeCommand();
+  const api = {
+    version: "0.0.0",
+    pluginConfig: {
+      recovery: {
+        stateRoot,
+        instances: {
+          "instance-synthetic": {
+            authorityRevision: "revision-synthetic-1",
+            hasServedRun: false,
+          },
+        },
+      },
+    },
+    runtime: { llm: { complete: async () => ({}) } },
+    registerCli(registrar) {
+      return registrar({ program });
+    },
+  };
+  await plugin.register(api);
+  const cognitive = program.children.get("cognitive");
+  const output = [];
+  const originalLog = console.log;
+  console.log = (value) => output.push(JSON.parse(value));
+  try {
+    const snapshotDirectory = join(root, "snapshot");
+    await cognitive.children.get("backup").handler({
+      instance: "instance-synthetic",
+      output: snapshotDirectory,
+      json: true,
+    });
+    await cognitive.children.get("verify").handler({
+      snapshot: snapshotDirectory,
+      json: true,
+    });
+    await rm(sourceDirectory, { recursive: true, force: true });
+    await cognitive.children.get("restore").handler({
+      instance: "instance-synthetic",
+      snapshot: snapshotDirectory,
+      json: true,
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(output[0].operation, "backup");
+  assert.match(output[0].artifact_id, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(output[1].operation, "verify");
+  assert.equal(output[1].integrity_result.status, "pass");
+  assert.equal(output[2].operation, "restore");
+  assert.equal(output[2].restored_active_head.active_seq, 0);
+  assert.equal("live_database_path" in output[2], false);
 });

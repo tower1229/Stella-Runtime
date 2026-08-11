@@ -55,12 +55,15 @@ export type {
 } from "./packet/index.js";
 export {
   AUTHORITATIVE_SNAPSHOT_CONTENTS,
+  createRuntimeRecoveryPort,
   EXCLUDED_SNAPSHOT_CONTENTS,
+  openRuntimeRecoverySnapshot,
 } from "./recovery/index.js";
 export type {
   RuntimeBackupOptions,
   RuntimeRecoveryPort,
   RuntimeRecoverySnapshot,
+  RuntimeRecoveryStorageOptions,
   RuntimeRestoreOptions,
   RuntimeVerifyOptions,
 } from "./recovery/index.js";
