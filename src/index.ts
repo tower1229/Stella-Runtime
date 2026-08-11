@@ -54,10 +54,12 @@ export type {
   RemediationRequest,
 } from "./packet/index.js";
 export {
-  AUTHORITATIVE_SNAPSHOT_CONTENTS,
+  AUTHORITATIVE_RUNTIME_STATE_CONTENTS,
+  createRuntimeVerifyOptions,
   createRuntimeRecoveryPort,
-  EXCLUDED_SNAPSHOT_CONTENTS,
+  RUNTIME_RECOVERY_SNAPSHOT_EXCLUDED_CONTENTS,
   openRuntimeRecoverySnapshot,
+  RUNTIME_RECOVERY_COMPATIBILITY,
 } from "./recovery/index.js";
 export type {
   RuntimeBackupOptions,

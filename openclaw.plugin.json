@@ -33,14 +33,11 @@
             "additionalProperties": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["authorityRevision", "hasServedRun"],
+              "required": ["authorityRevision"],
               "properties": {
                 "authorityRevision": {
                   "type": "string",
                   "minLength": 1
-                },
-                "hasServedRun": {
-                  "type": "boolean"
                 }
               }
             }

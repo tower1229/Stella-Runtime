@@ -54,6 +54,7 @@ test("recovery report exposes compatibility, integrity, restore, and rollback ou
   assert.deepEqual(schema.required, [
     "report_schema_version",
     "operation",
+    "authority_revision",
     "compatibility_result",
     "integrity_result",
     "restored_active_head",

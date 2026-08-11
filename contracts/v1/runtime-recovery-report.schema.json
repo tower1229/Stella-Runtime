@@ -7,6 +7,7 @@
   "required": [
     "report_schema_version",
     "operation",
+    "authority_revision",
     "compatibility_result",
     "integrity_result",
     "restored_active_head",
@@ -24,6 +25,17 @@
       "enum": [
         "verify",
         "restore"
+      ]
+    },
+    "authority_revision": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
       ]
     },
     "compatibility_result": {

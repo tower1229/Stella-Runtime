@@ -99,6 +99,10 @@ CREATE TABLE IF NOT EXISTS reanswer_outbox (
 CREATE UNIQUE INDEX IF NOT EXISTS one_open_reanswer_per_session
   ON reanswer_outbox(session_key_hash)
   WHERE status IN ('pending', 'in_flight');
+CREATE TABLE IF NOT EXISTS runtime_served_runs (
+  run_id TEXT PRIMARY KEY,
+  served_at TEXT NOT NULL
+);
 `;
 
 const requireValidContract = (
@@ -377,6 +381,17 @@ export class SqliteReanswerStore
   getEventCount(): number {
     const row = this.#database.prepare("SELECT count(*) AS count FROM state_events").get();
     return row === undefined ? 0 : readNumber(row, "count");
+  }
+
+  markRunServed(runId: string): void {
+    if (runId.length === 0) {
+      throw new Error("RUN_ID_REQUIRED");
+    }
+    this.#database
+      .prepare(
+        "INSERT OR IGNORE INTO runtime_served_runs(run_id, served_at) VALUES (?, ?)",
+      )
+      .run(runId, this.#now());
   }
 
   close(): void {

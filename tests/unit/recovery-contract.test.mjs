@@ -2,19 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  AUTHORITATIVE_SNAPSHOT_CONTENTS,
-  EXCLUDED_SNAPSHOT_CONTENTS,
+  AUTHORITATIVE_RUNTIME_STATE_CONTENTS,
+  RUNTIME_RECOVERY_SNAPSHOT_EXCLUDED_CONTENTS,
 } from "../../dist/recovery/index.js";
 
 test("recovery contract freezes authoritative and rebuildable/private classifications", () => {
-  assert.deepEqual(AUTHORITATIVE_SNAPSHOT_CONTENTS, [
+  assert.deepEqual(AUTHORITATIVE_RUNTIME_STATE_CONTENTS, [
     "current_state_event_ledger",
     "active_state_head",
     "unfinished_corrections",
     "reanswer_outbox",
     "storage_schema_version",
   ]);
-  assert.deepEqual(EXCLUDED_SNAPSHOT_CONTENTS, [
+  assert.deepEqual(RUNTIME_RECOVERY_SNAPSHOT_EXCLUDED_CONTENTS, [
     "state_view",
     "generation",
     "registry",

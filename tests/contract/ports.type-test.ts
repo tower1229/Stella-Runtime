@@ -60,7 +60,6 @@ verifyOptions satisfies RuntimeVerifyOptions;
 
 const restoreOptions: RuntimeRestoreOptions = {
   targetInstanceId: "instance-synthetic",
-  targetHasServedRun: false,
   restoreIdempotencyKey: "restore-synthetic-1",
   rollback: "required",
   supportedSnapshotSchemaVersions: ["cognitive-runtime.runtime-recovery-snapshot-manifest/v1"],

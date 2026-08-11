@@ -3,6 +3,7 @@ import {
   chmod,
   copyFile,
   mkdir,
+  open,
   readFile,
   rename,
   rm,
@@ -19,7 +20,7 @@ import type {
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
 
-export const AUTHORITATIVE_SNAPSHOT_CONTENTS = [
+export const AUTHORITATIVE_RUNTIME_STATE_CONTENTS = [
   "current_state_event_ledger",
   "active_state_head",
   "unfinished_corrections",
@@ -27,7 +28,7 @@ export const AUTHORITATIVE_SNAPSHOT_CONTENTS = [
   "storage_schema_version",
 ] as const;
 
-export const EXCLUDED_SNAPSHOT_CONTENTS = [
+export const RUNTIME_RECOVERY_SNAPSHOT_EXCLUDED_CONTENTS = [
   "state_view",
   "generation",
   "registry",
@@ -45,6 +46,12 @@ const SNAPSHOT_SCHEMA_VERSION =
 const REPORT_SCHEMA_VERSION =
   "cognitive-runtime.runtime-recovery-report/v1" as const;
 const CONTRACT_VERSION = "v1" as const;
+export const RUNTIME_RECOVERY_COMPATIBILITY = {
+  snapshotSchemaVersions: [SNAPSHOT_SCHEMA_VERSION],
+  storageSchemaVersions: ["0", "1"],
+  currentStorageSchemaVersion: "1",
+  contractVersions: [CONTRACT_VERSION],
+} as const;
 const SNAPSHOT_DATABASE_PATH = "authoritative/state.sqlite";
 const ARTIFACT_ID_PATH = "artifact.sha256";
 const PROJECTIONS_REQUIRING_REBUILD = [
@@ -130,7 +137,6 @@ export interface RuntimeVerifyOptions {
 export interface RuntimeRestoreOptions
   extends Omit<RuntimeVerifyOptions, "access" | "expectedInstanceId"> {
   readonly targetInstanceId: string;
-  readonly targetHasServedRun: boolean;
   readonly restoreIdempotencyKey: string;
   readonly rollback: "required";
   readonly signal?: Pick<AbortSignal, "aborted">;
@@ -165,6 +171,11 @@ interface SnapshotState {
   };
   readonly pendingCount: number;
   readonly inFlightCount: number;
+}
+
+interface RestoreJournal {
+  readonly restore_hash: string;
+  readonly target_existed: boolean;
 }
 
 const sha256 = (value: string | Uint8Array): string =>
@@ -221,6 +232,7 @@ const emptyReport = (
 ): RuntimeRecoveryVerificationOrRestoreReport => ({
   report_schema_version: REPORT_SCHEMA_VERSION,
   operation,
+  authority_revision: null,
   compatibility_result: checkResult(compatibilityReasons),
   integrity_result: checkResult(integrityReasons),
   restored_active_head: null,
@@ -234,6 +246,26 @@ const withOperation = (
   report: RuntimeRecoveryVerificationOrRestoreReport,
   operation: "verify" | "restore",
 ): RuntimeRecoveryVerificationOrRestoreReport => ({ ...report, operation });
+
+export function createRuntimeVerifyOptions(
+  packageVersion: string,
+  expectedInstanceId?: string,
+): RuntimeVerifyOptions {
+  return {
+    ...(expectedInstanceId === undefined ? {} : { expectedInstanceId }),
+    supportedSnapshotSchemaVersions: [
+      ...RUNTIME_RECOVERY_COMPATIBILITY.snapshotSchemaVersions,
+    ],
+    supportedStorageSchemaVersions: [
+      ...RUNTIME_RECOVERY_COMPATIBILITY.storageSchemaVersions,
+    ],
+    supportedPackageVersions: [packageVersion],
+    supportedContractVersions: [
+      ...RUNTIME_RECOVERY_COMPATIBILITY.contractVersions,
+    ],
+    access: "read_only",
+  };
+}
 
 const databasePathFor = (stateRoot: string, instanceId: string): string => {
   if (!instanceIdPattern.test(instanceId)) {
@@ -258,6 +290,35 @@ const fileExists = async (path: string): Promise<boolean> => {
     throw error;
   }
 };
+
+const writeDurableJson = async (path: string, value: unknown): Promise<void> => {
+  const handle = await open(path, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(value)}\n`);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+};
+
+const readRestoreJournal = async (path: string): Promise<RestoreJournal> => {
+  const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+  if (
+    !isRecord(parsed) ||
+    typeof parsed.restore_hash !== "string" ||
+    !/^[a-f0-9]{64}$/.test(parsed.restore_hash) ||
+    typeof parsed.target_existed !== "boolean"
+  ) {
+    throw new Error("RESTORE_JOURNAL_INVALID");
+  }
+  return {
+    restore_hash: parsed.restore_hash,
+    target_existed: parsed.target_existed,
+  };
+};
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const insertRows = (
   target: DatabaseSync,
@@ -362,6 +423,86 @@ const authorityDigest = (databasePath: string): string => {
   } finally {
     database.close();
   }
+};
+
+const targetRunGuardReason = async (
+  targetPath: string,
+): Promise<string | null> => {
+  if (!(await fileExists(targetPath))) {
+    return null;
+  }
+  const database = new DatabaseSync(targetPath, { readOnly: true });
+  try {
+    const row = database
+      .prepare("SELECT count(*) AS count FROM runtime_served_runs")
+      .get() as Row | undefined;
+    if (row === undefined) {
+      return "TARGET_RUN_STATE_UNKNOWN";
+    }
+    return readNumber(row, "count") === 0 ? null : "TARGET_HAS_SERVED_RUN";
+  } catch {
+    return "TARGET_RUN_STATE_UNKNOWN";
+  } finally {
+    database.close();
+  }
+};
+
+const recoverInterruptedRestore = async (
+  rollbackDirectory: string,
+  targetDirectory: string,
+  targetPath: string,
+): Promise<boolean> => {
+  const journalPath = join(rollbackDirectory, "active.transaction.json");
+  if (!(await fileExists(journalPath))) {
+    return false;
+  }
+  const journal = await readRestoreJournal(journalPath);
+  const rollbackPath = join(
+    rollbackDirectory,
+    `${journal.restore_hash}.sqlite`,
+  );
+  if (journal.target_existed) {
+    if (!(await fileExists(rollbackPath))) {
+      throw new Error("ROLLBACK_ARTIFACT_MISSING");
+    }
+    await mkdir(targetDirectory, { recursive: true, mode: 0o700 });
+    await copyFile(rollbackPath, targetPath);
+  } else if (await fileExists(targetPath)) {
+    await unlink(targetPath);
+  }
+  await unlink(join(targetDirectory, `.restore-${journal.restore_hash}.sqlite`)).catch(
+    () => {},
+  );
+  await unlink(journalPath);
+  return true;
+};
+
+const migrateStorage = (
+  database: DatabaseSync,
+  sourceVersion: string,
+  targetVersion: string,
+): readonly string[] => {
+  if (sourceVersion === targetVersion) {
+    return [];
+  }
+  if (sourceVersion === "0" && targetVersion === "1") {
+    const columns = toRows(database.prepare("PRAGMA table_info(reanswer_outbox)").all());
+    if (columns.some((column) => column.name === "last_error_code")) {
+      throw new Error("STORAGE_SCHEMA_VERSION_MISMATCH");
+    }
+    database.exec("ALTER TABLE reanswer_outbox ADD COLUMN last_error_code TEXT");
+    return ["STORAGE_SCHEMA_0_TO_1"];
+  }
+  throw new Error("STORAGE_MIGRATION_UNAVAILABLE");
+};
+
+const initializeRunGuard = (database: DatabaseSync): void => {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS runtime_served_runs (
+      run_id TEXT PRIMARY KEY,
+      served_at TEXT NOT NULL
+    )
+  `);
 };
 
 const compatibilityReasons = (
@@ -626,6 +767,13 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
       ) {
         integrity.push("MANIFEST_CHECKSUM_MISMATCH");
       }
+      const diskManifest: unknown = JSON.parse(manifestText);
+      if (
+        !validateContract("runtime-recovery-snapshot-manifest", diskManifest).valid ||
+        JSON.stringify(diskManifest) !== JSON.stringify(snapshot.manifest)
+      ) {
+        integrity.push("MANIFEST_OBJECT_MISMATCH");
+      }
       for (const file of snapshot.manifest.files) {
         const bytes = await readFile(join(snapshot.directory, file.path));
         if (bytes.byteLength !== file.size || sha256(bytes) !== file.checksum) {
@@ -682,6 +830,7 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
     return {
       report_schema_version: REPORT_SCHEMA_VERSION,
       operation: "verify",
+      authority_revision: snapshot.manifest.authority_revision,
       compatibility_result: checkResult(compatibility),
       integrity_result: checkResult(integrity),
       restored_active_head: null,
@@ -709,15 +858,10 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
       supportedContractVersions: options.supportedContractVersions,
       access: "read_only",
     });
-    if (options.targetHasServedRun) {
-      return {
-        ...withOperation(verification, "restore"),
-        compatibility_result: checkResult([
-          ...verification.compatibility_result.reason_codes,
-          "TARGET_HAS_SERVED_RUN",
-        ]),
-      };
-    }
+    const targetPath = databasePathFor(
+      this.#options.stateRoot,
+      options.targetInstanceId,
+    );
     if (
       verification.compatibility_result.status === "fail" ||
       verification.integrity_result.status === "fail"
@@ -725,10 +869,6 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
       return withOperation(verification, "restore");
     }
 
-    const targetPath = databasePathFor(
-      this.#options.stateRoot,
-      options.targetInstanceId,
-    );
     const targetDirectory = dirname(targetPath);
     const artifactPath = join(snapshot.directory, SNAPSHOT_DATABASE_PATH);
     const restoreHash = sha256(options.restoreIdempotencyKey).slice(7);
@@ -738,10 +878,50 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
       ".recovery-rollback",
       options.targetInstanceId,
     );
+    const journalPath = join(rollbackDirectory, "active.transaction.json");
     const rollbackPath = join(rollbackDirectory, `${restoreHash}.sqlite`);
     const absentMarkerPath = join(rollbackDirectory, `${restoreHash}.absent.json`);
+    try {
+      if (
+        await recoverInterruptedRestore(
+          rollbackDirectory,
+          targetDirectory,
+          targetPath,
+        )
+      ) {
+        return {
+          ...withOperation(verification, "restore"),
+          integrity_result: checkResult(["RESTORE_INTERRUPTED"]),
+          rollback_result: {
+            status: "completed",
+            reason_codes: ["RESTORE_INTERRUPTED"],
+          },
+        };
+      }
+    } catch (error: unknown) {
+      const reason =
+        error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)
+          ? error.message
+          : "ROLLBACK_RECOVERY_FAILED";
+      return {
+        ...withOperation(verification, "restore"),
+        integrity_result: checkResult([reason]),
+        rollback_result: { status: "failed", reason_codes: [reason] },
+      };
+    }
+    const runGuardReason = await targetRunGuardReason(targetPath);
+    if (runGuardReason !== null) {
+      return {
+        ...withOperation(verification, "restore"),
+        compatibility_result: checkResult([
+          ...verification.compatibility_result.reason_codes,
+          runGuardReason,
+        ]),
+      };
+    }
     let targetExisted = false;
     let targetReplaced = false;
+    let storageMigrationsApplied: readonly string[] = [];
     try {
       if (isAborted(options.signal)) {
         throw new Error("RESTORE_INTERRUPTED");
@@ -751,6 +931,11 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
       await chmod(stagePath, 0o600);
       const staged = new DatabaseSync(stagePath);
       try {
+        storageMigrationsApplied = migrateStorage(
+          staged,
+          snapshot.manifest.storage_schema_version,
+          this.#options.storageSchemaVersion,
+        );
         staged
           .prepare(
             `UPDATE reanswer_outbox
@@ -760,6 +945,7 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
              WHERE status = 'in_flight'`,
           )
           .run();
+        initializeRunGuard(staged);
         readSnapshotState(staged);
       } finally {
         staged.close();
@@ -784,6 +970,7 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
                   snapshot.manifest.pending_outbox_summary.in_flight_count,
                 in_flight_count: 0,
               },
+              storage_migrations_applied: [...storageMigrationsApplied],
               rollback_result: {
                 status: "not_required",
                 reason_codes: ["RESTORE_ALREADY_APPLIED"],
@@ -808,6 +995,10 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
           { mode: 0o600 },
         );
       }
+      await writeDurableJson(journalPath, {
+        restore_hash: restoreHash,
+        target_existed: targetExisted,
+      });
       await rename(stagePath, targetPath);
       targetReplaced = true;
 
@@ -821,6 +1012,7 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
       } finally {
         restored.close();
       }
+      await unlink(journalPath);
       return {
         ...withOperation(verification, "restore"),
         restored_active_head: {
@@ -832,6 +1024,7 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
           pending_count: restoredState.pendingCount,
           in_flight_count: restoredState.inFlightCount,
         },
+        storage_migrations_applied: [...storageMigrationsApplied],
       };
     } catch (error: unknown) {
       const reason =
@@ -849,6 +1042,9 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
         } catch {
           rollbackStatus = "failed";
         }
+      }
+      if (!targetReplaced || rollbackStatus === "completed") {
+        await unlink(journalPath).catch(() => {});
       }
       await unlink(stagePath).catch(() => {});
       return {

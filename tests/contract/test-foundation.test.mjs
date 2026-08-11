@@ -50,6 +50,7 @@ test("recovery fixtures reserve contract and integration failure paths", async (
     "storage_schema_incompatible",
     "package_version_incompatible",
     "contract_version_incompatible",
+    "instance_mismatch",
     "normal_restore",
     "pending_outbox_restore",
     "interrupted_restore",

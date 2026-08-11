@@ -130,7 +130,6 @@ test("OpenClaw recovery commands expose backup, read-only verify, and restore JS
         instances: {
           "instance-synthetic": {
             authorityRevision: "revision-synthetic-1",
-            hasServedRun: false,
           },
         },
       },

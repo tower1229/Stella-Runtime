@@ -1,9 +1,10 @@
 import { runSelfCheck } from "../cli/index.js";
 import {
+  createRuntimeVerifyOptions,
   createRuntimeRecoveryPort,
   openRuntimeRecoverySnapshot,
+  RUNTIME_RECOVERY_COMPATIBILITY,
 } from "../recovery/index.js";
-import type { RuntimeVerifyOptions } from "../recovery/index.js";
 import type { CognitiveRuntimePluginApi } from "./plugin-api.js";
 
 export { MemoryObservationAdapter } from "./ports.js";
@@ -16,7 +17,6 @@ export type {
 
 interface RecoveryInstanceConfig {
   readonly authorityRevision: string;
-  readonly hasServedRun: boolean;
 }
 
 interface RecoveryPluginConfig {
@@ -58,28 +58,16 @@ const readRecoveryConfig = (
   for (const [instanceId, value] of Object.entries(recovery.instances)) {
     if (
       !isRecord(value) ||
-      typeof value.authorityRevision !== "string" ||
-      typeof value.hasServedRun !== "boolean"
+      typeof value.authorityRevision !== "string"
     ) {
       throw new Error(`RECOVERY_INSTANCE_CONFIG_INVALID:${instanceId}`);
     }
     instances[instanceId] = {
       authorityRevision: value.authorityRevision,
-      hasServedRun: value.hasServedRun,
     };
   }
   return { stateRoot: recovery.stateRoot, instances };
 };
-
-const verifyOptions = (packageVersion: string): RuntimeVerifyOptions => ({
-  supportedSnapshotSchemaVersions: [
-    "cognitive-runtime.runtime-recovery-snapshot-manifest/v1",
-  ],
-  supportedStorageSchemaVersions: ["1"],
-  supportedPackageVersions: [packageVersion],
-  supportedContractVersions: ["v1"],
-  access: "read_only",
-});
 
 const requireInstance = (
   config: RecoveryPluginConfig,
@@ -121,7 +109,7 @@ const plugin = {
 
         cognitive
           .command("backup")
-          .description("Export an immutable authoritative Runtime snapshot")
+          .description("Export an immutable Runtime Recovery Snapshot")
           .requiredOption("--instance <id>", "Private Instance ID")
           .requiredOption("--output <dir>", "New snapshot directory")
           .option("--json", "Emit a machine-readable report")
@@ -133,7 +121,8 @@ const plugin = {
             const recovery = createRuntimeRecoveryPort({
               stateRoot: config.stateRoot,
               packageVersion,
-              storageSchemaVersion: "1",
+              storageSchemaVersion:
+                RUNTIME_RECOVERY_COMPATIBILITY.currentStorageSchemaVersion,
             });
             const snapshot = await recovery.backup({
               instanceId,
@@ -158,13 +147,17 @@ const plugin = {
             const recovery = createRuntimeRecoveryPort({
               stateRoot: "",
               packageVersion,
-              storageSchemaVersion: "1",
+              storageSchemaVersion:
+                RUNTIME_RECOVERY_COMPATIBILITY.currentStorageSchemaVersion,
             });
             const snapshot = await openRuntimeRecoverySnapshot(
               readStringOption(options, "snapshot"),
             );
             console.log(JSON.stringify(
-              await recovery.verify(snapshot, verifyOptions(packageVersion)),
+              await recovery.verify(
+                snapshot,
+                createRuntimeVerifyOptions(packageVersion),
+              ),
             ));
           });
 
@@ -182,22 +175,17 @@ const plugin = {
             const recovery = createRuntimeRecoveryPort({
               stateRoot: config.stateRoot,
               packageVersion,
-              storageSchemaVersion: "1",
+              storageSchemaVersion:
+                RUNTIME_RECOVERY_COMPATIBILITY.currentStorageSchemaVersion,
             });
             const snapshot = await openRuntimeRecoverySnapshot(
               readStringOption(options, "snapshot"),
             );
             console.log(JSON.stringify(await recovery.restore(snapshot, {
               targetInstanceId: instanceId,
-              targetHasServedRun: instance.hasServedRun,
               restoreIdempotencyKey: `${instanceId}:${snapshot.artifactId}`,
               rollback: "required",
-              supportedSnapshotSchemaVersions: [
-                "cognitive-runtime.runtime-recovery-snapshot-manifest/v1",
-              ],
-              supportedStorageSchemaVersions: ["1"],
-              supportedPackageVersions: [packageVersion],
-              supportedContractVersions: ["v1"],
+              ...createRuntimeVerifyOptions(packageVersion),
             })));
           });
       },
