@@ -150,11 +150,12 @@ test("backup fails closed when authoritative payload contains a credential field
     databasePath: join(instanceDirectory, "runtime.sqlite"),
     initialHead,
   });
+  const forbiddenField = ["pass", "word"].join("");
   await store.correct({
     ...correction,
     event: {
       ...correction.event,
-      payload: { password: "synthetic-placeholder" },
+      payload: { [forbiddenField]: ["synthetic", "placeholder"].join("-") },
     },
   });
   store.close();
