@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "cognitive-runtime.recovery-test-fixtures/v1",
+  "synthetic": true,
+  "layer": "integration",
+  "scenarios": [
+    {
+      "id": "normal_restore",
+      "expected": "restored"
+    },
+    {
+      "id": "pending_outbox_restore",
+      "expected": "restored_pending"
+    },
+    {
+      "id": "interrupted_restore",
+      "expected": "rolled_back"
+    },
+    {
+      "id": "repeated_restore",
+      "expected": "idempotent"
+    }
+  ]
+}

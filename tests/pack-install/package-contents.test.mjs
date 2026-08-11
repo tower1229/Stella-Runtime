@@ -42,6 +42,8 @@ test("npm tarball contains only allowlisted public package assets", async () => 
     true,
   );
   assert.equal(paths.includes("dist/openclaw/index.js"), true);
+  assert.equal(paths.includes("dist/testing/runner.js"), true);
+  assert.equal(paths.includes("dist/testing/runner.d.ts"), true);
   assert.equal(
     paths.includes(
       "contracts/v1/runtime-recovery-snapshot-manifest.schema.json",

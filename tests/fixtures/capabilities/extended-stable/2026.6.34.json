@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "cognitive-runtime.capability-fixture/v1",
+  "synthetic": true,
+  "releaseChannel": "extended-stable",
+  "openclawVersion": "2026.6.34",
+  "expectations": {
+    "typedHooks": [
+      "before_prompt_build",
+      "after_tool_call",
+      "before_agent_finalize",
+      "agent_end"
+    ],
+    "hostModelCompletion": "llm.complete",
+    "memoryReferenceSources": [
+      "content",
+      "details"
+    ],
+    "successorDelivery": [
+      "command_continuation",
+      "ui_normal_rpc"
+    ],
+    "unsupported": [
+      "run_context_round_trip",
+      "native_structured_output",
+      "persisted_session_embedded_admission",
+      "host_next_turn_injection"
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "cognitive-runtime.recovery-test-fixtures/v1",
+  "synthetic": true,
+  "layer": "contract",
+  "scenarios": [
+    {
+      "id": "normal_snapshot",
+      "expected": "accepted"
+    },
+    {
+      "id": "checksum_damaged",
+      "expected": "rejected"
+    },
+    {
+      "id": "storage_schema_incompatible",
+      "expected": "rejected"
+    },
+    {
+      "id": "package_version_incompatible",
+      "expected": "rejected"
+    },
+    {
+      "id": "contract_version_incompatible",
+      "expected": "rejected"
+    }
+  ]
+}

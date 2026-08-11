@@ -13,6 +13,14 @@ test("package exposes only built JavaScript to OpenClaw", async () => {
   assert.deepEqual(packageJson.openclaw.extensions, ["./dist/openclaw/index.js"]);
   assert.equal(packageJson.exports["."].import, "./dist/index.js");
   assert.equal(packageJson.exports["."].types, "./dist/index.d.ts");
+  assert.deepEqual(packageJson.exports["./test-runner"], {
+    types: "./dist/testing/runner.d.ts",
+    import: "./dist/testing/runner.js",
+  });
+  assert.equal(
+    packageJson.bin["stella-runtime-test"],
+    "./dist/testing/runner.js",
+  );
 });
 
 test("public entry does not expose SQLite storage paths", async () => {

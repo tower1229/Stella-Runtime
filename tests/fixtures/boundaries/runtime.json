@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "cognitive-runtime.test-boundaries/v1",
+  "synthetic": true,
+  "boundaries": {
+    "runScratchMap": [
+      "concurrent_observations",
+      "ttl_expiry",
+      "capacity_exhaustion",
+      "lifecycle_cleanup"
+    ],
+    "strictRouterValidation": [
+      "non_json_output",
+      "unknown_stable_id",
+      "authority_role_mismatch",
+      "mixed_generation",
+      "registry_checksum_mismatch"
+    ],
+    "reanswerOutbox": [
+      "attempt_claim",
+      "failed_attempt_returns_pending",
+      "single_successful_completion"
+    ],
+    "successorDelivery": [
+      "command_continuation",
+      "ui_normal_rpc"
+    ]
+  }
+}
