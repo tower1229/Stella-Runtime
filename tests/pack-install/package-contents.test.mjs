@@ -1,22 +1,25 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
+import { findSensitiveMaterial } from "../helpers/public-content.mjs";
+
 const execFileAsync = promisify(execFile);
 const repositoryRoot = new URL("../../", import.meta.url);
 
-test("npm tarball contains only allowlisted public package assets", async () => {
-  const cache = await mkdtemp(join(tmpdir(), "stella-runtime-npm-cache-"));
+test("npm tarball contains only allowlisted and non-sensitive public assets", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-runtime-pack-audit-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
   const { stdout } = await execFileAsync(
     "npm",
-    ["pack", "--json", "--dry-run", "--ignore-scripts"],
+    ["pack", "--json", "--ignore-scripts", "--pack-destination", root],
     {
       cwd: repositoryRoot,
-      env: { ...process.env, npm_config_cache: cache },
+      env: { ...process.env, npm_config_cache: join(root, "npm-cache") },
     },
   );
   const [pack] = JSON.parse(stdout);
@@ -59,4 +62,11 @@ test("npm tarball contains only allowlisted public package assets", async () => 
     true,
   );
   assert.equal(paths.some((path) => /(?<!\.d)\.ts$/.test(path)), false);
+
+  await execFileAsync(
+    "tar",
+    ["-xzf", join(root, pack.filename), "-C", root],
+  );
+  const packageRoot = join(root, "package");
+  assert.deepEqual(await findSensitiveMaterial(packageRoot), []);
 });

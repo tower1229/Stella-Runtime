@@ -27,6 +27,13 @@ test("OpenClaw discovers cognitive self-check through the plugin entry", async (
   const program = new FakeCommand();
   let descriptors;
   const api = {
+    runtime: {
+      llm: {
+        complete: async () => {
+          throw new Error("not invoked by self-check");
+        },
+      },
+    },
     registerCli(registrar, options) {
       descriptors = options.descriptors;
       return registrar({ program });
@@ -58,6 +65,28 @@ test("OpenClaw discovers cognitive self-check through the plugin entry", async (
   }
 
   assert.deepEqual(output, [
-    '{"status":"ok","pluginId":"cognitive-runtime"}',
+    '{"status":"ok","pluginId":"cognitive-runtime","hostCapabilities":{"hostModelCompletion":"llm.complete"}}',
   ]);
+});
+
+test("OpenClaw registration does not use rejected host paths", async () => {
+  const rejected = [
+    "runContext",
+    "enqueueNextTurnInjection",
+    "runEmbeddedAgent",
+    "scheduleSessionTurn",
+  ];
+  const api = new Proxy({
+    runtime: {
+      llm: { complete: async () => ({}) },
+    },
+    registerCli() {},
+  }, {
+    get(target, property, receiver) {
+      assert.equal(rejected.includes(String(property)), false);
+      return Reflect.get(target, property, receiver);
+    },
+  });
+
+  await plugin.register(api);
 });

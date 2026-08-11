@@ -11,6 +11,11 @@ export interface CliDescriptor {
 }
 
 export interface CognitiveRuntimePluginApi {
+  readonly runtime: {
+    readonly llm: {
+      complete(params: unknown): Promise<unknown>;
+    };
+  };
   registerCli(
     registrar: (context: { program: CliCommand }) => void | Promise<void>,
     options: { readonly descriptors: readonly CliDescriptor[] },

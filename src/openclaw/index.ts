@@ -24,7 +24,15 @@ const plugin = {
           .command("self-check")
           .description("Check whether the cognitive runtime is available")
           .action(() => {
-            console.log(JSON.stringify(runSelfCheck()));
+            console.log(JSON.stringify({
+              ...runSelfCheck(),
+              hostCapabilities: {
+                hostModelCompletion:
+                  typeof api.runtime.llm.complete === "function"
+                    ? "llm.complete"
+                    : "unavailable",
+              },
+            }));
           });
       },
       {
