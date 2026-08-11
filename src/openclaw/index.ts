@@ -6,7 +6,15 @@ import {
   recoverInterruptedRuntimeRestore,
   RUNTIME_RECOVERY_COMPATIBILITY,
 } from "../recovery/index.js";
-import { markRuntimeInstanceRunServed } from "../state/index.js";
+import {
+  provenanceDatabasePath,
+  SqliteProvenanceStore,
+} from "../provenance/index.js";
+import {
+  markRuntimeInstanceRunServed,
+  runtimeDatabasePath,
+  SqliteStateStore,
+} from "../state/index.js";
 import type { CognitiveRuntimePluginApi } from "./plugin-api.js";
 
 export { MemoryObservationAdapter } from "./ports.js";
@@ -45,6 +53,35 @@ const requireJson = (options: Readonly<Record<string, unknown>>): void => {
   if (options.json !== true) {
     throw new Error("CLI_JSON_REQUIRED");
   }
+};
+
+const readOptionalString = (
+  options: Readonly<Record<string, unknown>>,
+  name: string,
+): string | undefined => {
+  const value = options[name];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`CLI_OPTION_INVALID:${name}`);
+  }
+  return value;
+};
+
+const readOptionalInteger = (
+  options: Readonly<Record<string, unknown>>,
+  name: string,
+): number | undefined => {
+  const value = readOptionalString(options, name);
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`CLI_OPTION_INVALID:${name}`);
+  }
+  return parsed;
 };
 
 const readRecoveryConfig = (
@@ -140,6 +177,105 @@ const plugin = {
                     : "unavailable",
               },
             }));
+          });
+
+        cognitive
+          .command("state")
+          .description("Read an immutable Current State View")
+          .requiredOption("--instance <id>", "Private Instance ID")
+          .option("--revision <number>", "Event boundary revision")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            const config = readRecoveryConfig(api.pluginConfig);
+            const instanceId = readStringOption(options, "instance");
+            requireInstance(config, instanceId);
+            const store = new SqliteStateStore({
+              databasePath: runtimeDatabasePath(config.stateRoot, instanceId),
+              instanceId,
+              readOnly: true,
+            });
+            try {
+              const revision = readOptionalInteger(options, "revision");
+              console.log(JSON.stringify({
+                operation: "state",
+                view: await store.view({
+                  instanceId,
+                  ...(revision === undefined ? {} : { revision }),
+                }),
+              }));
+            } finally {
+              store.close();
+            }
+          });
+
+        const trace = cognitive
+          .command("trace")
+          .description("Read Cognitive Provenance Overlay records");
+
+        trace
+          .command("get")
+          .description("Get one Cognitive Provenance Overlay")
+          .requiredOption("--instance <id>", "Private Instance ID")
+          .requiredOption("--trace <id>", "Trace ID")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            const config = readRecoveryConfig(api.pluginConfig);
+            const instanceId = readStringOption(options, "instance");
+            requireInstance(config, instanceId);
+            const store = new SqliteProvenanceStore({
+              databasePath: provenanceDatabasePath(config.stateRoot, instanceId),
+              readOnly: true,
+            });
+            try {
+              console.log(JSON.stringify({
+                operation: "trace_get",
+                trace: await store.get(readStringOption(options, "trace")),
+              }));
+            } finally {
+              store.close();
+            }
+          });
+
+        trace
+          .command("query")
+          .description("Query Cognitive Provenance Overlay records")
+          .requiredOption("--instance <id>", "Private Instance ID")
+          .option("--run <id>", "Run ID")
+          .option("--session <hash>", "Session key hash")
+          .option("--status <status>", "Trace status")
+          .option("--ref <id>", "Stable reference ID")
+          .option("--limit <number>", "Maximum result count")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            const config = readRecoveryConfig(api.pluginConfig);
+            const instanceId = readStringOption(options, "instance");
+            requireInstance(config, instanceId);
+            const store = new SqliteProvenanceStore({
+              databasePath: provenanceDatabasePath(config.stateRoot, instanceId),
+              readOnly: true,
+            });
+            try {
+              const runId = readOptionalString(options, "run");
+              const sessionKeyHash = readOptionalString(options, "session");
+              const traceStatus = readOptionalString(options, "status");
+              const stableRef = readOptionalString(options, "ref");
+              const limit = readOptionalInteger(options, "limit");
+              console.log(JSON.stringify({
+                operation: "trace_query",
+                traces: await store.query({
+                  ...(runId === undefined ? {} : { runId }),
+                  ...(sessionKeyHash === undefined ? {} : { sessionKeyHash }),
+                  ...(traceStatus === undefined ? {} : { traceStatus }),
+                  ...(stableRef === undefined ? {} : { stableRef }),
+                  ...(limit === undefined ? {} : { limit }),
+                }),
+              }));
+            } finally {
+              store.close();
+            }
           });
 
         cognitive

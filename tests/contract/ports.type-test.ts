@@ -1,10 +1,12 @@
 import type {
   HostCapabilityManifest,
   MemoryObservationPort,
+  ProvenancePort,
   ReanswerPort,
   RemediationPort,
   RouterPort,
   RunScratchPort,
+  StatePort,
   RuntimeRecoveryPort,
   RuntimeRestoreOptions,
   RuntimeVerifyOptions,
@@ -16,6 +18,8 @@ declare const router: RouterPort<unknown, "routed">;
 declare const scratch: RunScratchPort<unknown, unknown, unknown>;
 declare const memory: MemoryObservationPort<unknown, "observed">;
 declare const remediation: RemediationPort<unknown, "remediated">;
+declare const state: StatePort<unknown, "view", unknown, "receipt">;
+declare const provenance: ProvenancePort<"overlay", unknown>;
 declare const reanswer: ReanswerPort<unknown, unknown>;
 declare const recovery: RuntimeRecoveryPort<
   unknown,
@@ -32,6 +36,11 @@ scratch.claimRemediation satisfies AsyncMethod<unknown>;
 scratch.release satisfies AsyncMethod<void>;
 memory.observe satisfies (...args: never[]) => "observed" | null;
 remediation.remediate satisfies AsyncMethod<"remediated">;
+state.view satisfies AsyncMethod<"view">;
+state.correct satisfies AsyncMethod<"receipt">;
+provenance.record satisfies AsyncMethod<"overlay">;
+provenance.get satisfies AsyncMethod<"overlay" | null>;
+provenance.query satisfies AsyncMethod<readonly "overlay"[]>;
 reanswer.claim satisfies AsyncMethod<unknown | null>;
 reanswer.complete satisfies AsyncMethod<void>;
 reanswer.release satisfies AsyncMethod<void>;

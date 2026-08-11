@@ -54,6 +54,10 @@ export type {
   RemediationPort,
   RemediationRequest,
 } from "./packet/index.js";
+export type {
+  ProvenancePort,
+  ProvenanceQuery,
+} from "./provenance/index.js";
 export {
   AUTHORITATIVE_RUNTIME_STATE_CONTENTS,
   createRuntimeVerifyOptions,
@@ -88,4 +92,9 @@ export type {
   ReanswerClaim,
   ReanswerDeliveryMode,
   ReanswerPort,
+  SessionReanswerPort,
+  StatePort,
+  StateView,
+  StateViewEntry,
+  StateViewRequest,
 } from "./state/index.js";

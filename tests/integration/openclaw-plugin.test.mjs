@@ -5,6 +5,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import plugin from "../../dist/openclaw/index.js";
+import {
+  provenanceDatabasePath,
+  SqliteProvenanceStore,
+} from "../../dist/provenance/index.js";
 import { SqliteReanswerStore } from "../../dist/state/index.js";
 
 class FakeCommand {
@@ -189,4 +193,116 @@ test("OpenClaw recovery commands expose backup, read-only verify, and restore JS
   assert.ok(
     output[3].compatibility_result.reason_codes.includes("TARGET_HAS_SERVED_RUN"),
   );
+});
+
+test("OpenClaw cognitive state and trace get/query return structured read-only results", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-openclaw-inspect-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const stateRoot = join(root, "state");
+  const instanceId = "instance-synthetic";
+  const instanceDirectory = join(stateRoot, instanceId);
+  await mkdir(instanceDirectory, { recursive: true });
+  const state = new SqliteReanswerStore({
+    databasePath: join(instanceDirectory, "runtime.sqlite"),
+    instanceId,
+    initialHead: {
+      active_seq: 0,
+      view_version: "view-synthetic-0",
+      checksum: `sha256:${"0".repeat(64)}`,
+      activated_at: "2026-08-11T00:00:00.000Z",
+    },
+  });
+  await state.correct({
+    event: {
+      seq: 1,
+      event_id: "event-synthetic-1",
+      state_id: "state-synthetic",
+      event_type: "correction",
+      payload: { value: "synthetic" },
+      observed_at: "2026-08-11T00:00:01.000Z",
+      source_kind: "user_explicit",
+      idempotency_key: "event-key-synthetic-1",
+      created_at: "2026-08-11T00:00:01.000Z",
+    },
+    outbox: {
+      correctionId: "correction-synthetic-1",
+      instanceId,
+      sessionKeyHash: `sha256:${"1".repeat(64)}`,
+      priorRunId: "run-prior-synthetic",
+      idempotencyKey: "outbox-key-synthetic-1",
+      createdAt: "2026-08-11T00:00:01.000Z",
+    },
+  });
+  state.close();
+  const provenance = new SqliteProvenanceStore({
+    databasePath: provenanceDatabasePath(stateRoot, instanceId),
+  });
+  await provenance.record({
+    trace_id: "trace-synthetic-1",
+    run_id: "run-synthetic-1",
+    session_key_hash: `sha256:${"1".repeat(64)}`,
+    sync_generation: "generation-synthetic-1",
+    knowledge_snapshot: "revision-synthetic-1",
+    state_view_version: "state-view-synthetic-1",
+    validated_router_result: null,
+    cognitive_bindings: [],
+    stable_refs: [{ id: "state-synthetic", status: "injected" }],
+    unresolved_conflicts: [],
+    trace_status: "completed",
+    eval_eligible: true,
+    created_at: "2026-08-11T00:00:02.000Z",
+  });
+  provenance.close();
+
+  const program = new FakeCommand();
+  const api = {
+    pluginConfig: {
+      recovery: {
+        stateRoot,
+        activeInstanceId: instanceId,
+        instances: {
+          [instanceId]: { authorityRevision: "revision-synthetic-1" },
+        },
+      },
+    },
+    runtime: { llm: { complete: async () => ({}) } },
+    on() {},
+    registerCli(registrar) { return registrar({ program }); },
+  };
+  await plugin.register(api);
+  const cognitive = program.children.get("cognitive");
+  const output = [];
+  const originalLog = console.log;
+  console.log = (value) => output.push(JSON.parse(value));
+  try {
+    await cognitive.children.get("state").handler({
+      instance: instanceId,
+      revision: "1",
+      json: true,
+    });
+    await cognitive.children.get("trace").children.get("get").handler({
+      instance: instanceId,
+      trace: "trace-synthetic-1",
+      json: true,
+    });
+    await cognitive.children.get("trace").children.get("query").handler({
+      instance: instanceId,
+      status: "completed",
+      ref: "state-synthetic",
+      limit: "10",
+      json: true,
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(output[0].operation, "state");
+  assert.equal(output[0].view.revision, 1);
+  assert.equal(output[0].view.states[0].payload.value, "synthetic");
+  assert.equal(output[1].operation, "trace_get");
+  assert.equal(output[1].trace.trace_id, "trace-synthetic-1");
+  assert.equal(output[2].operation, "trace_query");
+  assert.deepEqual(output[2].traces.map((trace) => trace.trace_id), [
+    "trace-synthetic-1",
+  ]);
 });

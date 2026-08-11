@@ -368,11 +368,11 @@ async function runHostSuccessors(environment, evidencePath, port, token) {
   assert.ok(uiRun?.runId, evidenceDiagnostic);
   assert.notEqual(abortedRun.runId, commandRun.runId);
   assert.notEqual(commandRun.runId, uiRun.runId);
-  assert.equal(abortedRun.newViewVersion, "view-1");
+  assert.match(abortedRun.newViewVersion, /^state-view-1-[a-f0-9]{12}$/);
   assert.equal(abortedRun.claimAttempt, 1);
-  assert.equal(commandRun.newViewVersion, "view-1");
+  assert.equal(commandRun.newViewVersion, abortedRun.newViewVersion);
   assert.equal(commandRun.claimAttempt, 2);
-  assert.equal(uiRun.newViewVersion, "view-2");
+  assert.match(uiRun.newViewVersion, /^state-view-2-[a-f0-9]{12}$/);
   assert.equal(uiRun.claimAttempt, 1);
 
   const uiHooks = evidence
@@ -428,9 +428,9 @@ async function runHostSuccessors(environment, evidencePath, port, token) {
   assert.equal(store.command.successful_completion_count, 1);
   assert.equal(store.ui.status, "completed");
   assert.equal(store.ui.successor_run_id, uiRun.runId);
-  assert.equal(store.ui.new_view_version, "view-2");
+  assert.equal(store.ui.new_view_version, uiRun.newViewVersion);
   assert.equal(store.ui.successful_completion_count, 1);
-  assert.equal(store.head.view_version, "view-2");
+  assert.equal(store.head.view_version, uiRun.newViewVersion);
   assert.equal(store.eventCount, 2);
   return {
     abortedRunId: abortedRun.runId,
@@ -571,12 +571,6 @@ async function verifyReanswerStore(runtime, stateRuntime, successors) {
         idempotency_key: `event-key-${id}`,
         created_at: "2026-08-11T00:00:02Z",
       },
-      newHead: {
-        active_seq: sequence,
-        view_version: `view-${sequence}`,
-        checksum: contractChecksum(String(sequence)),
-        activated_at: "2026-08-11T00:00:03Z",
-      },
       outbox: {
         correctionId: `correction-${id}`,
         instanceId: "instance-synthetic",
@@ -594,7 +588,7 @@ async function verifyReanswerStore(runtime, stateRuntime, successors) {
       /REANSWER_SESSION_BUSY/,
     );
     assert.equal(stateStore.getEventCount(), 1);
-    assert.equal(stateStore.getHead().view_version, "view-1");
+    assert.equal(stateStore.getHead().view_version, first.new_view_version);
 
     const commandClaims = await Promise.all([
       stateStore.claim("correction-command", {
@@ -634,7 +628,7 @@ async function verifyReanswerStore(runtime, stateRuntime, successors) {
     const uiRecord = stateStore.get("correction-ui");
     assert.equal(commandRecord?.session_key_hash, sessionKeyHash);
     assert.equal(uiRecord?.session_key_hash, sessionKeyHash);
-    assert.equal(uiRecord?.new_view_version, "view-2");
+    assert.match(uiRecord?.new_view_version ?? "", /^state-view-2-[a-f0-9]{12}$/);
     assert.equal(commandRecord?.successful_completion_count, 1);
     assert.equal(uiRecord?.successful_completion_count, 1);
   } finally {

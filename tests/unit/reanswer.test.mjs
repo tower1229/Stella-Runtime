@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { Worker } from "node:worker_threads";
 import test from "node:test";
 
+import { RunScratchMap } from "../../dist/core/index.js";
 import { SqliteReanswerStore } from "../../dist/state/index.js";
 
 const checksum = (digit) => `sha256:${digit.repeat(64)}`;
@@ -23,12 +30,6 @@ const correction = (id, session = checksum("1")) => ({
     idempotency_key: `event-key-${id}`,
     created_at: "2026-08-11T00:00:02Z",
   },
-  newHead: {
-    active_seq: 1,
-    view_version: `view-${id}`,
-    checksum: checksum("2"),
-    activated_at: "2026-08-11T00:00:03Z",
-  },
   outbox: {
     correctionId: `correction-${id}`,
     instanceId: "instance-synthetic",
@@ -50,7 +51,8 @@ test("correction atomically commits event, state head, and one outbox record", a
   assert.equal(first.status, "pending");
   assert.deepEqual(duplicate, first);
   assert.equal(store.getEventCount(), 1);
-  assert.equal(store.getHead().view_version, "view-1");
+  assert.equal(store.getHead().view_version, first.new_view_version);
+  assert.match(first.new_view_version, /^state-view-1-[a-f0-9]{12}$/);
 });
 
 test("one session allows at most one non-terminal outbox and rolls back the correction", async (t) => {
@@ -61,10 +63,9 @@ test("one session allows at most one non-terminal outbox and rolls back the corr
   await assert.rejects(store.correct({
     ...correction("2"),
     event: { ...correction("2").event, seq: 2 },
-    newHead: { ...correction("2").newHead, active_seq: 2 },
   }), /REANSWER_SESSION_BUSY/);
   assert.equal(store.getEventCount(), 1);
-  assert.equal(store.getHead().view_version, "view-1");
+  assert.equal(store.getHead().active_seq, 1);
 });
 
 test("attempt claim is CAS, failure returns pending, and one successor completes once", async (t) => {
@@ -109,8 +110,117 @@ test("correction rejects a stale or skipped state-head boundary", async (t) => {
   await assert.rejects(store.correct({
     ...skipped,
     event: { ...skipped.event, seq: 2 },
-    newHead: { ...skipped.newHead, active_seq: 2 },
   }), /STATE_HEAD_CAS_FAILED/);
   assert.equal(store.getEventCount(), 0);
   assert.equal(store.getHead().active_seq, 0);
+});
+
+test("session claim requires a distinct successor run and shares command/UI semantics", async (t) => {
+  const store = new SqliteReanswerStore({ databasePath: ":memory:", initialHead });
+  t.after(() => store.close());
+  const receipt = await store.correct(correction("1"));
+
+  await assert.rejects(store.claimForSession(receipt.session_key_hash, {
+    successorRunId: receipt.prior_run_id,
+    deliveryMode: "command_continuation",
+  }), /REANSWER_SUCCESSOR_RUN_NOT_DISTINCT/);
+  assert.equal(await store.claimForSession(checksum("9"), {
+    successorRunId: "run-unrelated",
+    deliveryMode: "ui_normal_rpc",
+  }), null);
+
+  const commandClaim = await store.claimForSession(receipt.session_key_hash, {
+    successorRunId: "run-command-successor",
+    deliveryMode: "command_continuation",
+  });
+  assert.ok(commandClaim);
+  assert.equal(commandClaim.correctionId, receipt.correction_id);
+  assert.equal(commandClaim.sessionKeyHash, receipt.session_key_hash);
+  assert.equal(commandClaim.newViewVersion, receipt.new_view_version);
+  assert.equal(commandClaim.priorRunId, receipt.prior_run_id);
+  await store.release(commandClaim, "HOST_ABORTED");
+
+  const uiClaim = await store.claimForSession(receipt.session_key_hash, {
+    successorRunId: "run-ui-successor",
+    deliveryMode: "ui_normal_rpc",
+  });
+  assert.ok(uiClaim);
+  assert.equal(uiClaim.correctionId, receipt.correction_id);
+  assert.equal(uiClaim.attempt, 2);
+});
+
+test("restart preserves durable state and pending attempts but never restores RunScratch", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-reanswer-restart-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const databasePath = join(root, "runtime.sqlite");
+  const beforeRestart = new SqliteReanswerStore({ databasePath, initialHead });
+  await beforeRestart.correct(correction("1"));
+  const claim = await beforeRestart.claim("correction-1", {
+    successorRunId: "run-before-restart",
+    deliveryMode: "command_continuation",
+  });
+  assert.ok(claim);
+  await beforeRestart.release(claim, "HOST_RESTARTED");
+  beforeRestart.close();
+
+  const afterRestart = new SqliteReanswerStore({ databasePath, initialHead });
+  t.after(() => afterRestart.close());
+  assert.equal(afterRestart.get("correction-1")?.status, "pending");
+  assert.equal(afterRestart.get("correction-1")?.attempt_count, 1);
+  assert.equal(afterRestart.getHead().active_seq, 1);
+
+  const scratch = new RunScratchMap({ capacity: 2, ttlMs: 1_000 });
+  assert.equal(scratch.inspect("run-before-restart"), null);
+});
+
+test("concurrent duplicate corrections across connections return one receipt", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-correction-concurrent-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const databasePath = join(root, "runtime.sqlite");
+  new SqliteReanswerStore({ databasePath, initialHead }).close();
+  const workerSource = `
+    const { parentPort, workerData } = require("node:worker_threads");
+    let store;
+    import(workerData.moduleUrl).then(({ SqliteReanswerStore }) => {
+      store = new SqliteReanswerStore({
+        databasePath: workerData.databasePath,
+        initialHead: workerData.initialHead,
+      });
+      parentPort.postMessage({ ready: true });
+    });
+    parentPort.on("message", async (message) => {
+      if (message !== "go") return;
+      try {
+        parentPort.postMessage({ receipt: await store.correct(workerData.correction) });
+      } catch (error) {
+        parentPort.postMessage({ error: String(error) });
+      } finally {
+        store.close();
+      }
+    });
+  `;
+  const workerData = {
+    moduleUrl: pathToFileURL(resolve("dist/state/index.js")).href,
+    databasePath,
+    initialHead,
+    correction: correction("1"),
+  };
+  const workers = [
+    new Worker(workerSource, { eval: true, workerData }),
+    new Worker(workerSource, { eval: true, workerData }),
+  ];
+  t.after(() => Promise.all(workers.map((worker) => worker.terminate())));
+  await Promise.all(workers.map((worker) => once(worker, "message")));
+  for (const worker of workers) {
+    worker.postMessage("go");
+  }
+  const results = await Promise.all(
+    workers.map((worker) => once(worker, "message").then(([message]) => message)),
+  );
+
+  assert.equal(results.every((result) => result.error === undefined), true);
+  assert.deepEqual(results[0].receipt, results[1].receipt);
+  const store = new SqliteReanswerStore({ databasePath, initialHead });
+  assert.equal(store.getEventCount(), 1);
+  store.close();
 });

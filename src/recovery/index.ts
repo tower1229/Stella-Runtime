@@ -412,7 +412,9 @@ const readSnapshotState = (
     "state_events",
     "state_head",
     "reanswer_outbox",
-    ...(allowRuntimeRunGuard ? ["runtime_served_runs"] : []),
+    ...(allowRuntimeRunGuard
+      ? ["runtime_served_runs", "runtime_schema_migrations"]
+      : []),
   ]);
   const tables = toRows(
     database

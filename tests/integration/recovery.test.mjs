@@ -18,7 +18,6 @@ import {
 } from "../../dist/state/index.js";
 
 const zeroChecksum = `sha256:${"0".repeat(64)}`;
-const oneChecksum = `sha256:${"1".repeat(64)}`;
 const checksum = (value) =>
   `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
@@ -41,12 +40,6 @@ const correction = {
     idempotency_key: "event-key-synthetic-1",
     created_at: "2026-08-11T00:00:01.000Z",
   },
-  newHead: {
-    active_seq: 1,
-    view_version: "view-synthetic-1",
-    checksum: oneChecksum,
-    activated_at: "2026-08-11T00:00:01.000Z",
-  },
   outbox: {
     correctionId: "correction-synthetic-1",
     instanceId: "instance-synthetic",
@@ -67,6 +60,7 @@ const createFixture = async (t, name) => {
   await mkdir(instanceDirectory, { recursive: true });
   const store = new SqliteReanswerStore({ databasePath, initialHead });
   await store.correct(correction);
+  const activeHead = store.getHead();
   store.close();
   const recovery = createRuntimeRecoveryPort({
     stateRoot,
@@ -74,7 +68,7 @@ const createFixture = async (t, name) => {
     storageSchemaVersion: "1",
     now: () => "2026-08-11T00:00:05.000Z",
   });
-  return { root, stateRoot, databasePath, recovery };
+  return { root, stateRoot, databasePath, recovery, activeHead };
 };
 
 const verifyOptions = {
@@ -247,8 +241,8 @@ test("restore preserves pending work, is idempotent, and rejects a used target",
   assert.equal(restored.integrity_result.status, "pass");
   assert.deepEqual(restored.restored_active_head, {
     active_seq: 1,
-    state_view_version: "view-synthetic-1",
-    checksum: oneChecksum,
+    state_view_version: source.activeHead.view_version,
+    checksum: source.activeHead.checksum,
   });
   assert.equal(restored.authority_revision, "revision-synthetic-1");
   assert.deepEqual(restored.pending_outbox_state, {

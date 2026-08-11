@@ -74,12 +74,6 @@ function correction(sequence, kind) {
       idempotency_key: `event-key-${kind}`,
       created_at: "2026-08-11T00:00:02Z",
     },
-    newHead: {
-      active_seq: sequence,
-      view_version: `view-${sequence}`,
-      checksum: contractChecksum(String(sequence)),
-      activated_at: "2026-08-11T00:00:03Z",
-    },
     outbox: {
       correctionId: `correction-${kind}`,
       instanceId: "instance-synthetic",
