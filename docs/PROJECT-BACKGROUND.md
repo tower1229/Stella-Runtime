@@ -143,7 +143,26 @@ authority repository or discards append-only Current State events.
 
 ## Requirement handoff and work tracking
 
-The implementation sequence is tracked in this repository's GitHub Issues:
+This repository now owns the complete sanitized requirement baseline. Future
+development must begin with the repository-local documents below, not with the
+private project where the original architecture interview happened:
+
+- [`requirements/V1.md`](requirements/V1.md): normative product and Runtime
+  requirements;
+- [`architecture/V1.md`](architecture/V1.md): target architecture and seams;
+- [`architecture/DATA-CONTRACTS.md`](architecture/DATA-CONTRACTS.md): durable
+  authority, state, routing, binding, and provenance contract baseline;
+- [`REQUIREMENT-PROVENANCE.md`](REQUIREMENT-PROVENANCE.md): migrated interview
+  decisions, evidence classes, rejected routes, and source-to-destination map;
+- [`roadmap/V1.md`](roadmap/V1.md): IMPL-01 through IMPL-06 deliverables, gates,
+  and issue map;
+- [`evidence/openclaw-2026.6.34.md`](evidence/openclaw-2026.6.34.md): first-host
+  compatibility evidence and rejected adapter paths;
+- [`../CONTEXT.md`](../CONTEXT.md) and [`adr/`](adr/): canonical domain language
+  and hard-to-reverse decisions.
+
+The implementation sequence is tracked in this repository's GitHub Issues. The
+initial issues are:
 
 1. [#1: buildable single-package repository scaffold](https://github.com/tower1229/Stella-Runtime/issues/1);
 2. [#2: `contracts/v1`, authority parser, and verified host ports](https://github.com/tower1229/Stella-Runtime/issues/2);
@@ -152,38 +171,46 @@ The implementation sequence is tracked in this repository's GitHub Issues:
 5. [#5: authoritative Runtime state export, verification, and restore](https://github.com/tower1229/Stella-Runtime/issues/5)
    follows after the recovery contract is frozen.
 
+The remaining V1 implementation issues are [#6: State and provenance](https://github.com/tower1229/Stella-Runtime/issues/6),
+[#7: Plugin Runtime and beta](https://github.com/tower1229/Stella-Runtime/issues/7),
+[#8: Generation and framework admission](https://github.com/tower1229/Stella-Runtime/issues/8),
+[#9: release-candidate conformance](https://github.com/tower1229/Stella-Runtime/issues/9),
+and [#10: stable V1 release](https://github.com/tower1229/Stella-Runtime/issues/10).
+
 Private-instance configuration, migration maps, deployment, rollback evidence,
-and product acceptance remain tracked in the private authority repository. Public
-issues may depend on private acceptance gates, but must describe the dependency
-without copying private data or logs.
+and product acceptance remain tracked by each consumer. They are downstream
+Consumer Integration and cannot block generic Runtime implementation or release.
+The sole planned cross-repository protocol is recovery orchestration: a consumer
+may call the Runtime-owned backup, verify, and restore interface and transport
+the resulting private artifact.
 
-## Additional handoff work still required
+## Project autonomy requirements
 
-Beyond moving the first implementation issues and adding this context, a complete
-handoff needs these follow-up deliverables:
+Repository autonomy requires these deliverables:
 
 1. **Consumer contract**: a machine-readable private-instance version pin that
    records package version, contract version, OpenClaw matrix row, and checksums.
-2. **Cross-repository CI seam**: public Runner accepts an external instance test
-   directory; private CI invokes it without uploading private fixtures.
+2. **External test seam**: the public Runner accepts an optional external
+   Instance Test Pack, while all Runtime behavior remains testable with synthetic
+   repository fixtures.
 3. **Release integrity**: protected release workflow, npm provenance/trusted
    publishing, tarball allowlist, dependency review, and rollback version policy.
-4. **Backup and restore integration**: connect the accepted Runtime Recovery
-   Snapshot contract to the private migration orchestrator without exposing
-   Runtime storage internals.
+4. **Backup and restore interface**: publish the accepted Runtime Recovery
+   Snapshot contract so an external migration orchestrator can consume it without
+   exposing Runtime storage internals.
 5. **Migration rehearsal**: test `off -> observe -> enforce -> rollback` against a
    non-production clone before touching the live private Agent.
 6. **Compatibility ownership**: every supported OpenClaw exact version receives a
    committed matrix row and reproducible smoke evidence; rolling docs alone never
    expand support.
-7. **Decision synchronization**: hard-to-reverse public protocol decisions become
-   ADRs here; private instance decisions remain in the authority repository, with
-   links instead of duplicated specifications.
+7. **Decision ownership**: hard-to-reverse public protocol decisions become ADRs
+   here. Private instance decisions may link to released contracts, but never
+   serve as normative Runtime specifications.
 
-## Historical design evidence
+## Historical handoff
 
-The architectural interview, host spike, and naming decision were completed in
-the private authority project before this repository was created. They remain the
-historical evidence for the first implementation slice. This public document is
-the sanitized handoff baseline; it intentionally contains no private knowledge,
-runtime logs, credentials, or real experience data.
+The architectural interview, host spike, and naming decision were completed in a
+private-instance project before this repository existed. Their generic findings
+have been migrated into this repository's requirements, architecture, roadmap,
+evidence, glossary, and ADRs. Those repository-local artifacts are now the
+normative sources. No Runtime task may require access to the historical source.

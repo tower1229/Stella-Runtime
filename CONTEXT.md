@@ -71,6 +71,17 @@ A private or de-identified set of instance configuration, fixtures, and
 assertions consumed by the public Runner without copying the Runner itself.
 _Avoid_: public personal data, forked test framework
 
+**Runtime Requirement Baseline**:
+The versioned, repository-local requirements, architecture, decisions, host
+evidence, and roadmap that are sufficient to implement and release the Runtime.
+_Avoid_: private-repository design source, external handoff notes
+
+**Consumer Integration**:
+An optional downstream use of the Runtime Package, public contracts, Runner, or
+Runtime Recovery Snapshot by a Private Instance. It does not define or block
+generic Runtime behavior.
+_Avoid_: Runtime implementation dependency, copied Runtime source
+
 **Experience Record**:
 A private record of a real user's prompt, trace, correction, and usefulness
 judgment. It remains Git-external and is never a public Golden fixture.
