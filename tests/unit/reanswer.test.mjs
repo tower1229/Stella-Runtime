@@ -5,7 +5,6 @@ import { SqliteReanswerStore } from "../../dist/state/index.js";
 
 const checksum = (digit) => `sha256:${digit.repeat(64)}`;
 const initialHead = {
-  schema_version: "cognitive-runtime.current-state-head/v1",
   active_seq: 0,
   view_version: "view-0",
   checksum: checksum("0"),
@@ -14,7 +13,6 @@ const initialHead = {
 
 const correction = (id, session = checksum("1")) => ({
   event: {
-    schema_version: "cognitive-runtime.current-state-event/v1",
     seq: 1,
     event_id: `event-${id}`,
     state_id: "state-synthetic",
@@ -26,7 +24,6 @@ const correction = (id, session = checksum("1")) => ({
     created_at: "2026-08-11T00:00:02Z",
   },
   newHead: {
-    schema_version: "cognitive-runtime.current-state-head/v1",
     active_seq: 1,
     view_version: `view-${id}`,
     checksum: checksum("2"),
@@ -102,4 +99,18 @@ test("attempt claim is CAS, failure returns pending, and one successor completes
     deliveryMode: "command_continuation",
   }), null);
   await assert.rejects(store.complete(retry), /REANSWER_CAS_FAILED/);
+});
+
+test("correction rejects a stale or skipped state-head boundary", async (t) => {
+  const store = new SqliteReanswerStore({ databasePath: ":memory:", initialHead });
+  t.after(() => store.close());
+
+  const skipped = correction("2", checksum("9"));
+  await assert.rejects(store.correct({
+    ...skipped,
+    event: { ...skipped.event, seq: 2 },
+    newHead: { ...skipped.newHead, active_seq: 2 },
+  }), /STATE_HEAD_CAS_FAILED/);
+  assert.equal(store.getEventCount(), 0);
+  assert.equal(store.getHead().active_seq, 0);
 });

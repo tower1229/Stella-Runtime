@@ -6,14 +6,19 @@ import { MemoryObservationAdapter } from "../../dist/openclaw/ports.js";
 
 const binding = {
   syncGeneration: "generation-1",
+  authorityRevision: "authority-revision-1",
   stateViewVersion: "view-1",
   registryChecksum: `sha256:${"a".repeat(64)}`,
+  stateView: { active: { state: "synthetic" } },
+  routerResult: { memory_route: "none" },
 };
 
 test("scratch pins one immutable binding and records concurrent observations idempotently", async () => {
   const scratch = new RunScratchMap({ capacity: 2, ttlMs: 1_000 });
   const acquired = await scratch.acquire("run-1", binding);
   assert.equal(Object.isFrozen(acquired.binding), true);
+  binding.stateView.active.state = "mutated-after-acquire";
+  assert.equal(acquired.binding.stateView.active.state, "synthetic");
 
   await Promise.all([
     scratch.observe("run-1", { toolCallId: "tool-1", stableRefs: ["sem-a"] }),

@@ -14,11 +14,21 @@ export interface RuntimeRecoverySnapshotManifest {
     state_view_version: string;
     checksum: Checksum;
   };
-  files: {
-    path: string;
-    size: number;
-    checksum: Checksum;
-  }[];
+  /**
+   * @minItems 1
+   */
+  files: [
+    {
+      path: string;
+      size: number;
+      checksum: Checksum;
+    },
+    ...{
+      path: string;
+      size: number;
+      checksum: Checksum;
+    }[]
+  ];
   pending_outbox_summary: {
     pending_count: number;
     in_flight_count: number;

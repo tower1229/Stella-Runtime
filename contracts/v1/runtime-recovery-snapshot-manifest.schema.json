@@ -64,6 +64,7 @@
     },
     "files": {
       "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -76,7 +77,7 @@
           "path": {
             "type": "string",
             "minLength": 1,
-            "pattern": "^(?!/)(?!.*(?:^|/)(?:credentials?|secrets?|cache|registry|index|generation)(?:/|$)).+$"
+            "pattern": "^(?!/)(?!.*(?:^|/)[.][.](?:/|$))(?!.*(?:^|/)(?:credentials?|secrets?|cache|registry|index|generation)(?:/|$)).+$"
           },
           "size": {
             "type": "integer",

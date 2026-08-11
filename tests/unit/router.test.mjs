@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { StrictRouter } from "../../dist/router/index.js";
+import {
+  calculateRegistryChecksum,
+  StrictRouter,
+} from "../../dist/router/index.js";
 
 const checksum = (digit) => `sha256:${digit.repeat(64)}`;
 const result = {
@@ -26,22 +29,24 @@ const result = {
   reason_codes: ["CURRENT_CONTEXT_INSUFFICIENT"],
 };
 
+const entries = [
+  { id: "state-synthetic", role: "current_state", version: "1", syncGeneration: "generation-1", checksum: checksum("1") },
+  { id: "cog-governing", role: "governing_system", version: "3", syncGeneration: "generation-1", checksum: checksum("2") },
+  { id: "cog-module", role: "governing_module", version: "1", syncGeneration: "generation-1", checksum: checksum("3"), governedBy: "cog-governing" },
+  { id: "cog-method", role: "ordinary_framework", version: "1", syncGeneration: "generation-1", checksum: checksum("4") },
+  { id: "sem-preference", role: "semantic", version: "1", syncGeneration: "generation-1", checksum: checksum("5") },
+];
+const registryChecksum = calculateRegistryChecksum(entries);
 const request = {
   currentMessage: "Help with a synthetic decision",
   recentContext: [],
   stateViewVersion: "view-1",
   activeGoverningSystem: "cog-governing",
   syncGeneration: "generation-1",
-  expectedRegistryChecksum: checksum("a"),
+  expectedRegistryChecksum: registryChecksum,
   registry: {
-    checksum: checksum("a"),
-    entries: [
-      { id: "state-synthetic", role: "current_state", version: "1", syncGeneration: "generation-1", checksum: checksum("1") },
-      { id: "cog-governing", role: "governing_system", version: "3", syncGeneration: "generation-1", checksum: checksum("2") },
-      { id: "cog-module", role: "governing_module", version: "1", syncGeneration: "generation-1", checksum: checksum("3"), governedBy: "cog-governing" },
-      { id: "cog-method", role: "ordinary_framework", version: "1", syncGeneration: "generation-1", checksum: checksum("4") },
-      { id: "sem-preference", role: "semantic", version: "1", syncGeneration: "generation-1", checksum: checksum("5") },
-    ],
+    checksum: registryChecksum,
+    entries,
   },
 };
 
@@ -87,6 +92,20 @@ test("router rejects governing, role, generation, version, and checksum drift", 
     const router = new StrictRouter({ complete: async () => JSON.stringify(result) });
     assert.deepEqual(await router.route(input), { status: "degraded", reasonCode });
   }
+});
+
+test("router detects version tampering anywhere in the fixed registry", async () => {
+  const router = new StrictRouter({ complete: async () => JSON.stringify(result) });
+  const tamperedEntries = request.registry.entries.map((entry) =>
+    entry.id === "cog-method" ? { ...entry, version: "99" } : entry,
+  );
+  assert.deepEqual(await router.route({
+    ...request,
+    registry: { ...request.registry, entries: tamperedEntries },
+  }), {
+    status: "degraded",
+    reasonCode: "ROUTER_REGISTRY_CHECKSUM_MISMATCH",
+  });
 });
 
 test("router timeout is bounded and does not retry", async () => {

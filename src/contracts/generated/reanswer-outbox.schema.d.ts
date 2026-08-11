@@ -3,7 +3,6 @@
 export type ReanswerOutbox = {
   [k: string]: unknown;
 } & {
-  schema_version: "cognitive-runtime.reanswer-outbox/v1";
   correction_id: Id;
   instance_id: Id;
   session_key_hash: Checksum;

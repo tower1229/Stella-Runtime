@@ -1,7 +1,10 @@
 export interface RunBinding {
   readonly syncGeneration: string;
+  readonly authorityRevision: string;
   readonly stateViewVersion: string;
   readonly registryChecksum: string;
+  readonly stateView: unknown;
+  readonly routerResult: unknown;
 }
 
 export interface RunObservation {

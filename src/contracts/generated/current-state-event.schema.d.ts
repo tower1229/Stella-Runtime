@@ -3,7 +3,6 @@
 export type StableId = string;
 
 export interface CurrentStateEvent {
-  schema_version: "cognitive-runtime.current-state-event/v1";
   seq: number;
   event_id: StableId;
   state_id: StableId;

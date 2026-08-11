@@ -46,7 +46,6 @@ export type RetrievalStep = {
 };
 
 export interface CognitiveProvenanceOverlay {
-  schema_version: "cognitive-runtime.cognitive-provenance-overlay/v1";
   trace_id: Id;
   run_id: Id;
   session_key_hash: Checksum;

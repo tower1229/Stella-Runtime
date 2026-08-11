@@ -4,9 +4,8 @@
   "title": "Current State Event",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "seq", "event_id", "state_id", "event_type", "payload", "observed_at", "source_kind", "idempotency_key", "created_at"],
+  "required": ["seq", "event_id", "state_id", "event_type", "payload", "observed_at", "source_kind", "idempotency_key", "created_at"],
   "properties": {
-    "schema_version": { "const": "cognitive-runtime.current-state-event/v1" },
     "seq": { "type": "integer", "minimum": 1 },
     "event_id": { "$ref": "#/$defs/stableId" },
     "state_id": { "$ref": "#/$defs/stableId" },

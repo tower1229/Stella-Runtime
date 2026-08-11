@@ -64,7 +64,7 @@ export type {
   RuntimeRestoreOptions,
   RuntimeVerifyOptions,
 } from "./recovery/index.js";
-export { StrictRouter } from "./router/index.js";
+export { calculateRegistryChecksum, StrictRouter } from "./router/index.js";
 export type {
   RegistryRole,
   RouterDegradedReason,
@@ -75,12 +75,10 @@ export type {
   RouterRequest,
   StrictRouterOptions,
 } from "./router/index.js";
-export { SqliteReanswerStore } from "./state/index.js";
 export type {
   CorrectionInput,
   ReanswerAttempt,
   ReanswerClaim,
   ReanswerDeliveryMode,
   ReanswerPort,
-  SqliteReanswerStoreOptions,
 } from "./state/index.js";

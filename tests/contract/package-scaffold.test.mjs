@@ -15,6 +15,11 @@ test("package exposes only built JavaScript to OpenClaw", async () => {
   assert.equal(packageJson.exports["."].types, "./dist/index.d.ts");
 });
 
+test("public entry does not expose SQLite storage paths", async () => {
+  const publicEntry = await import("../../dist/index.js");
+  assert.equal("SqliteReanswerStore" in publicEntry, false);
+});
+
 test("plugin manifest declares a strict config and packaged Skill", async () => {
   const manifest = await readJson(
     new URL("../../openclaw.plugin.json", import.meta.url),

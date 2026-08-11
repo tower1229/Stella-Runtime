@@ -17,8 +17,7 @@ export type Date = string;
 export interface CognitiveEntity {
   schema_version: "cognitive-runtime.cognitive/v1";
   cognitive_id: StableId;
-  entity_type:
-    "governing_system" | "governing_module" | "epistemic_method" | "decision_framework" | "reflection_framework";
+  entity_type: string;
   entity_version: number;
   title: string;
   aliases: UniqueStrings;

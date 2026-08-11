@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { RouterResult } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
 
@@ -44,6 +46,7 @@ export type RouterDegradedReason =
   | "ROUTER_NON_JSON_OUTPUT"
   | "ROUTER_SCHEMA_INVALID"
   | "ROUTER_REGISTRY_CHECKSUM_MISMATCH"
+  | "ROUTER_REGISTRY_DUPLICATE_ID"
   | "ROUTER_ENTRY_CHECKSUM_INVALID"
   | "ROUTER_UNKNOWN_ID"
   | "ROUTER_ROLE_MISMATCH"
@@ -61,6 +64,28 @@ export interface StrictRouterOptions {
 }
 
 const checksumPattern = /^sha256:[a-f0-9]{64}$/;
+
+export const calculateRegistryChecksum = (
+  entries: readonly RouterRegistryEntry[],
+): string => {
+  const canonicalEntries = [...entries]
+    .sort((left, right) =>
+      left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+    )
+    .map((entry) => ({
+      id: entry.id,
+      role: entry.role,
+      version: entry.version,
+      syncGeneration: entry.syncGeneration,
+      checksum: entry.checksum,
+      ...(entry.governedBy === undefined
+        ? {}
+        : { governedBy: entry.governedBy }),
+    }));
+  return `sha256:${createHash("sha256")
+    .update(JSON.stringify(canonicalEntries))
+    .digest("hex")}`;
+};
 
 class RouterTimeoutError extends Error {}
 
@@ -140,6 +165,9 @@ const validateRegistry = (
   }
 
   const entries = new Map(request.registry.entries.map((entry) => [entry.id, entry]));
+  if (entries.size !== request.registry.entries.length) {
+    return "ROUTER_REGISTRY_DUPLICATE_ID";
+  }
   for (const selection of selectedEntries(result)) {
     const entry = entries.get(selection.id);
     if (entry === undefined) {
@@ -157,6 +185,23 @@ const validateRegistry = (
     if (!checksumPattern.test(entry.checksum)) {
       return "ROUTER_ENTRY_CHECKSUM_INVALID";
     }
+  }
+  for (const entry of request.registry.entries) {
+    if (entry.syncGeneration !== request.syncGeneration) {
+      return "ROUTER_GENERATION_MISMATCH";
+    }
+    if (
+      entry.version.trim().length === 0 ||
+      !checksumPattern.test(entry.checksum)
+    ) {
+      return "ROUTER_ENTRY_CHECKSUM_INVALID";
+    }
+  }
+  if (
+    calculateRegistryChecksum(request.registry.entries) !==
+    request.registry.checksum
+  ) {
+    return "ROUTER_REGISTRY_CHECKSUM_MISMATCH";
   }
   return null;
 };

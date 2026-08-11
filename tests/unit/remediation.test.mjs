@@ -8,8 +8,11 @@ test("remediation performs at most one compare-and-set revision per Run", async 
   const scratch = new RunScratchMap({ capacity: 1, ttlMs: 1_000 });
   await scratch.acquire("run-1", {
     syncGeneration: "generation-1",
+    authorityRevision: "authority-revision-1",
     stateViewVersion: "view-1",
     registryChecksum: `sha256:${"a".repeat(64)}`,
+    stateView: {},
+    routerResult: null,
   });
   let revision = 4;
   let calls = 0;

@@ -4,9 +4,8 @@
   "title": "Current State Head",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "active_seq", "view_version", "checksum", "activated_at"],
+  "required": ["active_seq", "view_version", "checksum", "activated_at"],
   "properties": {
-    "schema_version": { "const": "cognitive-runtime.current-state-head/v1" },
     "active_seq": { "type": "integer", "minimum": 0 },
     "view_version": { "type": "string", "minLength": 1 },
     "checksum": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },

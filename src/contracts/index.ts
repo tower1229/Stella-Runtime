@@ -16,19 +16,22 @@ export type { RuntimeRecoveryVerificationOrRestoreReport } from "./generated/run
 export type { RuntimeRecoverySnapshotManifest } from "./generated/runtime-recovery-snapshot-manifest.schema.js";
 export type { SemanticClaim } from "./generated/semantic.schema.js";
 
-export type ContractName =
-  | "evidence"
-  | "semantic"
-  | "personal-model"
-  | "cognitive"
-  | "cognitive-binding"
-  | "current-state-event"
-  | "current-state-head"
-  | "reanswer-outbox"
-  | "cognitive-provenance-overlay"
-  | "router-result"
-  | "runtime-recovery-snapshot-manifest"
-  | "runtime-recovery-report";
+const contractNames = [
+  "evidence",
+  "semantic",
+  "personal-model",
+  "cognitive",
+  "cognitive-binding",
+  "current-state-event",
+  "current-state-head",
+  "reanswer-outbox",
+  "router-result",
+  "cognitive-provenance-overlay",
+  "runtime-recovery-snapshot-manifest",
+  "runtime-recovery-report",
+] as const;
+
+export type ContractName = (typeof contractNames)[number];
 
 export interface ContractValidationError {
   readonly instancePath: string;
@@ -46,21 +49,6 @@ export type ContractValidationResult =
 
 const require = createRequire(import.meta.url);
 const addFormats = require("ajv-formats") as FormatsPlugin;
-const contractNames: readonly ContractName[] = [
-  "evidence",
-  "semantic",
-  "personal-model",
-  "cognitive",
-  "cognitive-binding",
-  "current-state-event",
-  "current-state-head",
-  "reanswer-outbox",
-  "router-result",
-  "cognitive-provenance-overlay",
-  "runtime-recovery-snapshot-manifest",
-  "runtime-recovery-report",
-];
-
 const ajv = addFormats(
   new Ajv2020({
     allErrors: true,

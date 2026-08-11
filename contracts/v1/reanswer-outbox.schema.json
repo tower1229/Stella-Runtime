@@ -4,9 +4,8 @@
   "title": "Reanswer Outbox",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "correction_id", "instance_id", "session_key_hash", "prior_run_id", "new_view_version", "status", "attempt_count", "successful_completion_count", "idempotency_key", "created_at", "updated_at"],
+  "required": ["correction_id", "instance_id", "session_key_hash", "prior_run_id", "new_view_version", "status", "attempt_count", "successful_completion_count", "idempotency_key", "created_at", "updated_at"],
   "properties": {
-    "schema_version": { "const": "cognitive-runtime.reanswer-outbox/v1" },
     "correction_id": { "$ref": "#/$defs/id" },
     "instance_id": { "$ref": "#/$defs/id" },
     "session_key_hash": { "$ref": "#/$defs/checksum" },

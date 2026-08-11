@@ -4,9 +4,8 @@
   "title": "Cognitive Provenance Overlay",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "trace_id", "run_id", "session_key_hash", "sync_generation", "knowledge_snapshot", "state_view_version", "validated_router_result", "cognitive_bindings", "stable_refs", "unresolved_conflicts", "trace_status", "eval_eligible", "created_at"],
+  "required": ["trace_id", "run_id", "session_key_hash", "sync_generation", "knowledge_snapshot", "state_view_version", "validated_router_result", "cognitive_bindings", "stable_refs", "unresolved_conflicts", "trace_status", "eval_eligible", "created_at"],
   "properties": {
-    "schema_version": { "const": "cognitive-runtime.cognitive-provenance-overlay/v1" },
     "trace_id": { "$ref": "#/$defs/id" },
     "run_id": { "$ref": "#/$defs/id" },
     "session_key_hash": { "$ref": "#/$defs/checksum" },

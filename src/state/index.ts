@@ -74,6 +74,12 @@ CREATE TABLE IF NOT EXISTS state_head (
   checksum TEXT NOT NULL,
   activated_at TEXT NOT NULL
 );
+CREATE TRIGGER IF NOT EXISTS state_events_reject_update
+  BEFORE UPDATE ON state_events
+  BEGIN SELECT RAISE(ABORT, 'STATE_EVENTS_APPEND_ONLY'); END;
+CREATE TRIGGER IF NOT EXISTS state_events_reject_delete
+  BEFORE DELETE ON state_events
+  BEGIN SELECT RAISE(ABORT, 'STATE_EVENTS_APPEND_ONLY'); END;
 CREATE TABLE IF NOT EXISTS reanswer_outbox (
   correction_id TEXT PRIMARY KEY,
   instance_id TEXT NOT NULL,
@@ -173,7 +179,6 @@ export class SqliteReanswerStore
     }
 
     const outbox: ReanswerOutbox = {
-      schema_version: "cognitive-runtime.reanswer-outbox/v1",
       correction_id: input.outbox.correctionId,
       instance_id: input.outbox.instanceId,
       session_key_hash: input.outbox.sessionKeyHash,
@@ -198,6 +203,16 @@ export class SqliteReanswerStore
       if (sessionBusy !== undefined) {
         throw new Error("REANSWER_SESSION_BUSY");
       }
+      const headRow = this.#database
+        .prepare("SELECT active_seq FROM state_head WHERE singleton = 1")
+        .get();
+      if (
+        headRow === undefined ||
+        readNumber(headRow, "active_seq") + 1 !== input.event.seq
+      ) {
+        throw new Error("STATE_HEAD_CAS_FAILED");
+      }
+      const previousActiveSeq = input.event.seq - 1;
 
       this.#database
         .prepare(
@@ -220,16 +235,20 @@ export class SqliteReanswerStore
           input.event.idempotency_key,
           input.event.created_at,
         );
-      this.#database
+      const headUpdate = this.#database
         .prepare(
-          "UPDATE state_head SET active_seq = ?, view_version = ?, checksum = ?, activated_at = ? WHERE singleton = 1",
+          "UPDATE state_head SET active_seq = ?, view_version = ?, checksum = ?, activated_at = ? WHERE singleton = 1 AND active_seq = ?",
         )
         .run(
           input.newHead.active_seq,
           input.newHead.view_version,
           input.newHead.checksum,
           input.newHead.activated_at,
+          previousActiveSeq,
         );
+      if (Number(headUpdate.changes) !== 1) {
+        throw new Error("STATE_HEAD_CAS_FAILED");
+      }
       this.#database
         .prepare(
           `INSERT INTO reanswer_outbox(
@@ -309,6 +328,9 @@ export class SqliteReanswerStore
   }
 
   async release(claim: ReanswerClaim, reasonCode: string): Promise<void> {
+    if (!/^[A-Z][A-Z0-9_]*$/.test(reasonCode)) {
+      throw new Error("REANSWER_REASON_CODE_INVALID");
+    }
     const result = this.#database
       .prepare(
         `UPDATE reanswer_outbox
@@ -345,7 +367,6 @@ export class SqliteReanswerStore
       throw new Error("STATE_HEAD_MISSING");
     }
     return {
-      schema_version: "cognitive-runtime.current-state-head/v1",
       active_seq: readNumber(row, "active_seq"),
       view_version: readString(row, "view_version"),
       checksum: readString(row, "checksum"),
@@ -379,7 +400,6 @@ export class SqliteReanswerStore
     const successorRunId = optionalString(row, "successor_run_id");
     const lastErrorCode = optionalString(row, "last_error_code");
     return {
-      schema_version: "cognitive-runtime.reanswer-outbox/v1",
       correction_id: readString(row, "correction_id"),
       instance_id: readString(row, "instance_id"),
       session_key_hash: readString(row, "session_key_hash"),
