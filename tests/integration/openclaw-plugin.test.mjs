@@ -10,6 +10,7 @@ import {
   SqliteProvenanceStore,
 } from "../../dist/provenance/index.js";
 import { SqliteReanswerStore } from "../../dist/state/index.js";
+import { writeSyntheticAuthority } from "../helpers/synthetic-authority.mjs";
 
 class FakeCommand {
   children = new Map();
@@ -83,6 +84,58 @@ test("OpenClaw discovers cognitive self-check through the plugin entry", async (
   assert.deepEqual(output, [
     '{"status":"ok","pluginId":"cognitive-runtime","hostCapabilities":{"hostModelCompletion":"llm.complete"}}',
   ]);
+});
+
+test("OpenClaw generation commands build, verify, activate, and deterministically rebuild", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-openclaw-generation-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const authorityDirectory = join(root, "authority");
+  const stateDirectory = join(root, "state");
+  await writeSyntheticAuthority(authorityDirectory);
+  const program = new FakeCommand();
+  const api = {
+    version: "0.1.0-beta.0",
+    runtime: { llm: { complete: async () => ({}) } },
+    registerCli(registrar) {
+      return registrar({ program });
+    },
+  };
+  await plugin.register(api);
+  const generation = program.children.get("cognitive")?.children.get("generation");
+  const output = [];
+  const originalLog = console.log;
+  console.log = (value) => output.push(JSON.parse(value));
+  try {
+    await generation.children.get("build").handler({
+      authority: authorityDirectory,
+      state: stateDirectory,
+      revision: "revision-synthetic-1",
+      json: true,
+    });
+    await generation.children.get("verify").handler({
+      generation: output[0].staging_directory,
+      json: true,
+    });
+    await generation.children.get("activate").handler({
+      generation: output[0].staging_directory,
+      state: stateDirectory,
+      json: true,
+    });
+    await generation.children.get("rebuild").handler({
+      authority: authorityDirectory,
+      state: stateDirectory,
+      revision: "revision-synthetic-1",
+      json: true,
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(output[0].operation, "generation-build");
+  assert.equal(output[1].valid, true);
+  assert.equal(output[2].sync_generation, output[0].sync_generation);
+  assert.equal(output[3].sync_generation, output[0].sync_generation);
+  assert.equal(output[3].source_revision, "revision-synthetic-1");
 });
 
 test("OpenClaw registration does not use rejected host paths", async () => {

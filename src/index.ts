@@ -1,6 +1,15 @@
 export { runSelfCheck } from "./cli/index.js";
 export type { SelfCheckResult } from "./cli/index.js";
 export {
+  admitFramework,
+  calculateCognitiveAuthorityChecksum,
+} from "./admission/index.js";
+export type {
+  FrameworkAdmissionDecision,
+  FrameworkAdmissionProposal,
+  FrameworkAdmissionResult,
+} from "./admission/index.js";
+export {
   lintAuthorityRecord,
   parseAuthorityMarkdown,
   resolveStableId,
@@ -39,6 +48,22 @@ export type {
   RunScratchPort,
   RunScratchSnapshot,
 } from "./core/index.js";
+export {
+  activateGeneration,
+  buildGeneration,
+  loadActiveGeneration,
+  rebuildGeneration,
+  verifyGeneration,
+} from "./generation/index.js";
+export type {
+  ActiveGeneration,
+  GenerationArtifact,
+  GenerationBuildOptions,
+  GenerationBuildResult,
+  GenerationManifest,
+  GenerationManifestFile,
+  GenerationVerificationResult,
+} from "./generation/index.js";
 export { MemoryObservationAdapter } from "./openclaw/ports.js";
 export type {
   HostCapabilityManifest,

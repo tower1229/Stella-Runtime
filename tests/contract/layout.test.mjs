@@ -31,15 +31,26 @@ test("repository contains every scaffold directory", async () => {
   );
 });
 
-test("framework admission is explicitly a non-operational placeholder", async () => {
+test("framework admission is operational and shares the Runtime package version", async () => {
   const skill = await readFile(
     new URL("../../skills/framework-admission/SKILL.md", import.meta.url),
     "utf8",
   );
+  const packageJson = JSON.parse(
+    await readFile(new URL("../../package.json", import.meta.url), "utf8"),
+  );
 
   assert.match(skill, /^---\nname: framework-admission\n/m);
-  assert.match(skill, /placeholder/i);
-  assert.match(skill, /does not implement/i);
+  assert.match(
+    skill,
+    new RegExp(`package_version: ${packageJson.version.replaceAll(".", "\\.")}`),
+  );
+  assert.doesNotMatch(skill, /placeholder/i);
+  assert.match(skill, /source author/i);
+  assert.match(skill, /model synthesis/i);
+  assert.match(skill, /accepted.*rejected.*rewritten/is);
+  assert.match(skill, /raw Evidence.*never/is);
+  assert.match(skill, /runtime digest/i);
 });
 
 test("minimal example declares itself synthetic", async () => {

@@ -1,5 +1,11 @@
 import { runSelfCheck } from "../cli/index.js";
 import {
+  activateGeneration,
+  buildGeneration,
+  rebuildGeneration,
+  verifyGeneration,
+} from "../generation/index.js";
+import {
   createRuntimeVerifyOptions,
   createRuntimeRecoveryPort,
   openRuntimeRecoverySnapshot,
@@ -228,6 +234,94 @@ const plugin = {
             console.log(JSON.stringify({
               operation: "metrics",
               metrics: runtimeController?.metrics() ?? null,
+            }));
+          });
+
+        const generation = cognitive
+          .command("generation")
+          .description("Build and activate authority projections");
+
+        generation
+          .command("build")
+          .description("Build a staged generation")
+          .requiredOption("--authority <path>", "Authority Repository directory")
+          .requiredOption("--state <path>", "Generation state directory")
+          .requiredOption("--revision <revision>", "Authority source revision")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            const result = await buildGeneration({
+              authorityDirectory: readStringOption(options, "authority"),
+              stateDirectory: readStringOption(options, "state"),
+              sourceRevision: readStringOption(options, "revision"),
+              packageVersion,
+            });
+            console.log(JSON.stringify({
+              operation: "generation-build",
+              package_version: packageVersion,
+              sync_generation: result.syncGeneration,
+              staging_directory: result.stagingDirectory,
+            }));
+          });
+
+        generation
+          .command("verify")
+          .description("Verify a complete staged or active generation")
+          .requiredOption("--generation <path>", "Generation directory")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            const result = await verifyGeneration(
+              readStringOption(options, "generation"),
+            );
+            console.log(JSON.stringify({
+              operation: "generation-verify",
+              package_version: packageVersion,
+              valid: result.valid,
+              issues: result.issues,
+              sync_generation: result.manifest?.sync_generation ?? null,
+            }));
+          });
+
+        generation
+          .command("activate")
+          .description("Atomically activate a verified staged generation")
+          .requiredOption("--generation <path>", "Staged generation directory")
+          .requiredOption("--state <path>", "Generation state directory")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            const result = await activateGeneration({
+              stagingDirectory: readStringOption(options, "generation"),
+              stateDirectory: readStringOption(options, "state"),
+            });
+            console.log(JSON.stringify({
+              operation: "generation-activate",
+              package_version: packageVersion,
+              sync_generation: result.syncGeneration,
+            }));
+          });
+
+        generation
+          .command("rebuild")
+          .description("Deterministically rebuild and activate one authority revision")
+          .requiredOption("--authority <path>", "Authority Repository directory")
+          .requiredOption("--state <path>", "Generation state directory")
+          .requiredOption("--revision <revision>", "Authority source revision")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            const result = await rebuildGeneration({
+              authorityDirectory: readStringOption(options, "authority"),
+              stateDirectory: readStringOption(options, "state"),
+              sourceRevision: readStringOption(options, "revision"),
+              packageVersion,
+            });
+            console.log(JSON.stringify({
+              operation: "generation-rebuild",
+              package_version: packageVersion,
+              sync_generation: result.manifest.sync_generation,
+              source_revision: result.manifest.source_revision,
             }));
           });
 
