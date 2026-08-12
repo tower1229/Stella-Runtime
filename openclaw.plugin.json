@@ -2,7 +2,7 @@
   "id": "cognitive-runtime",
   "name": "Stella Runtime",
   "description": "Instance-neutral cognitive runtime for OpenClaw",
-  "version": "0.1.0-beta.0",
+  "version": "0.1.0",
   "skills": [
     "skills/framework-admission"
   ],

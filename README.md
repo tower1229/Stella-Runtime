@@ -1,67 +1,145 @@
 # Stella Runtime
 
-Stella Runtime is an instance-neutral cognitive runtime for OpenClaw. It provides
-versioned contracts, runtime integration, CLI tooling, framework admission, and
-verification infrastructure without embedding any user's private data or
-instance-specific worldview.
+Stella Runtime is an instance-neutral cognitive runtime for OpenClaw. It binds
+explicit, versioned, traceable, and correctable knowledge to one host-owned Agent
+Run without turning model inference or generated projections into hidden
+authority.
 
-> Status: pre-alpha. The repository identity, architecture boundary, V1
-> requirements, implementation roadmap, and executable single-package scaffold
-> are in place; business modules remain contract-only or unimplemented.
+> Current release source: `0.1.0`. It supports only OpenClaw extended-stable
+> `2026.6.34`; compatibility is exact, not minimum-version based.
 
-## Identity
+## What ships
 
-| Surface | Frozen value |
-| --- | --- |
-| Project | Stella Runtime |
-| Repository | `tower1229/Stella-Runtime` |
-| npm package | `@tower1229/stella-cognitive-runtime` |
-| OpenClaw Plugin ID | `cognitive-runtime` |
-| Schema namespace | `cognitive-runtime.<contract>/v1` |
-| License | MIT |
-| Node.js | `^22.19.0 || ^24.0.0` |
-| Initial OpenClaw host | extended-stable `2026.6.34` |
+The single package `@tower1229/stella-cognitive-runtime` contains:
 
-The Stella name is the project and distribution brand. Public protocol identity
-uses `cognitive-runtime.*`; it must not encode a specific private Agent or user.
+- the OpenClaw Plugin `cognitive-runtime` and its operational CLI;
+- versioned JSON Schemas plus generated JavaScript and TypeScript declarations;
+- bounded Router, context packet, Current State, correction/outbox, provenance,
+  generation, recovery, and conformance modules;
+- the `framework-admission` Skill and public test Runner;
+- exact-host compatibility evidence and synthetic verification assets.
 
-## Repository boundary
+OpenClaw still owns sessions, the Agent loop, native memory tools, and its native
+audit trajectory. Stella Runtime is not a second Agent loop, general memory
+system, vector database, persona engine, or action authority.
 
-- This repository owns generic Runtime source, contracts, CLI, Plugin Skill,
-  synthetic fixtures, compatibility manifests, authoritative Runtime recovery
-  contracts, and package/release validation.
-- A separate authority repository owns each private Agent's knowledge, identity,
-  configuration, version pin, migration map, and de-identified instance tests.
-- Git-external runtime storage owns Current State events, compiled generations,
-  traces, and raw experience records. Derived generations are rebuildable and
-  are never a second authority source.
+## Install
 
-The Runtime must export, verify, and restore its authoritative Git-external state
-through a versioned private recovery snapshot. The private migration orchestrator
-stores and transports that snapshot; it never reads Runtime database internals.
+Requirements:
 
-Private data, credentials, live state databases, real conversations, and
-instance-specific cognitive content must never enter this repository or its npm
-tarball.
+- Node.js `^22.19.0 || ^24.0.0`;
+- OpenClaw extended-stable `2026.6.34` exactly.
 
-## Start here
+Install through OpenClaw:
 
-- [Project background](docs/PROJECT-BACKGROUND.md)
+```sh
+openclaw plugins install @tower1229/stella-cognitive-runtime@0.1.0
+openclaw plugins inspect cognitive-runtime --runtime --json
+openclaw cognitive self-check
+```
+
+Library or Runner consumers can install the exact package with:
+
+```sh
+npm install --save-exact @tower1229/stella-cognitive-runtime@0.1.0
+```
+
+Begin in `off`, configure a checksummed immutable binding and Git-external
+recovery root, then pass exact-host conformance before moving through `observe`
+to `enforce`. See the [operations guide](docs/OPERATIONS.md).
+
+## Configuration reference
+
+The machine-readable configuration authority is `openclaw.plugin.json`; unknown
+properties are rejected. The human reference covers:
+
+- `off`, `observe`, and `enforce` semantics;
+- Router, packet, scratch capacity, and TTL limits;
+- generation, authority revision, State View, registry, and governing binding;
+- recovery root, active instance, and allowed instance revisions;
+- every `openclaw cognitive` CLI command.
+
+Read [Configuration reference](docs/CONFIGURATION.md).
+
+## Data and authority
+
+This repository and npm package contain generic Runtime code and synthetic data
+only. A separate private Authority Repository owns durable knowledge, identity,
+configuration, and migration intent. Git-external Runtime State owns Current
+State, unfinished corrections/outbox, minimized overlays, and rebuildable
+projections.
+
+Private data, credentials, live databases, Recovery Snapshots, conversations,
+real experience records, and Instance Test Packs must not enter this repository,
+CI artifacts, or the npm tarball. Read [Data boundaries](docs/DATA-BOUNDARIES.md).
+
+## CLI
+
+The main operational surface is `openclaw cognitive`:
+
+- `self-check`, `metrics`;
+- `generation build|verify|activate|rebuild`;
+- `state`, `trace get|query`;
+- `backup`, read-only `verify`, and rollback-safe `restore`.
+
+Structured operational commands require `--json` where offered. Run
+`openclaw cognitive <command> --help` or read the
+[Configuration reference](docs/CONFIGURATION.md) for exact options.
+
+The package also exposes `stella-runtime-test` for repository-owned tests and an
+optional external Instance Test Pack. Private packs execute locally and are not
+copied or uploaded by the Runner.
+
+## Development and verification
+
+```sh
+npm ci
+npm run typecheck
+npm test
+npm run test:pack-install
+```
+
+`npm test` builds generated JavaScript and runs unit, contract, integration, and
+pack-install tests. Pack-install creates a real tarball, audits its allowlist and
+public content, installs it into an isolated OpenClaw environment, checks
+Plugin/CLI/Skill discovery and typed-hook behavior, rehearses successor and
+recovery failure paths, restarts the Gateway, uninstalls, and proves config
+restoration. Fixtures are synthetic.
+
+## Source of truth
+
 - [Domain language](CONTEXT.md)
 - [V1 requirements](docs/requirements/V1.md)
 - [V1 architecture](docs/architecture/V1.md)
-- [V1 data contracts](docs/architecture/DATA-CONTRACTS.md)
-- [Requirement provenance and migrated decision basis](docs/REQUIREMENT-PROVENANCE.md)
-- [V1 implementation roadmap](docs/roadmap/V1.md)
-- [OpenClaw 2026.6.34 host evidence](docs/evidence/openclaw-2026.6.34.md)
-- [Runtime recovery ownership decision](docs/adr/0001-runtime-owns-state-recovery.md)
-- [Repository requirement authority decision](docs/adr/0002-runtime-repository-is-requirement-authority.md)
-- [Implementation issues](https://github.com/tower1229/Stella-Runtime/issues)
+- [Data contracts](docs/architecture/DATA-CONTRACTS.md)
+- [Requirement provenance](docs/REQUIREMENT-PROVENANCE.md)
+- [Implementation roadmap](docs/roadmap/V1.md)
+- [OpenClaw compatibility evidence](docs/evidence/openclaw-2026.6.34.md)
+- [Runtime recovery ADR](docs/adr/0001-runtime-owns-state-recovery.md)
+- [Repository authority ADR](docs/adr/0002-runtime-repository-is-requirement-authority.md)
+- [Changelog](CHANGELOG.md)
 
-The first implementation slice is the buildable single-package scaffold. It
-must use synthetic fixtures only and must not connect to a live private Agent.
+This repository is the complete authority for generic Runtime requirements,
+architecture, decisions, evidence, implementation, build, test, and release. A
+consumer repository is optional and never an implementation dependency.
 
-All generic Runtime development decisions and implementation requirements are
-owned here. A consumer repository may supply a private Instance Test Pack or
-orchestrate recovery, but Runtime contributors never need that repository to
-understand, implement, test, package, or release the Runtime.
+## Upgrade, rollback, and recovery
+
+Use exact package versions and integrity, retain the previous verified artifact
+and receipt, create and read-only verify a Runtime Recovery Snapshot, then prove
+State/outbox and restart continuity before enabling `observe` or `enforce`.
+Package rollback and state recovery are separate operations. The full sequence is
+in [Operations](docs/OPERATIONS.md).
+
+## Known limitations
+
+V1 has one exact OpenClaw matrix row. It does not support `runContext`, native
+structured output, direct persisted-session embedded Runs, host next-turn
+injection, or bundled-only scheduling. Successor attempts are at-least-once with
+one successful completion, not cross-Run exactly-once delivery. Cloud disaster
+recovery, bare-metal imaging, generic migration, complete erasure, and retention
+automation are outside V1.
+
+Consumer product acceptance and personal usefulness are downstream non-blocking
+evidence; they are not generic Runtime technical release gates. Read the full
+[support policy and known limitations](docs/SUPPORT.md).

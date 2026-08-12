@@ -2,6 +2,23 @@
 
 > Status: accepted first-host baseline
 > Exact build observed: `2026.6.34 (5c38f99)`
+> Package version: `0.1.0`
+
+## Stable package acceptance
+
+On 2026-08-12, `npm run test:pack-install` passed from the stable `0.1.0`
+source tree against `OpenClaw 2026.6.34 (5c38f99)`. The test built a fresh npm
+tarball, installed it through `npm-pack:` into an isolated synthetic OpenClaw
+profile, inspected the loaded Plugin and strict config schema, discovered the CLI
+and packaged Skill, exercised the verified host hooks and successor paths,
+restarted the Gateway, uninstalled both probe Plugins, and confirmed byte-for-byte
+restoration of the original isolated configuration.
+
+The same command also passed tarball allowlist and sensitive-content scans plus
+exact-tarball upgrade/integrity reproduction. It accessed no live Private
+Instance. Registry publication, npm/GitHub attestations, tag correspondence, and
+registry integrity are performed and checked by `release-stable.yml`; they are
+not claimed by this local host record.
 
 This document preserves the generic evidence that selected the first OpenClaw
 adapter. Runtime development must not consult the historical private repository

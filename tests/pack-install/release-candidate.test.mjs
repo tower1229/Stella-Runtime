@@ -9,6 +9,7 @@ import test from "node:test";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = new URL("../../", import.meta.url);
+const previousVerifiedRevision = "1260ba888ea84e0a0d0da0f72c6c9c0db532d323";
 
 test("release candidate upgrades between exact tarballs and verifies version and integrity", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-runtime-release-candidate-"));
@@ -53,17 +54,28 @@ test("release candidate upgrades between exact tarballs and verifies version and
   assert.equal(provenance.reproduced_tarball_sha512, integrity);
 
   const previousRoot = join(root, "previous");
+  const previousArchive = join(root, "previous.tar");
   await mkdir(previousRoot);
-  await execFileAsync("tar", ["-xzf", tarball, "-C", previousRoot]);
-  const previousPackagePath = join(previousRoot, "package", "package.json");
-  const previousPackage = JSON.parse(await readFile(previousPackagePath, "utf8"));
-  previousPackage.version = "0.1.0-alpha.0";
-  await writeFile(previousPackagePath, `${JSON.stringify(previousPackage, null, 2)}\n`);
+  await execFileAsync(
+    "git",
+    ["archive", "--format=tar", `--output=${previousArchive}`, previousVerifiedRevision],
+    { cwd: repositoryRoot },
+  );
+  await execFileAsync("tar", ["-xf", previousArchive, "-C", previousRoot]);
+  const previousPackage = JSON.parse(
+    await readFile(join(previousRoot, "package.json"), "utf8"),
+  );
+  assert.equal(previousPackage.version, "0.1.0-beta.0");
+  await execFileAsync("npm", ["ci", "--ignore-scripts"], {
+    cwd: previousRoot,
+    env: { ...process.env, npm_config_cache: cache },
+  });
   const { stdout: previousPackOutput } = await execFileAsync(
-    "npm", ["pack", "--json", "--ignore-scripts", "--pack-destination", root],
-    { cwd: join(previousRoot, "package"), env: { ...process.env, npm_config_cache: cache } },
+    "npm", ["pack", "--json", "--pack-destination", root],
+    { cwd: previousRoot, env: { ...process.env, npm_config_cache: cache } },
   );
   const [previousPacked] = JSON.parse(previousPackOutput);
+  assert.equal(previousPacked.version, "0.1.0-beta.0");
   const previousTarball = join(root, previousPacked.filename);
 
   await writeFile(join(root, "package.json"), `${JSON.stringify({
@@ -79,7 +91,7 @@ test("release candidate upgrades between exact tarballs and verifies version and
   const installedPath = join(
     root, "node_modules", "@tower1229", "stella-cognitive-runtime", "package.json",
   );
-  assert.equal(JSON.parse(await readFile(installedPath, "utf8")).version, "0.1.0-alpha.0");
+  assert.equal(JSON.parse(await readFile(installedPath, "utf8")).version, "0.1.0-beta.0");
   await execFileAsync(
     "npm",
     ["install", "--ignore-scripts", tarball],

@@ -1,0 +1,68 @@
+name: Release stable
+
+on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  publish:
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm ci
+      - name: Verify immutable release identity
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          test "$RELEASE_TAG" = "v$(node -p "require('./package.json').version")"
+          test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
+          test "$(node -p "require('./package-lock.json').version")" = "$(node -p "require('./package.json').version")"
+      - run: npm run lint
+      - run: npm test
+      - run: npm run test:pack-install
+      - name: Pack the exact release artifact
+        id: pack
+        run: |
+          mkdir release
+          npm pack --json --pack-destination release > release/pack.json
+          echo "tarball=$(node -p "'release/' + require('./release/pack.json')[0].filename")" >> "$GITHUB_OUTPUT"
+          echo "integrity=$(node -p "require('./release/pack.json')[0].integrity")" >> "$GITHUB_OUTPUT"
+      - name: Attest release tarball
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ steps.pack.outputs.tarball }}
+      - name: Publish with npm trusted publishing
+        run: npm publish "${{ steps.pack.outputs.tarball }}" --access public
+      - name: Verify registry integrity and signatures
+        env:
+          EXPECTED_INTEGRITY: ${{ steps.pack.outputs.integrity }}
+        run: |
+          PACKAGE=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          test "$(npm view "$PACKAGE@$VERSION" dist.integrity)" = "$EXPECTED_INTEGRITY"
+          mkdir registry-verification
+          cd registry-verification
+          npm init --yes
+          npm install --save-exact "$PACKAGE@$VERSION"
+          npm audit signatures
+      - name: Create immutable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: gh release create "$RELEASE_TAG" "$TARBALL#npm package" --verify-tag --generate-notes --title "Stella Runtime $RELEASE_TAG"

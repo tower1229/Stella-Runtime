@@ -10,6 +10,7 @@ const ignoredDirectories = new Set([".git", "node_modules"]);
 const allowedTopLevel = new Set([
   ".gitignore",
   ".github",
+  "CHANGELOG.md",
   "CONTEXT.md",
   "LICENSE",
   "README.md",

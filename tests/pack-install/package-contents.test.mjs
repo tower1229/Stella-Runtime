@@ -26,11 +26,16 @@ test("npm tarball contains only allowlisted and non-sensitive public assets", as
   const paths = pack.files.map((file) => file.path);
   const allowed = [
     "LICENSE",
+    "CHANGELOG.md",
     "README.md",
     "package.json",
     "openclaw.plugin.json",
     "compatibility/",
     "contracts/v1/",
+    "docs/CONFIGURATION.md",
+    "docs/DATA-BOUNDARIES.md",
+    "docs/OPERATIONS.md",
+    "docs/SUPPORT.md",
     "docs/evidence/",
     "dist/",
     "skills/framework-admission/",
@@ -45,6 +50,7 @@ test("npm tarball contains only allowlisted and non-sensitive public assets", as
     true,
   );
   assert.equal(paths.includes("dist/openclaw/index.js"), true);
+  assert.equal(paths.includes("CHANGELOG.md"), true);
   assert.equal(paths.includes("dist/testing/runner.js"), true);
   assert.equal(paths.includes("dist/testing/runner.d.ts"), true);
   assert.equal(
@@ -72,6 +78,14 @@ test("npm tarball contains only allowlisted and non-sensitive public assets", as
     paths.includes("docs/evidence/openclaw-2026.6.34.md"),
     true,
   );
+  for (const documentation of [
+    "docs/CONFIGURATION.md",
+    "docs/DATA-BOUNDARIES.md",
+    "docs/OPERATIONS.md",
+    "docs/SUPPORT.md",
+  ]) {
+    assert.equal(paths.includes(documentation), true);
+  }
   assert.equal(paths.some((path) => /(?<!\.d)\.ts$/.test(path)), false);
 
   await execFileAsync(
