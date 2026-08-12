@@ -16,6 +16,8 @@ export type { RuntimeRecoveryVerificationOrRestoreReport } from "./generated/run
 export type { RuntimeRecoveryVerificationOrRestoreReportV2 } from "./generated/runtime-recovery-report-v2.schema.js";
 export type { RuntimeRecoverySnapshotManifest } from "./generated/runtime-recovery-snapshot-manifest.schema.js";
 export type { SemanticClaim } from "./generated/semantic.schema.js";
+export type { ReleasePin } from "./generated/release-pin.schema.js";
+export type { ConsumerConformanceReceipt } from "./generated/conformance-receipt.schema.js";
 
 const contractNames = [
   "evidence",
@@ -31,6 +33,8 @@ const contractNames = [
   "runtime-recovery-snapshot-manifest",
   "runtime-recovery-report",
   "runtime-recovery-report-v2",
+  "release-pin",
+  "conformance-receipt",
 ] as const;
 
 export type ContractName = (typeof contractNames)[number];

@@ -27,6 +27,8 @@ test("contract validator accepts independent positive fixtures", async () => {
     ["runtime-recovery-snapshot-manifest", "recovery-manifest"],
     ["runtime-recovery-report", "recovery-report"],
     ["runtime-recovery-report-v2", "recovery-report-v2"],
+    ["release-pin", "release-pin"],
+    ["conformance-receipt", "conformance-receipt"],
   ];
 
   for (const [contract, fixture] of cases) {
@@ -53,6 +55,8 @@ test("contract validator rejects independent negative fixtures", async () => {
     ["runtime-recovery-snapshot-manifest", "recovery-manifest-credential-file"],
     ["runtime-recovery-report", "recovery-report-live-database-path"],
     ["runtime-recovery-report-v2", "recovery-report-v2-live-database-path"],
+    ["release-pin", "release-pin-floating-locator"],
+    ["conformance-receipt", "conformance-receipt-private-path"],
   ];
 
   for (const [contract, fixture] of cases) {

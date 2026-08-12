@@ -1,0 +1,21 @@
+{
+  "schema_version": "cognitive-runtime.conformance-receipt/v1",
+  "status": "fail",
+  "package": {
+    "name": "@tower1229/stella-cognitive-runtime",
+    "version": "0.1.0-beta.0",
+    "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+  },
+  "openclaw_version": "2026.6.34",
+  "scenarios": [
+    { "id": "external-pack", "status": "fail", "reason_codes": ["FAILED_AT_/USERS/PRIVATE/PACK"] }
+  ],
+  "provenance": {
+    "tarball_sha512": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+    "reproduced_tarball_sha512": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+    "release_pin_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "lockfile_sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "build_commands": ["npm ci"]
+  }
+}

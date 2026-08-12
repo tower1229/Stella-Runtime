@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cognitive-runtime.release-pin/v1",
+  "title": "Release Pin",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "package", "contracts", "openclaw"],
+  "properties": {
+    "schema_version": { "const": "cognitive-runtime.release-pin/v1" },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "npm_locator", "integrity"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$" },
+        "version": { "$ref": "#/$defs/exactVersion" },
+        "npm_locator": { "type": "string", "pattern": "^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*@[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$" },
+        "integrity": { "$ref": "#/$defs/integrity" }
+      }
+    },
+    "contracts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^cognitive-runtime\\.[a-z0-9-]+/v[0-9]+$" }
+    },
+    "openclaw": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release_channel", "version", "capability_evidence", "capability_checksum", "capabilities"],
+      "properties": {
+        "release_channel": { "type": "string", "minLength": 1 },
+        "version": { "$ref": "#/$defs/exactVersion" },
+        "capability_evidence": { "type": "string", "pattern": "^docs/evidence/[a-zA-Z0-9._-]+\\.md$" },
+        "capability_checksum": { "$ref": "#/$defs/sha256" },
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "status"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z][a-zA-Z0-9]*$" },
+              "status": { "type": "string", "enum": ["pass", "unsupported"] }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "exactVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$" },
+    "integrity": { "type": "string", "pattern": "^sha512-[A-Za-z0-9+/]{86}==$" },
+    "sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

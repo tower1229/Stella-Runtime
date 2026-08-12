@@ -1,0 +1,27 @@
+{
+  "schema_version": "cognitive-runtime.conformance-receipt/v1",
+  "status": "pass",
+  "package": {
+    "name": "@tower1229/stella-cognitive-runtime",
+    "version": "0.1.0-beta.0",
+    "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+  },
+  "openclaw_version": "2026.6.34",
+  "scenarios": [
+    { "id": "install", "status": "pass", "reason_codes": [] },
+    { "id": "upgrade-compatibility", "status": "pass", "reason_codes": [] },
+    { "id": "off", "status": "pass", "reason_codes": [] },
+    { "id": "observe", "status": "pass", "reason_codes": [] },
+    { "id": "enforce", "status": "pass", "reason_codes": [] },
+    { "id": "restart-continuity", "status": "pass", "reason_codes": [] },
+    { "id": "rollback", "status": "pass", "reason_codes": [] }
+  ],
+  "provenance": {
+    "tarball_sha512": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+    "reproduced_tarball_sha512": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+    "release_pin_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "lockfile_sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "build_commands": ["npm ci", "npm test", "npm pack --json"]
+  }
+}

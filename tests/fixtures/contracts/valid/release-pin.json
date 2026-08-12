@@ -1,0 +1,29 @@
+{
+  "schema_version": "cognitive-runtime.release-pin/v1",
+  "package": {
+    "name": "@tower1229/stella-cognitive-runtime",
+    "version": "0.1.0-beta.0",
+    "npm_locator": "@tower1229/stella-cognitive-runtime@0.1.0-beta.0",
+    "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+  },
+  "contracts": [
+    "cognitive-runtime.runtime-recovery-snapshot-manifest/v1",
+    "cognitive-runtime.runtime-recovery-report/v2"
+  ],
+  "openclaw": {
+    "release_channel": "extended-stable",
+    "version": "2026.6.34",
+    "capability_evidence": "docs/evidence/openclaw-2026.6.34.md",
+    "capability_checksum": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "capabilities": [
+      { "id": "packageInstall", "status": "pass" },
+      { "id": "runtimeInspect", "status": "pass" },
+      { "id": "typedHooks", "status": "pass" },
+      { "id": "modelCompletion", "status": "pass" },
+      { "id": "memoryReferences", "status": "pass" },
+      { "id": "successorDelivery", "status": "pass" },
+      { "id": "cleanup", "status": "pass" },
+      { "id": "failurePaths", "status": "pass" }
+    ]
+  }
+}

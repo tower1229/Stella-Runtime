@@ -38,6 +38,8 @@ export type {
   RuntimeRecoveryVerificationOrRestoreReport,
   RuntimeRecoveryVerificationOrRestoreReportV2,
   SemanticClaim,
+  ReleasePin,
+  ConsumerConformanceReceipt,
 } from "./contracts/index.js";
 export { RunScratchMap } from "./core/index.js";
 export type {
@@ -48,6 +50,18 @@ export type {
   RunScratchPort,
   RunScratchSnapshot,
 } from "./core/index.js";
+export {
+  calculateReleasePinChecksum,
+  createReleaseProvenance,
+  rehearseRecoveryTransport,
+  runReleaseConformance,
+} from "./conformance/index.js";
+export type {
+  ExactNpmRelease,
+  ReleaseConformanceOptions,
+  ReleaseInspection,
+  ReleaseLifecyclePort,
+} from "./conformance/index.js";
 export {
   activateGeneration,
   buildGeneration,

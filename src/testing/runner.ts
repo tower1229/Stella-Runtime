@@ -52,22 +52,56 @@ export async function runTestPacks(options: TestRunnerOptions = {}): Promise<num
   let instanceTests: readonly string[] = [];
   if (options.instanceTestPack !== undefined) {
     const instanceTestPack = path.resolve(options.instanceTestPack);
-    await assertDirectory(instanceTestPack, "Instance Test Pack");
-    instanceTests = await discoverTests(instanceTestPack);
+    try {
+      await assertDirectory(instanceTestPack, "Instance Test Pack");
+      instanceTests = await discoverTests(instanceTestPack);
+    } catch {
+      throw new Error("INSTANCE_TEST_PACK_INVALID");
+    }
   }
 
-  const testFiles = [...repositoryTests, ...instanceTests];
-  if (testFiles.length === 0) {
+  if (repositoryTests.length === 0 && instanceTests.length === 0) {
     throw new Error("no test files were discovered");
   }
-
-  const result = spawnSync(process.execPath, ["--test", ...testFiles], {
-    stdio: "inherit",
-  });
-  if (result.error !== undefined) {
-    throw result.error;
+  const run = (
+    testFiles: readonly string[],
+    execution?: { readonly cwd: string; readonly privatePack: boolean },
+  ) => spawnSync(
+    process.execPath,
+    ["--test", ...testFiles],
+    {
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+      ...(execution === undefined ? {} : { cwd: execution.cwd }),
+      ...(execution?.privatePack !== true ? {} : {
+        env: Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+          key !== "NODE_OPTIONS"
+          && !/(?:COVERAGE|JUNIT|NYC|ARTIFACT|TEST_REPORT|NODE_TEST_CONTEXT)/iu.test(key))),
+      }),
+    },
+  );
+  const repositoryResult = repositoryTests.length === 0 ? null : run(repositoryTests);
+  if (repositoryResult?.error !== undefined) {
+    throw new Error("test runner process failed");
   }
-  return result.status ?? 1;
+  process.stdout.write(repositoryResult?.stdout ?? "");
+  process.stderr.write(repositoryResult?.stderr ?? "");
+
+  const instanceResult = instanceTests.length === 0 ? null : run(instanceTests, {
+    cwd: path.resolve(options.instanceTestPack as string),
+    privatePack: true,
+  });
+  if (instanceResult?.error !== undefined) {
+    throw new Error("INSTANCE_TEST_PACK_PROCESS_FAILED");
+  }
+  if (instanceResult !== null) {
+    process.stdout.write(`${instanceResult.status === 0
+      ? "INSTANCE_TEST_PACK_PASSED"
+      : "INSTANCE_TEST_PACK_FAILED"}\n`);
+  }
+  return repositoryResult?.status === 0 && (instanceResult?.status ?? 0) === 0
+    ? 0
+    : 1;
 }
 
 function parseArguments(arguments_: readonly string[]): TestRunnerOptions {

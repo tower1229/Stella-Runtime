@@ -10,6 +10,7 @@ const requiredDirectories = [
   "src/packet",
   "src/state",
   "src/recovery",
+  "src/conformance",
   "src/provenance",
   "src/cli",
   "contracts/v1",
