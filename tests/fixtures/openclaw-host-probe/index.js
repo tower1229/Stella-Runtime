@@ -98,6 +98,12 @@ const plugin = {
       if (activeRuns.has(context.runId)) {
         return;
       }
+      const nestedCompletion = await api.runtime.llm.complete({
+        messages: [{ role: "user", content: "ROUTER_VALID" }],
+        maxTokens: 512,
+        temperature: 0,
+        purpose: "cognitive-runtime.synthetic-hook-completion-probe",
+      });
       const correctionId = kind === "memory"
         ? "correction-ui"
         : "correction-command";
@@ -122,7 +128,10 @@ const plugin = {
         runKind: kind,
         claimAttempt: claim.attempt,
         newViewVersion: outbox.new_view_version,
+        nestedCompletionTextLength: nestedCompletion.text.length,
+        nestedCompletionKeys: Object.keys(nestedCompletion).sort(),
       });
+      return { prependContext: "[synthetic_probe_injection]" };
     });
     api.on("after_tool_call", (event, context) => {
       record({
@@ -234,6 +243,7 @@ const plugin = {
             console.log(JSON.stringify({
               valid: await route("ROUTER_VALID"),
               invalid: await route("ROUTER_INVALID"),
+              generic: await route("GENERIC_ROUTER"),
             }));
           });
         root.command("seed")

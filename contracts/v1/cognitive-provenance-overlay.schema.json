@@ -13,7 +13,7 @@
     "knowledge_snapshot": { "type": "string", "minLength": 1 },
     "state_view_version": { "type": "string", "minLength": 1 },
     "validated_router_result": { "oneOf": [{ "type": "null" }, { "$ref": "router-result.schema.json" }] },
-    "cognitive_bindings": { "type": "array", "items": { "$ref": "#/$defs/ref" }, "uniqueItems": true },
+    "cognitive_bindings": { "type": "array", "items": { "$ref": "#/$defs/cognitiveRef" }, "uniqueItems": true },
     "stable_refs": { "type": "array", "items": { "$ref": "#/$defs/ref" }, "uniqueItems": true },
     "unresolved_conflicts": { "type": "array", "items": { "$ref": "#/$defs/id" }, "uniqueItems": true },
     "trace_status": { "type": "string", "minLength": 1 },
@@ -23,6 +23,7 @@
   "$defs": {
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
     "checksum": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-    "ref": { "type": "object", "additionalProperties": false, "required": ["id", "status"], "properties": { "id": { "$ref": "#/$defs/id" }, "status": { "enum": ["planned", "retrieved", "injected", "declared_used", "declared_excluded"] } } }
+    "ref": { "type": "object", "additionalProperties": false, "required": ["id", "status"], "properties": { "id": { "$ref": "#/$defs/id" }, "status": { "enum": ["planned", "retrieved", "injected", "declared_used", "declared_excluded"] } } },
+    "cognitiveRef": { "type": "object", "additionalProperties": false, "required": ["id", "status"], "properties": { "id": { "$ref": "#/$defs/id" }, "role": { "enum": ["evidence", "semantic", "current_state", "governing_system", "governing_module", "ordinary_framework"] }, "version": { "type": "string", "minLength": 1 }, "status": { "const": "injected" } } }
   }
 }

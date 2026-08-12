@@ -2,7 +2,7 @@
   "id": "cognitive-runtime",
   "name": "Stella Runtime",
   "description": "Instance-neutral cognitive runtime for OpenClaw",
-  "version": "0.0.0",
+  "version": "0.1.0-beta.0",
   "skills": [
     "skills/framework-admission"
   ],
@@ -19,6 +19,88 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "runtime": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["mode", "limits", "binding"],
+        "properties": {
+          "mode": { "enum": ["off", "observe", "enforce"] },
+          "limits": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["routerTimeoutMs", "routerMaxTokens", "routerMaxInputCharacters", "routerMaxOutputCharacters", "packetMaxCharacters", "scratchCapacity", "scratchTtlMs"],
+            "properties": {
+              "routerTimeoutMs": { "type": "integer", "minimum": 1 },
+              "routerMaxTokens": { "type": "integer", "minimum": 1 },
+              "routerMaxInputCharacters": { "type": "integer", "minimum": 1 },
+              "routerMaxOutputCharacters": { "type": "integer", "minimum": 1 },
+              "packetMaxCharacters": { "type": "integer", "minimum": 1 },
+              "scratchCapacity": { "type": "integer", "minimum": 1 },
+              "scratchTtlMs": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "binding": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["syncGeneration", "authorityRevision", "stateViewVersion", "activeGoverningSystem", "registry", "context"],
+            "properties": {
+              "syncGeneration": { "type": "string", "minLength": 1 },
+              "authorityRevision": { "type": "string", "minLength": 1 },
+              "stateViewVersion": { "type": "string", "minLength": 1 },
+              "activeGoverningSystem": { "type": ["string", "null"] },
+              "registry": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["checksum", "entries"],
+                "properties": {
+                  "checksum": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+                  "entries": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["id", "role", "version", "syncGeneration", "checksum"],
+                      "properties": {
+                        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+                        "role": { "enum": ["evidence", "semantic", "current_state", "governing_system", "governing_module", "ordinary_framework"] },
+                        "version": { "type": "string", "minLength": 1 },
+                        "syncGeneration": { "type": "string", "minLength": 1 },
+                        "checksum": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+                        "governedBy": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" }
+                      }
+                    }
+                  }
+                }
+              },
+              "context": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["stateView", "semanticClaims", "evidenceRefs", "governing", "frameworks"],
+                "properties": {
+                  "stateView": { "$ref": "#/$defs/contextEntries" },
+                  "semanticClaims": { "$ref": "#/$defs/contextEntries" },
+                  "evidenceRefs": { "$ref": "#/$defs/contextEntries" },
+                  "governing": {
+                    "oneOf": [
+                      { "type": "null" },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["system", "modules"],
+                        "properties": {
+                          "system": { "$ref": "#/$defs/versionedContextEntry" },
+                          "modules": { "type": "array", "items": { "$ref": "#/$defs/versionedContextEntry" } }
+                        }
+                      }
+                    ]
+                  },
+                  "frameworks": { "type": "array", "items": { "$ref": "#/$defs/versionedContextEntry" } }
+                }
+              }
+            }
+          }
+        }
+      },
       "recovery": {
         "type": "object",
         "additionalProperties": false,
@@ -48,6 +130,28 @@
           }
         }
       }
+    },
+    "$defs": {
+      "contextEntry": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "content"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+          "content": { "type": "string", "minLength": 1 }
+        }
+      },
+      "versionedContextEntry": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "version", "content"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+          "version": { "type": "string", "minLength": 1 },
+          "content": { "type": "string", "minLength": 1 }
+        }
+      },
+      "contextEntries": { "type": "array", "items": { "$ref": "#/$defs/contextEntry" } }
     }
   }
 }

@@ -22,15 +22,41 @@ export interface CognitiveRuntimePluginApi {
       complete(params: unknown): Promise<unknown>;
     };
   };
-  readonly on?: (
-    event: "before_prompt_build",
-    handler: (
-      event: unknown,
-      context: { readonly runId?: string },
-    ) => void | Promise<void>,
-  ) => void;
+  readonly logger?: {
+    info(message: string): void;
+    warn(message: string): void;
+  };
+  readonly lifecycle?: {
+    registerRuntimeLifecycle(lifecycle: {
+      readonly id: string;
+      readonly description?: string;
+      readonly cleanup?: (context: {
+        readonly reason: "reset" | "delete" | "disable" | "restart";
+        readonly sessionKey?: string;
+        readonly runId?: string;
+      }) => void | Promise<void>;
+    }): void;
+  };
+  readonly on?: (event: PluginHookName, handler: PluginHookHandler) => void;
   registerCli(
     registrar: (context: { program: CliCommand }) => void | Promise<void>,
     options: { readonly descriptors: readonly CliDescriptor[] },
   ): void;
 }
+
+export type PluginHookName =
+  | "before_prompt_build"
+  | "after_tool_call"
+  | "before_agent_finalize"
+  | "agent_end";
+
+export interface PluginHookContext {
+  readonly runId?: string;
+  readonly sessionKey?: string;
+  readonly toolCallId?: string;
+}
+
+export type PluginHookHandler = (
+  event: Readonly<Record<string, unknown>>,
+  context: PluginHookContext,
+) => unknown | Promise<unknown>;

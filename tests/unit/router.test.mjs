@@ -126,6 +126,36 @@ test("router timeout is bounded and does not retry", async () => {
   assert.equal(calls, 1);
 });
 
+test("router rejects completion output beyond the local character boundary", async () => {
+  const router = new StrictRouter({
+    maxOutputCharacters: 32,
+    complete: async () => JSON.stringify(result),
+  });
+
+  assert.deepEqual(await router.route(request), {
+    status: "degraded",
+    reasonCode: "ROUTER_OUTPUT_LIMIT_EXCEEDED",
+  });
+});
+
+test("router bounds the final serialized prompt including registry", async () => {
+  let calls = 0;
+  const router = new StrictRouter({
+    maxInputCharacters: 100,
+    complete: async () => {
+      calls += 1;
+      return JSON.stringify(result);
+    },
+  });
+  const outcome = await router.route(request);
+
+  assert.deepEqual(outcome, {
+    status: "degraded",
+    reasonCode: "ROUTER_INPUT_LIMIT_EXCEEDED",
+  });
+  assert.equal(calls, 0);
+});
+
 test("router permits no governing selection when the fixed binding is null", async () => {
   const router = new StrictRouter({
     complete: async () => JSON.stringify({

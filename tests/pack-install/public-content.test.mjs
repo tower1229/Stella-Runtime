@@ -9,6 +9,7 @@ const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const ignoredDirectories = new Set([".git", "node_modules"]);
 const allowedTopLevel = new Set([
   ".gitignore",
+  ".github",
   "CONTEXT.md",
   "LICENSE",
   "README.md",

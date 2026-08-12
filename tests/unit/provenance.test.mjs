@@ -12,7 +12,12 @@ const overlay = (overrides = {}) => ({
   state_view_version: "state-view-1-synthetic",
   validated_router_result: null,
   cognitive_bindings: [
-    { id: "cog-synthetic-governing", status: "injected" },
+    {
+      id: "cog-synthetic-governing",
+      role: "governing_system",
+      version: "1",
+      status: "injected",
+    },
   ],
   stable_refs: [
     { id: "sem-synthetic-preference", status: "retrieved" },
@@ -61,6 +66,19 @@ test("ProvenancePort records and returns only validated minimal overlays", async
     },
   })), /PROVENANCE_ROUTER_RESULT_NOT_MINIMAL/);
   assert.equal(await store.get("trace-synthetic-router-text"), null);
+});
+
+test("ProvenancePort remains compatible with legacy cognitive refs", async (t) => {
+  const store = new SqliteProvenanceStore({ databasePath: ":memory:" });
+  t.after(() => store.close());
+
+  const legacy = overlay({
+    trace_id: "trace-legacy-ref",
+    run_id: "run-legacy-ref",
+    cognitive_bindings: [{ id: "cog-synthetic-governing", status: "injected" }],
+  });
+  await store.record(legacy);
+  assert.deepEqual(await store.get("trace-legacy-ref"), legacy);
 });
 
 test("ProvenancePort queries structured results by run, session, status, and stable ref", async (t) => {

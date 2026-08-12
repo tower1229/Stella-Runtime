@@ -43,6 +43,8 @@ export type RouterDegradedReason =
   | "ROUTER_TIMEOUT"
   | "ROUTER_COMPLETION_FAILED"
   | "ROUTER_EMPTY_OUTPUT"
+  | "ROUTER_OUTPUT_LIMIT_EXCEEDED"
+  | "ROUTER_INPUT_LIMIT_EXCEEDED"
   | "ROUTER_NON_JSON_OUTPUT"
   | "ROUTER_SCHEMA_INVALID"
   | "ROUTER_REGISTRY_CHECKSUM_MISMATCH"
@@ -61,6 +63,8 @@ export type RouterOutcome =
 export interface StrictRouterOptions {
   readonly complete: (prompt: string) => Promise<string>;
   readonly timeoutMs?: number;
+  readonly maxOutputCharacters?: number;
+  readonly maxInputCharacters?: number;
 }
 
 const checksumPattern = /^sha256:[a-f0-9]{64}$/;
@@ -209,27 +213,39 @@ const validateRegistry = (
 export class StrictRouter implements RouterPort<RouterRequest, RouterOutcome> {
   readonly #complete: (prompt: string) => Promise<string>;
   readonly #timeoutMs: number;
+  readonly #maxOutputCharacters: number;
+  readonly #maxInputCharacters: number;
 
   constructor(options: StrictRouterOptions) {
     this.#complete = options.complete;
     this.#timeoutMs = options.timeoutMs ?? 10_000;
+    this.#maxOutputCharacters = options.maxOutputCharacters ?? 16_000;
+    this.#maxInputCharacters = options.maxInputCharacters ?? 64_000;
+    if (!Number.isInteger(this.#maxOutputCharacters) || this.#maxOutputCharacters < 1) {
+      throw new Error("ROUTER_OUTPUT_LIMIT_INVALID");
+    }
+    if (!Number.isInteger(this.#maxInputCharacters) || this.#maxInputCharacters < 1) {
+      throw new Error("ROUTER_INPUT_LIMIT_INVALID");
+    }
   }
 
   async route(request: RouterRequest): Promise<RouterOutcome> {
+    const prompt = JSON.stringify({
+      instruction: "Return exactly one Router Result JSON object.",
+      current_message: request.currentMessage,
+      recent_context: request.recentContext,
+      state_view_version: request.stateViewVersion,
+      active_governing_system: request.activeGoverningSystem,
+      sync_generation: request.syncGeneration,
+      registry: request.registry,
+    });
+    if (prompt.length > this.#maxInputCharacters) {
+      return { status: "degraded", reasonCode: "ROUTER_INPUT_LIMIT_EXCEEDED" };
+    }
     let output: string;
     try {
       output = await withTimeout(
-        this.#complete(
-          JSON.stringify({
-            instruction: "Return exactly one Router Result JSON object.",
-            current_message: request.currentMessage,
-            recent_context: request.recentContext,
-            state_view_version: request.stateViewVersion,
-            active_governing_system: request.activeGoverningSystem,
-            sync_generation: request.syncGeneration,
-            registry: request.registry,
-          }),
-        ),
+        this.#complete(prompt),
         this.#timeoutMs,
       );
     } catch (error: unknown) {
@@ -244,6 +260,9 @@ export class StrictRouter implements RouterPort<RouterRequest, RouterOutcome> {
 
     if (output.trim().length === 0) {
       return { status: "degraded", reasonCode: "ROUTER_EMPTY_OUTPUT" };
+    }
+    if (output.length > this.#maxOutputCharacters) {
+      return { status: "degraded", reasonCode: "ROUTER_OUTPUT_LIMIT_EXCEEDED" };
     }
 
     let parsed: unknown;

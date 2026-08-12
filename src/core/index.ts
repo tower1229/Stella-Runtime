@@ -36,6 +36,7 @@ export interface RunScratchMapOptions {
   readonly capacity: number;
   readonly ttlMs: number;
   readonly now?: () => number;
+  readonly onEvict?: (runId: string) => void;
 }
 
 interface MutableScratch<TBinding> {
@@ -65,6 +66,7 @@ export class RunScratchMap<TBinding extends RunBinding = RunBinding>
   readonly #capacity: number;
   readonly #ttlMs: number;
   readonly #now: () => number;
+  readonly #onEvict: (runId: string) => void;
   readonly #runs = new Map<string, MutableScratch<TBinding>>();
 
   constructor(options: RunScratchMapOptions) {
@@ -77,6 +79,7 @@ export class RunScratchMap<TBinding extends RunBinding = RunBinding>
     this.#capacity = options.capacity;
     this.#ttlMs = options.ttlMs;
     this.#now = options.now ?? Date.now;
+    this.#onEvict = options.onEvict ?? (() => {});
   }
 
   async acquire(
@@ -135,12 +138,27 @@ export class RunScratchMap<TBinding extends RunBinding = RunBinding>
   }
 
   async release(runId: string): Promise<void> {
-    this.#runs.delete(runId);
+    if (this.#runs.delete(runId)) {
+      this.#onEvict(runId);
+    }
   }
 
   inspect(runId: string): RunScratchSnapshot<TBinding> | null {
     const run = this.#runs.get(runId);
-    return run === undefined ? null : this.#snapshot(run);
+    if (run === undefined) {
+      return null;
+    }
+    if (run.expiresAt <= this.#now()) {
+      this.#runs.delete(runId);
+      this.#onEvict(runId);
+      return null;
+    }
+    return this.#snapshot(run);
+  }
+
+  get size(): number {
+    this.cleanupExpired();
+    return this.#runs.size;
   }
 
   cleanupExpired(): number {
@@ -149,6 +167,7 @@ export class RunScratchMap<TBinding extends RunBinding = RunBinding>
     for (const [runId, run] of this.#runs) {
       if (run.expiresAt <= now) {
         this.#runs.delete(runId);
+        this.#onEvict(runId);
         removed += 1;
       }
     }
@@ -157,6 +176,9 @@ export class RunScratchMap<TBinding extends RunBinding = RunBinding>
 
   clearLifecycle(_lifecycle: RunScratchLifecycle): number {
     const removed = this.#runs.size;
+    for (const runId of this.#runs.keys()) {
+      this.#onEvict(runId);
+    }
     this.#runs.clear();
     return removed;
   }
@@ -175,6 +197,7 @@ export class RunScratchMap<TBinding extends RunBinding = RunBinding>
     }
     if (run.expiresAt <= this.#now()) {
       this.#runs.delete(runId);
+      this.#onEvict(runId);
       throw new Error(`RUN_SCRATCH_EXPIRED:${runId}`);
     }
     return run;

@@ -46,13 +46,20 @@ export type {
   MemoryObservationPort,
   MemoryToolResult,
 } from "./openclaw/ports.js";
-export { CompareAndSetRemediation } from "./packet/index.js";
+export {
+  buildExplicitContextPacket,
+  CompareAndSetRemediation,
+} from "./packet/index.js";
 export type {
   CompareAndSetRemediationOptions,
+  ExplicitContextBinding,
+  ExplicitContextEntry,
+  ExplicitContextPacketOptions,
   RemediationCasResult,
   RemediationOutcome,
   RemediationPort,
   RemediationRequest,
+  VersionedExplicitContextEntry,
 } from "./packet/index.js";
 export type {
   ProvenancePort,

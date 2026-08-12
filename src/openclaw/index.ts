@@ -16,6 +16,11 @@ import {
   SqliteStateStore,
 } from "../state/index.js";
 import type { CognitiveRuntimePluginApi } from "./plugin-api.js";
+import {
+  readRuntimeConfig,
+  registerRuntimeHooks,
+  type RuntimeHookController,
+} from "./runtime.js";
 
 export { MemoryObservationAdapter } from "./ports.js";
 export type {
@@ -137,6 +142,41 @@ const plugin = {
   description: "Instance-neutral cognitive runtime for OpenClaw",
   register(api: CognitiveRuntimePluginApi): void {
     const packageVersion = api.version ?? "0.0.0";
+    const runtimeConfig = readRuntimeConfig(api.pluginConfig);
+    let runtimeController: RuntimeHookController | null = null;
+    if (runtimeConfig !== null) {
+      const recoveryConfig = api.pluginConfig?.recovery === undefined
+        ? null
+        : readRecoveryConfig(api.pluginConfig);
+      runtimeController = registerRuntimeHooks(api, runtimeConfig, {
+        ...(recoveryConfig === null ? {} : {
+          recordProvenance: async (overlay) => {
+            const store = new SqliteProvenanceStore({
+              databasePath: provenanceDatabasePath(
+                recoveryConfig.stateRoot,
+                recoveryConfig.activeInstanceId,
+              ),
+            });
+            try {
+              await store.record(overlay);
+            } finally {
+              store.close();
+            }
+          },
+        }),
+      });
+      if (runtimeController !== null) {
+        api.lifecycle?.registerRuntimeLifecycle({
+          id: "cognitive-runtime-run-scratch",
+          description: "Clear bounded cognitive Runtime state.",
+          cleanup: ({ reason }) => {
+            runtimeController?.clearLifecycle(
+              reason === "delete" ? "reset" : reason,
+            );
+          },
+        });
+      }
+    }
     if (api.on !== undefined && api.pluginConfig?.recovery !== undefined) {
       const recoveryConfig = readRecoveryConfig(api.pluginConfig);
       api.on("before_prompt_build", async (_event, context) => {
@@ -176,6 +216,18 @@ const plugin = {
                     ? "llm.complete"
                     : "unavailable",
               },
+            }));
+          });
+
+        cognitive
+          .command("metrics")
+          .description("Read bounded cognitive runtime metrics")
+          .option("--json", "Emit a machine-readable result")
+          .action((options) => {
+            requireJson(options);
+            console.log(JSON.stringify({
+              operation: "metrics",
+              metrics: runtimeController?.metrics() ?? null,
             }));
           });
 

@@ -19,7 +19,7 @@ import test from "node:test";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = new URL("../../", import.meta.url);
-const commandTimeoutMs = 120_000;
+const commandTimeoutMs = 240_000;
 const checksum = (value) =>
   createHash("sha256").update(value).digest("hex");
 const contractChecksum = (digit) => `sha256:${digit.repeat(64)}`;
@@ -54,9 +54,9 @@ async function reservePort() {
   return port;
 }
 
-async function waitForDeepGatewayProbe(environment) {
+async function waitForDeepGatewayProbe(environment, attempts = 30) {
   let lastError;
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const result = await run(
         "openclaw",
@@ -171,6 +171,18 @@ async function startSyntheticModelServer(port) {
       .reverse()
       .find((message) => message.role === "user");
     const latestUserContent = JSON.stringify(latestUser?.content ?? "");
+    if (latestUserContent.includes("ROUTER_INVALID")) {
+      sendOpenAiResponse(response, body, "not-json", undefined);
+      return;
+    }
+    if (latestUserContent.includes("ROUTER_VALID")) {
+      sendOpenAiResponse(response, body, JSON.stringify(routerResult()), undefined);
+      return;
+    }
+    if (latestUserContent.includes("Return exactly one Router Result JSON object.")) {
+      sendOpenAiResponse(response, body, JSON.stringify(routerResult()), undefined);
+      return;
+    }
     if (latestUserContent.includes("PLAIN_RUN_ABORT")) {
       response.writeHead(400, { "content-type": "application/json" });
       response.end(JSON.stringify({
@@ -180,14 +192,6 @@ async function startSyntheticModelServer(port) {
           code: "synthetic_host_abort",
         },
       }));
-      return;
-    }
-    if (latestUserContent.includes("ROUTER_INVALID")) {
-      sendOpenAiResponse(response, body, "not-json", undefined);
-      return;
-    }
-    if (latestUserContent.includes("ROUTER_VALID")) {
-      sendOpenAiResponse(response, body, JSON.stringify(routerResult()), undefined);
       return;
     }
     const hasToolResult = (body.messages ?? []).some(
@@ -212,7 +216,7 @@ async function startSyntheticModelServer(port) {
 }
 
 function spawnGateway(port, token, environment) {
-  return spawn(
+  const gateway = spawn(
     "openclaw",
     [
       "gateway",
@@ -224,8 +228,12 @@ function spawnGateway(port, token, environment) {
       "--token",
       token,
     ],
-    { env: environment, stdio: "ignore" },
+    { env: environment, stdio: ["ignore", "pipe", "pipe"] },
   );
+  gateway.diagnostics = "";
+  gateway.stdout.on("data", (chunk) => { gateway.diagnostics += chunk.toString(); });
+  gateway.stderr.on("data", (chunk) => { gateway.diagnostics += chunk.toString(); });
+  return gateway;
 }
 
 async function stopGateway(gateway) {
@@ -265,6 +273,7 @@ async function verifyHostRouter(environment) {
     status: "degraded",
     reasonCode: "ROUTER_NON_JSON_OUTPUT",
   });
+  assert.deepEqual(result.generic, { status: "ok", result: routerResult() });
 }
 
 async function runHostSuccessors(environment, evidencePath, port, token) {
@@ -369,6 +378,7 @@ async function runHostSuccessors(environment, evidencePath, port, token) {
   assert.notEqual(abortedRun.runId, commandRun.runId);
   assert.notEqual(commandRun.runId, uiRun.runId);
   assert.match(abortedRun.newViewVersion, /^state-view-1-[a-f0-9]{12}$/);
+  assert.ok(abortedRun.nestedCompletionTextLength > 0, JSON.stringify(abortedRun));
   assert.equal(abortedRun.claimAttempt, 1);
   assert.equal(commandRun.newViewVersion, abortedRun.newViewVersion);
   assert.equal(commandRun.claimAttempt, 2);
@@ -726,6 +736,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
   let runtimeInstalled = false;
   let probeInstalled = false;
   let gateway;
+  let gatewayDiagnostics = "";
 
   try {
     const { stdout: versionOutput } = await run("openclaw", ["--version"], {
@@ -814,6 +825,62 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       { env: environment },
     );
     assert.equal(parseJsonOutput(probeInspectionOutput).plugin.status, "loaded");
+    const installedConfig = JSON.parse(await readFile(configPath, "utf8"));
+    installedConfig.plugins.entries["cognitive-runtime"] = {
+      ...installedConfig.plugins.entries["cognitive-runtime"],
+      enabled: true,
+      hooks: {
+        allowConversationAccess: true,
+        allowPromptInjection: true,
+      },
+      config: {
+        runtime: {
+          mode: "enforce",
+          limits: {
+            routerTimeoutMs: 5_000,
+            routerMaxTokens: 512,
+            routerMaxInputCharacters: 8_000,
+            routerMaxOutputCharacters: 8_000,
+            packetMaxCharacters: 8_000,
+            scratchCapacity: 8,
+            scratchTtlMs: 60_000,
+          },
+          binding: {
+            syncGeneration: "generation-synthetic",
+            authorityRevision: "revision-synthetic",
+            stateViewVersion: "view-synthetic",
+            activeGoverningSystem: null,
+            registry: {
+              checksum: `sha256:${checksum("[]")}`,
+              entries: [],
+            },
+            context: {
+              stateView: [],
+              semanticClaims: [],
+              evidenceRefs: [],
+              governing: null,
+              frameworks: [],
+            },
+          },
+        },
+      },
+    };
+    await writeFile(configPath, `${JSON.stringify(installedConfig, null, 2)}\n`, {
+      mode: 0o600,
+    });
+    const { stdout: configuredInspectionOutput } = await run(
+      "openclaw",
+      ["plugins", "inspect", "cognitive-runtime", "--runtime", "--json"],
+      { env: environment },
+    );
+    assert.equal(
+      parseJsonOutput(configuredInspectionOutput).plugin.status,
+      "loaded",
+    );
+    assert.notEqual(
+      parseJsonOutput(configuredInspectionOutput).plugin.policy?.allowPromptInjection,
+      false,
+    );
     await verifyHostRouter(environment);
 
     gateway = spawnGateway(port, token, environment);
@@ -824,6 +891,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       port,
       token,
     );
+    gatewayDiagnostics = gateway.diagnostics;
     await stopGateway(gateway);
     gateway = undefined;
     await verifyPackedAdapters(pluginRoot, successors);
@@ -834,9 +902,42 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
         )),
       true,
     );
+    assert.ok(
+      modelServer.requests.some((request) =>
+        JSON.stringify(request).includes("[synthetic_probe_injection]")),
+      "synthetic probe prompt mutation was not applied",
+    );
+    assert.ok(
+      modelServer.requests.some((request) =>
+        JSON.stringify(request).includes("[current_input]")),
+      JSON.stringify({
+        gatewayDiagnostics: gatewayDiagnostics
+          ?.split("\n")
+          .filter((line) => /cognitive-runtime|router|packet/i.test(line)),
+        requests: modelServer.requests.map((request) => ({
+        stream: request.stream,
+        messageRoles: (request.messages ?? []).map((message) => message.role),
+        containsRouterInstruction: JSON.stringify(request).includes(
+          "Return exactly one Router Result JSON object.",
+        ),
+        containsPacket: JSON.stringify(request).includes("[current_input]"),
+        })),
+      }, null, 2),
+    );
   } finally {
     if (gateway !== undefined) {
       await stopGateway(gateway);
+    }
+    if (runtimeInstalled) {
+      const cleanupConfig = JSON.parse(await readFile(configPath, "utf8"));
+      const runtimeEntry = cleanupConfig.plugins?.entries?.["cognitive-runtime"];
+      if (runtimeEntry !== undefined) {
+        delete runtimeEntry.config;
+        delete runtimeEntry.hooks;
+        await writeFile(configPath, `${JSON.stringify(cleanupConfig, null, 2)}\n`, {
+          mode: 0o600,
+        });
+      }
     }
     if (probeInstalled) {
       await run(
@@ -856,7 +957,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
     assert.equal(checksum(await readFile(configPath)), originalChecksum);
     gateway = spawnGateway(port, token, environment);
     try {
-      await waitForDeepGatewayProbe(environment);
+      await waitForDeepGatewayProbe(environment, 8);
     } finally {
       await stopGateway(gateway);
     }

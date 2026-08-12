@@ -53,7 +53,7 @@ export interface CognitiveProvenanceOverlay {
   knowledge_snapshot: string;
   state_view_version: string;
   validated_router_result: null | RouterResult;
-  cognitive_bindings: Ref[];
+  cognitive_bindings: CognitiveRef[];
   stable_refs: Ref[];
   unresolved_conflicts: Id[];
   trace_status: string;
@@ -88,6 +88,12 @@ export interface RouterResult {
     | [RetrievalStep, RetrievalStep, RetrievalStep, RetrievalStep, RetrievalStep, RetrievalStep];
   confidence: number;
   reason_codes: string[];
+}
+export interface CognitiveRef {
+  id: Id;
+  role?: "evidence" | "semantic" | "current_state" | "governing_system" | "governing_module" | "ordinary_framework";
+  version?: string;
+  status: "injected";
 }
 export interface Ref {
   id: Id;
