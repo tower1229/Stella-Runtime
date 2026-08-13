@@ -13,6 +13,7 @@ test("beta release uses unified verification and tag-gated trusted publishing", 
   assert.match(workflow, /environment: npm/);
   assert.match(workflow, /npm run verify:env -- release --json/);
   assert.match(workflow, /\.stella\/verification\/release\.json/);
+  assert.match(workflow, /fetch-depth: 0/);
   assert.match(workflow, /github\.ref_name/);
   assert.match(workflow, /package\.json/);
   assert.match(
@@ -80,6 +81,7 @@ test("pull requests and master pushes run capability-separated verification", as
   assert.match(workflow, /pull_request:/);
   assert.match(workflow, /branches: \[master\]/);
   assert.match(workflow, /profile: \[pure, network-install, exact-host\]/);
+  assert.match(workflow, /fetch-depth: 0/);
   assert.match(workflow, /npm run verify:env -- "\$VERIFICATION_PROFILE" --json/);
   assert.match(workflow, /openclaw@2026\.6\.34/);
   assert.match(workflow, /if: always\(\)/);
