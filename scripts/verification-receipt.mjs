@@ -56,7 +56,7 @@ function profileDefinitionSha256(profile) {
     requirements: profile.requirements,
     steps: profile.steps.map(({ name, command, args, requirements = [] }) => ({
       name,
-      command,
+      command: command === process.execPath ? "node" : command,
       args,
       requirements,
     })),
