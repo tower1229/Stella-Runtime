@@ -52,9 +52,17 @@ test("stable release verifies the immutable tag, package, tarball, and published
   assert.match(workflow, /npm run test:pack-install/);
   assert.match(workflow, /npm publish .*--access public/);
   assert.match(workflow, /npm view/);
+  assert.match(workflow, /PUBLISHED_INTEGRITY/);
+  assert.match(workflow, /for attempt in \{1\.\.12\}/);
+  assert.match(workflow, /sleep 5/);
+  assert.match(workflow, /grep -q "E404"/);
+  assert.match(workflow, /cat registry-error\.log >&2/);
   assert.match(workflow, /npm install --ignore-scripts --save-exact/);
   assert.match(workflow, /npm audit signatures/);
   assert.match(workflow, /gh release create/);
+  assert.match(workflow, /gh release view/);
+  assert.match(workflow, /gh release download/);
+  assert.match(workflow, /sha512sum/);
   assert.match(workflow, /actions\/attest-build-provenance@v3/);
   assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN|NPM_TOKEN/);
   const verificationJob = workflow.slice(

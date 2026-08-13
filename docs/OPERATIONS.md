@@ -74,6 +74,12 @@ The first stable release has no earlier stable npm version.
 - The public scoped package was bootstrapped with the exact verified
   `0.1.0-beta.0` artifact. Registry version, `beta` dist-tag, integrity, public
   access, clean install, signature audit, and zero-vulnerability audit passed.
+- Stable `0.1.0` was published from source revision
+  `513728dc729d3fa66555ecaac10da2bb5f5e4ef3` with registry integrity
+  `sha512-I3hRyGfmfR1ZCTlROA+R3nZ3PlNXxrfTXap/sQ5HCM0bMrW7wCZRz+JNaYjXaZUuod3+r/ngKxwI227eViwGdQ==`.
+  Clean install, eight registry signatures, provenance attestation, and the
+  zero-vulnerability audit passed. GitHub Release `v0.1.0` carries the same
+  exact tarball.
 - Bind the npm trusted publisher to organization
   `tower1229`, repository `Stella-Runtime`, workflow `release-stable.yml`, and
   environment `npm`. With npm CLI 11.5.1 or later the equivalent authenticated

@@ -87,14 +87,44 @@ jobs:
         with:
           subject-path: ${{ steps.pack.outputs.tarball }}
       - name: Publish with npm trusted publishing
-        run: npm publish "${{ steps.pack.outputs.tarball }}" --access public
+        env:
+          EXPECTED_INTEGRITY: ${{ steps.pack.outputs.integrity }}
+        run: |
+          PACKAGE=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          PUBLISHED_INTEGRITY=""
+          for attempt in {1..12}; do
+            if PUBLISHED_INTEGRITY=$(npm view "$PACKAGE@$VERSION" dist.integrity 2>registry-error.log); then
+              break
+            fi
+            if ! grep -q "E404" registry-error.log; then
+              cat registry-error.log >&2
+              exit 1
+            fi
+            if test "$attempt" -lt 12; then
+              sleep 5
+            fi
+          done
+          if test -n "$PUBLISHED_INTEGRITY"; then
+            test "$PUBLISHED_INTEGRITY" = "$EXPECTED_INTEGRITY"
+          else
+            npm publish "${{ steps.pack.outputs.tarball }}" --access public
+          fi
       - name: Verify registry integrity and signatures
         env:
           EXPECTED_INTEGRITY: ${{ steps.pack.outputs.integrity }}
         run: |
           PACKAGE=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
-          test "$(npm view "$PACKAGE@$VERSION" dist.integrity)" = "$EXPECTED_INTEGRITY"
+          PUBLISHED_INTEGRITY=""
+          for attempt in {1..12}; do
+            PUBLISHED_INTEGRITY=$(npm view "$PACKAGE@$VERSION" dist.integrity 2>/dev/null || true)
+            if test -n "$PUBLISHED_INTEGRITY"; then
+              break
+            fi
+            sleep 5
+          done
+          test "$PUBLISHED_INTEGRITY" = "$EXPECTED_INTEGRITY"
           mkdir registry-verification
           cd registry-verification
           npm init --yes
@@ -105,4 +135,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           TARBALL: ${{ steps.pack.outputs.tarball }}
-        run: gh release create "$RELEASE_TAG" "$TARBALL#npm package" --verify-tag --generate-notes --title "Stella Runtime $RELEASE_TAG"
+        run: |
+          ASSET=$(basename "$TARBALL")
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            mkdir existing-release
+            gh release download "$RELEASE_TAG" --pattern "$ASSET" --dir existing-release
+            test "$(sha512sum "$TARBALL" | cut -d ' ' -f1)" = "$(sha512sum "existing-release/$ASSET" | cut -d ' ' -f1)"
+          else
+            gh release create "$RELEASE_TAG" "$TARBALL#npm package" --verify-tag --generate-notes --title "Stella Runtime $RELEASE_TAG"
+          fi
