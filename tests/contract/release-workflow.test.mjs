@@ -36,16 +36,30 @@ test("stable release verifies the immutable tag, package, tarball, and published
   assert.match(workflow, /id-token: write/);
   assert.match(workflow, /attestations: write/);
   assert.match(workflow, /environment: npm/);
+  assert.match(workflow, /timeout-minutes: 30/);
+  assert.match(workflow, /verify:[\s\S]*permissions:\n\s+contents: read/);
+  assert.match(workflow, /publish:[\s\S]*needs: verify/);
+  assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /actions\/upload-artifact@v4/);
+  assert.match(workflow, /actions\/download-artifact@v4/);
   assert.match(workflow, /npm ci/);
+  assert.match(workflow, /npm install --global openclaw@2026\.6\.34/);
+  assert.match(workflow, /2026\.6\.34 \(5c38f99\)/);
   assert.match(workflow, /npm run lint/);
   assert.match(workflow, /npm test/);
   assert.match(workflow, /npm run test:pack-install/);
   assert.match(workflow, /npm publish .*--access public/);
   assert.match(workflow, /npm view/);
+  assert.match(workflow, /npm install --ignore-scripts --save-exact/);
   assert.match(workflow, /npm audit signatures/);
   assert.match(workflow, /gh release create/);
   assert.match(workflow, /actions\/attest-build-provenance@v3/);
   assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN|NPM_TOKEN/);
+  const verificationJob = workflow.slice(
+    workflow.indexOf("  verify:"),
+    workflow.indexOf("  publish:"),
+  );
+  assert.doesNotMatch(verificationJob, /id-token: write|contents: write/);
 });
 
 test("dependency changes are reviewed before merge", async () => {

@@ -212,7 +212,26 @@ async function startSyntheticModelServer(port) {
     close: () => new Promise((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     ),
+    closeAllConnections: () => server.closeAllConnections(),
   };
+}
+
+async function closeModelServer(modelServer) {
+  const closePromise = modelServer.close();
+  const forceTimer = setTimeout(() => modelServer.closeAllConnections(), 5_000);
+  let hardTimer;
+  const hardTimeout = new Promise((_, reject) => {
+    hardTimer = setTimeout(
+      () => reject(new Error("SYNTHETIC_MODEL_SERVER_CLOSE_TIMEOUT")),
+      10_000,
+    );
+  });
+  try {
+    await Promise.race([closePromise, hardTimeout]);
+  } finally {
+    clearTimeout(forceTimer);
+    clearTimeout(hardTimer);
+  }
 }
 
 function spawnGateway(port, token, environment) {
@@ -233,15 +252,37 @@ function spawnGateway(port, token, environment) {
   gateway.diagnostics = "";
   gateway.stdout.on("data", (chunk) => { gateway.diagnostics += chunk.toString(); });
   gateway.stderr.on("data", (chunk) => { gateway.diagnostics += chunk.toString(); });
+  gateway.on("error", (error) => {
+    gateway.diagnostics += `${error.message}\n`;
+  });
   return gateway;
 }
 
 async function stopGateway(gateway) {
-  gateway.kill("SIGTERM");
-  await new Promise((resolve) => {
-    gateway.once("exit", resolve);
-    setTimeout(resolve, 5_000);
+  if (gateway.exitCode !== null || gateway.signalCode !== null) {
+    return;
+  }
+  const waitForExit = (timeoutMs) => new Promise((resolve) => {
+    let timeout;
+    const finish = (exited) => {
+      clearTimeout(timeout);
+      gateway.off("exit", onExit);
+      gateway.off("error", onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    timeout = setTimeout(() => finish(false), timeoutMs);
+    gateway.once("exit", onExit);
+    gateway.once("error", onExit);
   });
+  gateway.kill("SIGTERM");
+  if (await waitForExit(5_000)) {
+    return;
+  }
+  gateway.kill("SIGKILL");
+  if (!await waitForExit(5_000)) {
+    throw new Error(`OPENCLAW_GATEWAY_STOP_TIMEOUT\n${gateway.diagnostics}`);
+  }
 }
 
 async function readProbeEvidence(evidencePath, minimumAgentEnds) {
@@ -925,42 +966,45 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       }, null, 2),
     );
   } finally {
-    if (gateway !== undefined) {
-      await stopGateway(gateway);
-    }
-    if (runtimeInstalled) {
-      const cleanupConfig = JSON.parse(await readFile(configPath, "utf8"));
-      const runtimeEntry = cleanupConfig.plugins?.entries?.["cognitive-runtime"];
-      if (runtimeEntry !== undefined) {
-        delete runtimeEntry.config;
-        delete runtimeEntry.hooks;
-        await writeFile(configPath, `${JSON.stringify(cleanupConfig, null, 2)}\n`, {
-          mode: 0o600,
-        });
-      }
-    }
-    if (probeInstalled) {
-      await run(
-        "openclaw",
-        ["plugins", "uninstall", "cognitive-runtime-host-probe", "--force"],
-        { env: environment },
-      );
-    }
-    if (runtimeInstalled) {
-      await run(
-        "openclaw",
-        ["plugins", "uninstall", "cognitive-runtime", "--force"],
-        { env: environment },
-      );
-    }
-    await copyFile(backupPath, configPath);
-    assert.equal(checksum(await readFile(configPath)), originalChecksum);
-    gateway = spawnGateway(port, token, environment);
     try {
-      await waitForDeepGatewayProbe(environment, 8);
+      if (gateway !== undefined) {
+        await stopGateway(gateway);
+      }
+      if (runtimeInstalled) {
+        const cleanupConfig = JSON.parse(await readFile(configPath, "utf8"));
+        const runtimeEntry = cleanupConfig.plugins?.entries?.["cognitive-runtime"];
+        if (runtimeEntry !== undefined) {
+          delete runtimeEntry.config;
+          delete runtimeEntry.hooks;
+          await writeFile(configPath, `${JSON.stringify(cleanupConfig, null, 2)}\n`, {
+            mode: 0o600,
+          });
+        }
+      }
+      if (probeInstalled) {
+        await run(
+          "openclaw",
+          ["plugins", "uninstall", "cognitive-runtime-host-probe", "--force"],
+          { env: environment },
+        );
+      }
+      if (runtimeInstalled) {
+        await run(
+          "openclaw",
+          ["plugins", "uninstall", "cognitive-runtime", "--force"],
+          { env: environment },
+        );
+      }
+      await copyFile(backupPath, configPath);
+      assert.equal(checksum(await readFile(configPath)), originalChecksum);
+      gateway = spawnGateway(port, token, environment);
+      try {
+        await waitForDeepGatewayProbe(environment, 8);
+      } finally {
+        await stopGateway(gateway);
+      }
     } finally {
-      await stopGateway(gateway);
+      await closeModelServer(modelServer);
     }
-    await modelServer.close();
   }
 });

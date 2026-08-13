@@ -5,26 +5,28 @@ on:
     tags:
       - "v[0-9]*.[0-9]*.[0-9]*"
 
-permissions:
-  contents: write
-  id-token: write
-  attestations: write
-
 jobs:
-  publish:
+  verify:
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
-    environment: npm
+    timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - run: npm ci
+      - name: Install the exact supported OpenClaw host
+        run: |
+          npm install --global openclaw@2026.6.34
+          openclaw --version | grep -F "2026.6.34 (5c38f99)"
       - name: Verify immutable release identity
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -36,10 +38,46 @@ jobs:
       - run: npm test
       - run: npm run test:pack-install
       - name: Pack the exact release artifact
-        id: pack
         run: |
           mkdir release
           npm pack --json --pack-destination release > release/pack.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-package
+          path: release/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-package
+          path: release
+      - name: Verify immutable release artifact
+        id: pack
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          test "$RELEASE_TAG" = "v$(node -p "require('./package.json').version")"
+          test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
           echo "tarball=$(node -p "'release/' + require('./release/pack.json')[0].filename")" >> "$GITHUB_OUTPUT"
           echo "integrity=$(node -p "require('./release/pack.json')[0].integrity")" >> "$GITHUB_OUTPUT"
       - name: Attest release tarball
@@ -58,7 +96,7 @@ jobs:
           mkdir registry-verification
           cd registry-verification
           npm init --yes
-          npm install --save-exact "$PACKAGE@$VERSION"
+          npm install --ignore-scripts --save-exact "$PACKAGE@$VERSION"
           npm audit signatures
       - name: Create immutable GitHub Release
         env:
