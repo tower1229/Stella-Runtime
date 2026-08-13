@@ -3,7 +3,7 @@
 All notable public changes are recorded here. Versions follow Semantic
 Versioning; cognitive contract namespaces remain independently versioned.
 
-## [0.1.0] - 2026-08-12
+## [0.1.0] - 2026-08-13
 
 First stable technical release of Stella Runtime V1.
 

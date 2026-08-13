@@ -60,22 +60,21 @@ compatibility or integrity requires it; package rollback and data recovery are
 separate operations. Re-run self-check, exact-host conformance, and restart
 continuity before moving to `observe`.
 
-The V1 previous verified rollback record is `0.1.0-beta.0` at source revision
-`1260ba888ea84e0a0d0da0f72c6c9c0db532d323`. Pack-install builds that fixed
-source revision as an exact beta tarball, installs it, upgrades to `0.1.0`, and
-checks the installed package and lockfile integrity. This is a verified source
-rollback artifact; until bootstrap publication succeeds it is not a registry
-locator. The first stable release has no earlier stable npm version.
+The V1 previous verified rollback record is
+`@tower1229/stella-cognitive-runtime@0.1.0-beta.0` at source revision
+`1260ba888ea84e0a0d0da0f72c6c9c0db532d323`, published under the `beta` dist-tag
+with integrity
+`sha512-kU+wNjr2fbs+1pIGJEksWTPCe9lOPCsorlaZJayh8wLkzhf0kD8k3GVH6Qb+hRYrq/RlCUe3doSSgEHkNeK1SA==`.
+Pack-install builds that fixed source revision as an exact beta tarball, installs
+it, upgrades to `0.1.0`, and checks the installed package and lockfile integrity.
+The first stable release has no earlier stable npm version.
 
 ## Release operator checklist
 
-- For the first registry publication only: `npm view
-  @tower1229/stella-cognitive-runtime version` currently returning `E404` means
-  trusted publishing cannot yet be configured. From the exact verified
-  `0.1.0-beta.0` commit, an authenticated maintainer must bootstrap the public
-  scoped package with interactive 2FA, then verify its registry integrity. Do
-  not bootstrap `0.1.0` directly.
-- After the package exists, bind the npm trusted publisher to organization
+- The public scoped package was bootstrapped with the exact verified
+  `0.1.0-beta.0` artifact. Registry version, `beta` dist-tag, integrity, public
+  access, clean install, signature audit, and zero-vulnerability audit passed.
+- Bind the npm trusted publisher to organization
   `tower1229`, repository `Stella-Runtime`, workflow `release-stable.yml`, and
   environment `npm`. With npm CLI 11.5.1 or later the equivalent authenticated
   command is `npm trust github @tower1229/stella-cognitive-runtime --file
