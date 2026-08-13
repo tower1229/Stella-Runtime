@@ -41,8 +41,8 @@ test("stable release verifies the immutable tag, package, tarball, and published
   assert.match(workflow, /verify:[\s\S]*permissions:\n\s+contents: read/);
   assert.match(workflow, /publish:[\s\S]*needs: verify/);
   assert.match(workflow, /persist-credentials: false/);
-  assert.match(workflow, /actions\/upload-artifact@v4/);
-  assert.match(workflow, /actions\/download-artifact@v4/);
+  assert.match(workflow, /actions\/upload-artifact@v7/);
+  assert.match(workflow, /actions\/download-artifact@v8/);
   assert.match(workflow, /TARBALL="\.\/release\//);
   assert.match(workflow, /test -f "\$TARBALL"/);
   assert.match(workflow, /npm ci/);
@@ -85,6 +85,7 @@ test("pull requests and master pushes run capability-separated verification", as
   assert.match(workflow, /npm run verify:env -- "\$VERIFICATION_PROFILE" --json/);
   assert.match(workflow, /openclaw@2026\.6\.34/);
   assert.match(workflow, /if: always\(\)/);
+  assert.match(workflow, /actions\/upload-artifact@v7/);
   assert.match(workflow, /\.stella\/verification\/\$\{\{ matrix\.profile \}\}\.json/);
 });
 

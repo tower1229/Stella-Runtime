@@ -37,7 +37,7 @@ jobs:
       - run: npm run verify:env -- release --json
       - name: Upload verification receipt
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-verification
           path: .stella/verification/release.json
@@ -73,7 +73,7 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-package
           path: release
