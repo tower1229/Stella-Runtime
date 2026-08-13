@@ -61,8 +61,10 @@
     "test:unit": "npm run build && node --test tests/unit/*.test.mjs",
     "test:contract": "npm run typecheck && npm run build && node --test tests/contract/*.test.mjs",
     "test:integration": "npm run build && node --test tests/integration/*.test.mjs",
-    "test:pack-install": "npm run build && node --test tests/pack-install/*.test.mjs",
+    "test:pack-install": "npm run build && node --test --test-concurrency=1 tests/pack-install/*.test.mjs",
     "test:runner": "npm run build && node dist/testing/runner.js",
+    "delivery:status": "node scripts/run-delivery-status.mjs",
+    "verify:env": "node scripts/run-verification.mjs",
     "prepack": "npm run build"
   },
   "repository": {

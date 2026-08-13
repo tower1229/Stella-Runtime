@@ -22,6 +22,7 @@ const allowedTopLevel = new Set([
   "openclaw.plugin.json",
   "package-lock.json",
   "package.json",
+  "scripts",
   "skills",
   "src",
   "tests",
