@@ -2,6 +2,9 @@ import { execFileSync } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { loadVerificationReceipts } from "./verification-receipt.mjs";
+import { verificationProfiles } from "./verification-profiles.mjs";
+
 const unavailable = (reasonCode) => ({ status: "unavailable", reasonCode });
 
 function commandRunner(command, args, options = {}) {
@@ -59,7 +62,13 @@ function summarizeCi(runs, head) {
   if (!Array.isArray(runs)) {
     return unavailable("CI_QUERY_FAILED");
   }
-  const matching = runs.filter((run) => run.headSha === head);
+  const deliveryWorkflows = new Set([
+    "Verification",
+    "Release beta",
+    "Release stable",
+  ]);
+  const matching = runs.filter((run) =>
+    run.headSha === head && deliveryWorkflows.has(run.name));
   if (matching.length === 0) {
     return { status: "not_found", runs: [] };
   }
@@ -120,6 +129,58 @@ function summarizeRelease({ npmMetadata, release, version, tagRevision, head }) 
   };
 }
 
+function summarizeLocalVerification({ receipts, invalidFiles, head }) {
+  if (invalidFiles.length > 0) {
+    return {
+      status: "unavailable",
+      reasonCode: "VERIFICATION_RECEIPT_INVALID",
+      invalidFiles,
+      profiles: {},
+    };
+  }
+  if (receipts.length === 0) {
+    return {
+      status: "not_recorded",
+      command: "npm run verify:env -- <profile> --json",
+      profiles: {},
+    };
+  }
+
+  const isCurrentReceipt = (receipt) =>
+    receipt.sourceRevision === head && receipt.sourceClean === true;
+  const profiles = Object.fromEntries(receipts.map((receipt) => [
+    receipt.profile,
+    {
+      status: isCurrentReceipt(receipt) ? receipt.status : "stale",
+      recordedStatus: receipt.status,
+      sourceRevision: receipt.sourceRevision,
+      sourceClean: receipt.sourceClean === true,
+      currentSource: isCurrentReceipt(receipt),
+      finishedAt: receipt.finishedAt ?? null,
+      reasonCode: receipt.reasonCode ?? null,
+    },
+  ]));
+  const currentReceipts = receipts.filter(isCurrentReceipt);
+  if (currentReceipts.length === 0) {
+    return { status: "stale", profiles };
+  }
+  if (currentReceipts.some((receipt) => receipt.status === "failed")) {
+    return { status: "failed", profiles };
+  }
+  if (currentReceipts.some((receipt) => receipt.status === "environment_blocked")) {
+    return { status: "environment_blocked", profiles };
+  }
+  const passedProfiles = new Set(
+    currentReceipts
+      .filter((receipt) => receipt.status === "passed")
+      .map((receipt) => receipt.profile),
+  );
+  const complete = passedProfiles.has("release")
+    || ["pure", "network-install", "exact-host"].every((profile) =>
+      passedProfiles.has(profile));
+  return { status: complete ? "passed" : "partial", profiles };
+}
+
 export async function collectDeliveryStatus({
   cwd,
   includeRemote = true,
@@ -169,6 +230,14 @@ export async function collectDeliveryStatus({
   let issues = { status: "skipped" };
   let release = { status: "skipped" };
   const expectedIssues = issueNumbers(subject);
+  const localVerification = summarizeLocalVerification({
+    ...(await loadVerificationReceipts({
+      cwd,
+      project: "stella-runtime",
+      profiles: verificationProfiles,
+    })),
+    head,
+  });
 
   if (includeRemote && repository !== null) {
     const runList = parseJson(run("gh", [
@@ -242,10 +311,7 @@ export async function collectDeliveryStatus({
       upstream,
     },
     verification: {
-      local: {
-        status: "not_recorded",
-        command: "npm run verify:env -- <profile> --json",
-      },
+      local: localVerification,
       ci,
     },
     issues,

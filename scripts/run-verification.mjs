@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { executeVerification, VERIFICATION_EXIT } from "./verification-environment.mjs";
 import { verificationProfiles } from "./verification-profiles.mjs";
+import { persistVerificationReceipt } from "./verification-receipt.mjs";
 
 const project = "stella-runtime";
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -24,11 +25,20 @@ if (profileName === undefined) {
   process.exit(VERIFICATION_EXIT.usage);
 }
 
-const receipt = await executeVerification({
+const verificationReceipt = await executeVerification({
   project,
   profileName,
   profiles: verificationProfiles,
   cwd: repositoryRoot,
+});
+if (verificationReceipt.status === "usage_error") {
+  process.stdout.write(`${JSON.stringify(verificationReceipt, null, 2)}\n`);
+  process.exit(verificationReceipt.exitCode);
+}
+const { receipt, relativePath } = await persistVerificationReceipt({
+  receipt: verificationReceipt,
+  cwd: repositoryRoot,
+  profile: verificationProfiles[profileName],
 });
 
 if (json) {
@@ -36,7 +46,8 @@ if (json) {
 } else {
   process.stdout.write(
     `${project} ${profileName}: ${receipt.status}`
-    + `${receipt.reasonCode === undefined ? "" : ` (${receipt.reasonCode})`}\n`,
+    + `${receipt.reasonCode === undefined ? "" : ` (${receipt.reasonCode})`}`
+    + ` [${relativePath}]\n`,
   );
 }
 process.exit(receipt.exitCode);

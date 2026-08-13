@@ -34,9 +34,15 @@ jobs:
           test "$RELEASE_TAG" = "v$(node -p "require('./package.json').version")"
           test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
           test "$(node -p "require('./package-lock.json').version")" = "$(node -p "require('./package.json').version")"
-      - run: npm run lint
-      - run: npm test
-      - run: npm run test:pack-install
+      - run: npm run verify:env -- release --json
+      - name: Upload verification receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-verification
+          path: .stella/verification/release.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Pack the exact release artifact
         run: |
           mkdir release

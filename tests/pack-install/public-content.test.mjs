@@ -6,7 +6,7 @@ import test from "node:test";
 import { findSensitiveMaterial } from "../helpers/public-content.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
-const ignoredDirectories = new Set([".git", "node_modules"]);
+const ignoredDirectories = new Set([".git", ".stella", "node_modules"]);
 const allowedTopLevel = new Set([
   ".gitignore",
   ".github",

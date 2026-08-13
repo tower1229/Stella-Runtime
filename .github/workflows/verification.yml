@@ -1,0 +1,43 @@
+name: Verification
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [pure, network-install, exact-host]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm ci
+      - name: Install the exact supported OpenClaw host
+        if: matrix.profile == 'exact-host'
+        run: npm install --global openclaw@2026.6.34
+      - name: Run verification profile
+        env:
+          VERIFICATION_PROFILE: ${{ matrix.profile }}
+        run: npm run verify:env -- "$VERIFICATION_PROFILE" --json
+      - name: Upload verification receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ matrix.profile }}
+          path: .stella/verification/${{ matrix.profile }}.json
+          if-no-files-found: error
+          retention-days: 14
