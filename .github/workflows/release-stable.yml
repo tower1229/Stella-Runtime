@@ -78,7 +78,9 @@ jobs:
         run: |
           test "$RELEASE_TAG" = "v$(node -p "require('./package.json').version")"
           test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
-          echo "tarball=$(node -p "'release/' + require('./release/pack.json')[0].filename")" >> "$GITHUB_OUTPUT"
+          TARBALL="./release/$(node -p "require('./release/pack.json')[0].filename")"
+          test -f "$TARBALL"
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
           echo "integrity=$(node -p "require('./release/pack.json')[0].integrity")" >> "$GITHUB_OUTPUT"
       - name: Attest release tarball
         uses: actions/attest-build-provenance@v3

@@ -42,6 +42,8 @@ test("stable release verifies the immutable tag, package, tarball, and published
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /actions\/upload-artifact@v4/);
   assert.match(workflow, /actions\/download-artifact@v4/);
+  assert.match(workflow, /TARBALL="\.\/release\//);
+  assert.match(workflow, /test -f "\$TARBALL"/);
   assert.match(workflow, /npm ci/);
   assert.match(workflow, /npm install --global openclaw@2026\.6\.34/);
   assert.match(workflow, /2026\.6\.34 \(5c38f99\)/);
