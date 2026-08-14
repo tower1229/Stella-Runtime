@@ -467,6 +467,16 @@ async function runHostSuccessors(environment, evidencePath, port, token) {
   );
   assert.equal(memoryTool?.toolName, "synthetic_memory");
   assert.equal(typeof memoryTool?.toolCallId, "string");
+  const confirmation = evidence.find(
+    (entry) => entry.hook === "gateway_start_confirmation",
+  );
+  assert.equal(confirmation?.dispatch.matched, true, evidenceDiagnostic);
+  assert.equal(confirmation?.dispatch.handled, true, evidenceDiagnostic);
+  assert.equal(confirmation?.dispatch.duplicate, false, evidenceDiagnostic);
+  assert.deepEqual(confirmation?.replies, [
+    "buttons-cleared",
+    "AUTHORITY_CANDIDATE_ACCEPTED",
+  ]);
   const { stdout: storeOutput } = await run(
     "openclaw",
     ["cognitive-probe", "inspect"],
@@ -687,6 +697,99 @@ async function verifyReanswerStore(runtime, stateRuntime, successors) {
   }
 }
 
+async function verifyTelegramConfirmationGateway(runtime) {
+  let sequence = 0;
+  const service = new runtime.CandidateAdmissionService({
+    now: () => new Date("2026-08-14T01:00:00.000Z"),
+    createId: (kind) => `${kind}-packed-${++sequence}`,
+    createRoutingToken: () => "abcdefghijklmnopqrstuvwxyzABCDEFGH012345678",
+    authorityHead: { getCurrent: () => null },
+  });
+  const authorization = service.authorizeDiscovery({
+    instanceId: "instance-packed",
+    scope: {
+      candidateTypes: ["semantic"],
+      sourceRefs: ["source-packed"],
+    },
+    grantedBy: "owner-packed",
+    expiresAt: "2026-08-14T02:00:00.000Z",
+  });
+  const candidate = service.createCandidate({
+    authorizationId: authorization.authorization_id,
+    candidateType: "semantic",
+    stableId: "semantic-packed",
+    baseAuthorityVersion: null,
+    baseChecksum: null,
+    baseContent: null,
+    content: { claim: "Packed callback claim." },
+    sourceMap: [{ sourceRef: "source-packed", contentPath: "body" }],
+  });
+  let presentation;
+  const confirmation = await runtime.presentTelegramConfirmation({
+    service,
+    input: {
+      authorizationId: authorization.authorization_id,
+      candidateId: candidate.candidate_id,
+      revision: candidate.revision,
+      channel: "telegram",
+    },
+    presentation: {
+      async present(input) {
+        presentation = input;
+        return {
+          schema_version: "cognitive-runtime.approval-message-reference/v2",
+          provider: "telegram",
+          instance_id: "instance-packed",
+          account_id: "account-packed",
+          conversation_id: "conversation-packed",
+          message_id: "42",
+        };
+      },
+    },
+  });
+  assert.equal(confirmation.status, "presented");
+  assert.match(presentation.text, /Complete Candidate:/);
+  const [accept] = presentation.actions;
+  assert.ok(accept);
+  const registrations = [];
+  runtime.registerTelegramConfirmationGateway({
+    api: {
+      registerInteractiveHandler(registration) {
+        registrations.push(registration);
+      },
+    },
+    service,
+    hostVersion: "2026.6.34",
+  });
+  const registration = registrations[0];
+  assert.ok(registration);
+  const replies = [];
+  await registration.handler({
+    channel: "telegram",
+    accountId: "account-packed",
+    conversationId: "conversation-packed",
+    senderId: "owner-packed",
+    auth: { isAuthorizedSender: true },
+    callback: {
+      namespace: runtime.TELEGRAM_CONFIRMATION_NAMESPACE,
+      payload: accept.callbackData.split(":").slice(1).join(":"),
+      messageId: 42,
+    },
+    respond: {
+      async clearButtons() {
+        replies.push("buttons-cleared");
+      },
+      async reply({ text }) {
+        replies.push(text);
+      },
+    },
+  });
+  assert.deepEqual(replies, [
+    "buttons-cleared",
+    "AUTHORITY_CANDIDATE_ACCEPTED",
+  ]);
+}
+
 async function verifyPackedAdapters(pluginRoot, successors) {
   const runtime = await import(
     pathToFileURL(join(pluginRoot, "dist", "index.js")).href
@@ -697,6 +800,7 @@ async function verifyPackedAdapters(pluginRoot, successors) {
   await verifyMemoryAdapter(runtime, successors.memoryResult);
   await verifyRunScratch(runtime, successors);
   await verifyReanswerStore(runtime, stateRuntime, successors);
+  await verifyTelegramConfirmationGateway(runtime);
 }
 
 test("packed runtime passes the exact OpenClaw host smoke and restores configuration", async (t) => {
@@ -829,6 +933,20 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
         "before_agent_finalize",
         "agent_end",
       ],
+    );
+    assert.deepEqual(
+      compatibility.hosts[0].capabilityExpectations.telegramConfirmation,
+      {
+        status: "required",
+        interface: "registerInteractiveHandler",
+        outboundInterface: "runtime.channel.outbound.loadAdapter",
+        context: [
+          "accountId",
+          "senderId",
+          "conversationId",
+          "messageId",
+        ],
+      },
     );
 
     const { stdout: selfCheckOutput } = await run(

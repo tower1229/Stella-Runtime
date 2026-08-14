@@ -44,6 +44,17 @@
         },
         "uiNormalRpcSuccessor": {
           "status": "required"
+        },
+        "telegramConfirmation": {
+          "status": "required",
+          "interface": "registerInteractiveHandler",
+          "outboundInterface": "runtime.channel.outbound.loadAdapter",
+          "context": [
+            "accountId",
+            "senderId",
+            "conversationId",
+            "messageId"
+          ]
         }
       }
     }

@@ -54,6 +54,18 @@ Private Instance; the Runtime contains no built-in worldview.
 Do not put `stateRoot`, snapshots, credentials, or private authority content in
 this repository.
 
+## Candidate confirmation ports
+
+Before admitting Candidates through the OpenClaw singleton, the owning Private
+Instance must call `configureOpenClawCandidateAuthorityHead` exactly once with
+an Authority Head port keyed by instance, Candidate type, and stable ID. An
+unconfigured port fails closed; it is never interpreted as an empty Authority.
+
+Use `createOpenClawTelegramConfirmationPresentation` with the Host runtime and
+the exact instance, account, and conversation identities. It sends the complete
+Review Artifact through the Telegram outbound adapter and binds the Host send
+receipt before any callback can decide the Candidate.
+
 ## CLI reference
 
 All structured operational commands require `--json` where offered.

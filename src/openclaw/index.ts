@@ -23,6 +23,10 @@ import {
 } from "../state/index.js";
 import type { CognitiveRuntimePluginApi } from "./plugin-api.js";
 import {
+  openClawCandidateAdmissionService,
+  registerTelegramConfirmationGateway,
+} from "./confirmation.js";
+import {
   readRuntimeConfig,
   registerRuntimeHooks,
   type RuntimeHookController,
@@ -148,6 +152,13 @@ const plugin = {
   description: "Instance-neutral cognitive runtime for OpenClaw",
   register(api: CognitiveRuntimePluginApi): void {
     const packageVersion = api.version ?? "0.0.0";
+    if (api.registerInteractiveHandler !== undefined) {
+      registerTelegramConfirmationGateway({
+        api: { registerInteractiveHandler: api.registerInteractiveHandler },
+        service: openClawCandidateAdmissionService,
+        hostVersion: api.runtime.version,
+      });
+    }
     const runtimeConfig = readRuntimeConfig(api.pluginConfig);
     let runtimeController: RuntimeHookController | null = null;
     if (runtimeConfig !== null) {

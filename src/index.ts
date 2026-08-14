@@ -2,9 +2,27 @@ export { runSelfCheck } from "./cli/index.js";
 export type { SelfCheckResult } from "./cli/index.js";
 export {
   admitFramework,
+  calculateCandidateContentChecksum,
+  calculateCandidateExactDiff,
   calculateCognitiveAuthorityChecksum,
+  CandidateAdmissionService,
+  CONFIRMATION_ACTIONS,
 } from "./admission/index.js";
 export type {
+  ApprovalReceiptConsumptionInput,
+  BindConfirmationMessageInput,
+  CandidateAdmissionServiceOptions,
+  CandidateAuthorityHead,
+  CandidateAuthorityHeadPort,
+  CandidateRewriteInput,
+  CandidateRevisionInput,
+  CandidateType,
+  ConfirmationAction,
+  ConfirmationDecision,
+  ConfirmationDecisionInput,
+  ConfirmationPreparation,
+  ConfirmationPreparationInput,
+  DiscoveryAuthorizationInput,
   FrameworkAdmissionDecision,
   FrameworkAdmissionProposal,
   FrameworkAdmissionResult,
@@ -99,6 +117,24 @@ export type {
   MemoryObservationPort,
   MemoryToolResult,
 } from "./openclaw/ports.js";
+export {
+  buildTelegramConfirmationActions,
+  configureOpenClawCandidateAuthorityHead,
+  createOpenClawTelegramConfirmationPresentation,
+  OPENCLAW_TELEGRAM_CONFIRMATION_VERSION,
+  openClawCandidateAdmissionService,
+  presentTelegramConfirmation,
+  registerTelegramConfirmationGateway,
+  TELEGRAM_CONFIRMATION_NAMESPACE,
+} from "./openclaw/confirmation.js";
+export type {
+  OpenClawTelegramPresentationRuntime,
+  TelegramConfirmationAction,
+  TelegramConfirmationGatewayOptions,
+  TelegramConfirmationPluginApi,
+  TelegramConfirmationPresentationPort,
+  PresentedTelegramConfirmation,
+} from "./openclaw/confirmation.js";
 export {
   buildExplicitContextPacket,
   CompareAndSetRemediation,

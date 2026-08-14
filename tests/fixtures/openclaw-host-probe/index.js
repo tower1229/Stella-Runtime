@@ -40,6 +40,87 @@ async function loadRuntime() {
   return import(pathToFileURL(join(runtimeRoot, "dist", "index.js")).href);
 }
 
+async function runConfirmationProbe() {
+  const runtime = await loadRuntime();
+  runtime.configureOpenClawCandidateAuthorityHead({
+    getCurrent: () => null,
+  });
+  const service = runtime.openClawCandidateAdmissionService;
+  const authorization = service.authorizeDiscovery({
+    instanceId: "instance-host-probe",
+    scope: {
+      candidateTypes: ["semantic"],
+      sourceRefs: ["source-host-probe"],
+    },
+    grantedBy: "owner-host-probe",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  const candidate = service.createCandidate({
+    authorizationId: authorization.authorization_id,
+    candidateType: "semantic",
+    stableId: "semantic-host-probe",
+    baseAuthorityVersion: null,
+    baseChecksum: null,
+    baseContent: null,
+    content: { claim: "Exact Host callback claim." },
+    sourceMap: [{ sourceRef: "source-host-probe", contentPath: "body" }],
+  });
+  let presented;
+  await runtime.presentTelegramConfirmation({
+    service,
+    input: {
+      authorizationId: authorization.authorization_id,
+      candidateId: candidate.candidate_id,
+      revision: candidate.revision,
+      channel: "telegram",
+    },
+    presentation: {
+      async present(input) {
+        presented = input;
+        return {
+          schema_version: "cognitive-runtime.approval-message-reference/v2",
+          provider: "telegram",
+          instance_id: "instance-host-probe",
+          account_id: "account-host-probe",
+          conversation_id: "conversation-host-probe",
+          message_id: "42",
+        };
+      },
+    },
+  });
+  const [accept] = presented.actions;
+  const { dispatchPluginInteractiveHandler } = await import(
+    "openclaw/plugin-sdk/plugin-runtime"
+  );
+  const replies = [];
+  const dispatch = await dispatchPluginInteractiveHandler({
+    channel: "telegram",
+    data: accept.callbackData,
+    dedupeId: "host-probe-confirmation-42",
+    invoke: (match) => match.registration.handler({
+      channel: "telegram",
+      accountId: "account-host-probe",
+      conversationId: "conversation-host-probe",
+      senderId: "owner-host-probe",
+      auth: { isAuthorizedSender: true },
+      callback: {
+        namespace: match.namespace,
+        payload: match.payload,
+        messageId: 42,
+      },
+      respond: {
+        async clearButtons() {
+          replies.push("buttons-cleared");
+        },
+        async reply({ text }) {
+          replies.push(text);
+        },
+      },
+    }),
+  });
+  record({ hook: "gateway_start_confirmation", dispatch, replies });
+}
+
 async function openStore() {
   if (runtimeRoot === undefined || databasePath === undefined) {
     throw new Error("STELLA_RUNTIME_PROBE_STORE_ENV_REQUIRED");
@@ -90,6 +171,7 @@ const plugin = {
   name: "Cognitive Runtime Synthetic Host Probe",
   description: "Synthetic exact-host probe for Stella Runtime pack-install tests",
   register(api) {
+    api.on("gateway_start", runConfirmationProbe);
     api.on("before_prompt_build", async (event, context) => {
       const kind = runKind(event.prompt);
       if (context.runId === undefined || kind === "other") {

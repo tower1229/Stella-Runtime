@@ -43,8 +43,10 @@ class FakeCommand {
 test("OpenClaw discovers cognitive self-check through the plugin entry", async () => {
   const program = new FakeCommand();
   let descriptors;
+  let interactiveRegistration;
   const api = {
     runtime: {
+      version: "2026.6.34",
       llm: {
         complete: async () => {
           throw new Error("not invoked by self-check");
@@ -54,6 +56,9 @@ test("OpenClaw discovers cognitive self-check through the plugin entry", async (
     registerCli(registrar, options) {
       descriptors = options.descriptors;
       return registrar({ program });
+    },
+    registerInteractiveHandler(registration) {
+      interactiveRegistration = registration;
     },
   };
 
@@ -66,6 +71,9 @@ test("OpenClaw discovers cognitive self-check through the plugin entry", async (
       hasSubcommands: true,
     },
   ]);
+  assert.equal(interactiveRegistration?.channel, "telegram");
+  assert.equal(interactiveRegistration?.namespace, "crad");
+  assert.equal(typeof interactiveRegistration?.handler, "function");
 
   const selfCheck = program.children
     .get("cognitive")
@@ -160,6 +168,20 @@ test("OpenClaw registration does not use rejected host paths", async () => {
   });
 
   await plugin.register(api);
+});
+
+test("OpenClaw plugin rejects Telegram registration on an unsmoked Host", () => {
+  assert.throws(
+    () => plugin.register({
+      runtime: {
+        version: "2026.6.35",
+        llm: { complete: async () => ({}) },
+      },
+      registerInteractiveHandler() {},
+      registerCli() {},
+    }),
+    /TELEGRAM_CONFIRMATION_HOST_UNSUPPORTED/,
+  );
 });
 
 test("OpenClaw recovery commands expose backup, read-only verify, and restore JSON", async (t) => {

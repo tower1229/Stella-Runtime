@@ -38,6 +38,8 @@ committed capability row and reproducible synthetic smoke.
 | Host next-turn injection | fail | do not depend on it |
 | Command continuation successor | pass | use normal host Agent loop |
 | UI normal-RPC successor | pass | client submits after terminal barrier |
+| Telegram deterministic callback context | pass | use `registerInteractiveHandler` with exact account, sender, conversation, and message identity |
+| Telegram Review Artifact outbound seam | pass | use `runtime.channel.outbound.loadAdapter` and bind the returned send receipt |
 | Bundled-only scheduled turn | unavailable to external Plugin | do not use it |
 
 ## Required adapter behavior
@@ -103,8 +105,14 @@ Pack-install smoke for this row must prove:
 - strict Router happy and rejection cases;
 - scratch concurrency, duplicate hooks, TTL, lifecycle, and capacity;
 - correction commit, rollback, abort, retry, and command/UI successor flows;
+- packed Candidate confirmation through the Telegram interactive callback context,
+  with exact actor/message binding and no LLM execution;
 - absence of calls to every rejected path;
 - uninstall, configuration checksum restoration, and Gateway deep health.
+
+The exact-host smoke dispatches the callback through the Gateway-owned
+interactive registry. The outbound adapter contract is covered with a synthetic
+Telegram send receipt; verification does not contact a private Telegram account.
 
 All fixtures are synthetic. No live private Agent is accessed or modified.
 

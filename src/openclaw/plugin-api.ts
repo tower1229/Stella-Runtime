@@ -1,3 +1,5 @@
+import type { TelegramConfirmationPluginApi } from "./confirmation.js";
+
 export interface CliCommand {
   command(name: string): CliCommand;
   description(value: string): CliCommand;
@@ -18,6 +20,7 @@ export interface CognitiveRuntimePluginApi {
   readonly version?: string;
   readonly pluginConfig?: Readonly<Record<string, unknown>>;
   readonly runtime: {
+    readonly version: string;
     readonly llm: {
       complete(params: unknown): Promise<unknown>;
     };
@@ -38,6 +41,7 @@ export interface CognitiveRuntimePluginApi {
     }): void;
   };
   readonly on?: (event: PluginHookName, handler: PluginHookHandler) => void;
+  readonly registerInteractiveHandler?: TelegramConfirmationPluginApi["registerInteractiveHandler"];
   registerCli(
     registrar: (context: { program: CliCommand }) => void | Promise<void>,
     options: { readonly descriptors: readonly CliDescriptor[] },
