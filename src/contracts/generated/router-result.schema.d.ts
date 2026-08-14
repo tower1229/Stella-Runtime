@@ -1,4 +1,4 @@
-/* Generated from contracts/v1. Do not edit directly. */
+/* Generated from contracts/v2. Do not edit directly. */
 
 export type Id = string;
 export type Ids = Id[];

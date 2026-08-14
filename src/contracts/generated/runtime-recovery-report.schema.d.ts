@@ -1,10 +1,11 @@
-/* Generated from contracts/v1. Do not edit directly. */
+/* Generated from contracts/v2. Do not edit directly. */
 
 export type ReasonCodes = string[];
 
 export interface RuntimeRecoveryVerificationOrRestoreReport {
-  report_schema_version: "cognitive-runtime.runtime-recovery-report/v1";
+  report_schema_version: "cognitive-runtime.runtime-recovery-report/v2";
   operation: "verify" | "restore";
+  authority_revision: null | string;
   compatibility_result: CheckResult;
   integrity_result: CheckResult;
   restored_active_head: null | {

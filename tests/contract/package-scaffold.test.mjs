@@ -18,6 +18,10 @@ test("package exposes only built JavaScript to OpenClaw", async () => {
   assert.deepEqual(packageJson.openclaw.extensions, ["./dist/openclaw/index.js"]);
   assert.equal(packageJson.exports["."].import, "./dist/index.js");
   assert.equal(packageJson.exports["."].types, "./dist/index.d.ts");
+  assert.equal(packageJson.exports["./contracts/v2/*"], "./contracts/v2/*");
+  assert.equal("./contracts/v1/*" in packageJson.exports, false);
+  assert.equal(packageJson.files.includes("contracts/v2"), true);
+  assert.equal(packageJson.files.includes("contracts/v1"), false);
   assert.deepEqual(packageJson.exports["./test-runner"], {
     types: "./dist/testing/runner.d.ts",
     import: "./dist/testing/runner.js",

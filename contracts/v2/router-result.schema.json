@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cognitive-runtime.router-result/v2",
+  "title": "Router Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["memory_route", "state_refs", "governing", "frameworks", "retrieval_plan", "confidence", "reason_codes"],
+  "properties": {
+    "memory_route": { "enum": ["none", "optional", "required"] },
+    "state_refs": { "$ref": "#/$defs/ids" },
+    "governing": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "object", "additionalProperties": false, "required": ["system", "kernel_version", "modules"], "properties": { "system": { "$ref": "#/$defs/id" }, "kernel_version": { "type": "string", "minLength": 1 }, "modules": { "type": "array", "maxItems": 2, "items": { "$ref": "#/$defs/id" }, "uniqueItems": true } } }
+      ]
+    },
+    "frameworks": { "type": "object", "additionalProperties": false, "required": ["primary", "secondary"], "properties": { "primary": { "$ref": "#/$defs/nullableId" }, "secondary": { "$ref": "#/$defs/nullableId" } } },
+    "retrieval_plan": { "type": "array", "maxItems": 6, "items": { "$ref": "#/$defs/retrievalStep" } },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "reason_codes": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" }, "uniqueItems": true }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "nullableId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/id" }] },
+    "ids": { "type": "array", "items": { "$ref": "#/$defs/id" }, "uniqueItems": true },
+    "retrievalStep": {
+      "type": "object", "additionalProperties": false,
+      "required": ["layer", "method", "target", "query", "purpose"],
+      "properties": {
+        "layer": { "enum": ["evidence", "semantic", "cognitive", "current_state"] },
+        "method": { "enum": ["direct_get", "search"] },
+        "target": { "$ref": "#/$defs/nullableId" },
+        "query": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1, "maxLength": 500 }] },
+        "purpose": { "type": "string", "minLength": 1, "maxLength": 500 }
+      },
+      "allOf": [
+        { "if": { "properties": { "method": { "const": "direct_get" } } }, "then": { "properties": { "target": { "$ref": "#/$defs/id" }, "query": { "type": "null" } } } },
+        { "if": { "properties": { "method": { "const": "search" } } }, "then": { "properties": { "target": { "type": "null" }, "query": { "type": "string", "minLength": 1, "maxLength": 500 } } } }
+      ]
+    }
+  }
+}

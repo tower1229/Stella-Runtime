@@ -12,7 +12,7 @@ test("compatibility is declared for one channel and exact host version", async (
 
   assert.equal(
     manifest.schemaVersion,
-    "cognitive-runtime.openclaw-compatibility/v1",
+    "cognitive-runtime.openclaw-compatibility/v2",
   );
   assert.equal(manifest.hosts.length, 1);
   assert.equal(manifest.hosts[0].releaseChannel, "extended-stable");

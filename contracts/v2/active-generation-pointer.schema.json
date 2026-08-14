@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cognitive-runtime.active-generation-pointer/v2",
+  "title": "Active Generation Pointer",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "instance_id", "generation_id", "source_revision", "manifest_checksum", "activation_receipt_id", "activated_at"],
+  "properties": {
+    "schema_version": { "const": "cognitive-runtime.active-generation-pointer/v2" },
+    "instance_id": { "$ref": "#/$defs/id" },
+    "generation_id": { "$ref": "#/$defs/generation" },
+    "source_revision": { "type": "string", "minLength": 1 },
+    "manifest_checksum": { "$ref": "#/$defs/checksum" },
+    "activation_receipt_id": { "$ref": "#/$defs/id" },
+    "activated_at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": { "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" }, "generation": { "type": "string", "pattern": "^generation-[a-f0-9]{64}$" }, "checksum": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" } }
+}

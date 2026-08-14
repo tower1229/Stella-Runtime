@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cognitive-runtime.projection-entry/v2",
+  "title": "Projection Entry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generation_id", "layer", "stable_id", "authority_version", "role", "checksum", "source_refs", "content"],
+  "properties": {
+    "schema_version": { "const": "cognitive-runtime.projection-entry/v2" },
+    "generation_id": { "type": "string", "pattern": "^generation-[a-f0-9]{64}$" },
+    "layer": { "enum": ["evidence", "semantic", "cognitive"] },
+    "stable_id": { "$ref": "#/$defs/id" },
+    "authority_version": { "type": "string", "minLength": 1 },
+    "role": { "enum": ["evidence", "semantic", "personal_model", "governing_system", "governing_module", "ordinary_framework"] },
+    "checksum": { "$ref": "#/$defs/checksum" },
+    "source_refs": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+    "content": { "type": "string", "minLength": 1 }
+  },
+  "$defs": { "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" }, "checksum": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" } }
+}

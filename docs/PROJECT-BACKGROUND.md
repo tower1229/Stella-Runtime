@@ -165,7 +165,7 @@ The implementation sequence is tracked in this repository's GitHub Issues. The
 initial issues are:
 
 1. [#1: buildable single-package repository scaffold](https://github.com/tower1229/Stella-Runtime/issues/1);
-2. [#2: `contracts/v1`, authority parser, and verified host ports](https://github.com/tower1229/Stella-Runtime/issues/2);
+2. [#2: initial contracts (now replaced by `contracts/v2`), authority parser, and verified host ports](https://github.com/tower1229/Stella-Runtime/issues/2);
 3. [#3: generic test Runner with an external instance-test seam](https://github.com/tower1229/Stella-Runtime/issues/3);
 4. [#4: pack-install and exact-host smoke](https://github.com/tower1229/Stella-Runtime/issues/4).
 5. [#5: authoritative Runtime state export, verification, and restore](https://github.com/tower1229/Stella-Runtime/issues/5)

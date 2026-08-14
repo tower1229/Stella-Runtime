@@ -16,7 +16,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import type {
   RuntimeRecoverySnapshotManifest,
-  RuntimeRecoveryVerificationOrRestoreReportV2,
+  RuntimeRecoveryVerificationOrRestoreReport,
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
 import {
@@ -47,10 +47,10 @@ export const RUNTIME_RECOVERY_SNAPSHOT_EXCLUDED_CONTENTS = [
 ] as const;
 
 const SNAPSHOT_SCHEMA_VERSION =
-  "cognitive-runtime.runtime-recovery-snapshot-manifest/v1" as const;
+  "cognitive-runtime.runtime-recovery-snapshot-manifest/v2" as const;
 const REPORT_SCHEMA_VERSION =
   "cognitive-runtime.runtime-recovery-report/v2" as const;
-const CONTRACT_VERSION = "v1" as const;
+const CONTRACT_VERSION = "v2" as const;
 export const RUNTIME_RECOVERY_COMPATIBILITY = {
   snapshotSchemaVersions: [SNAPSHOT_SCHEMA_VERSION],
   storageSchemaVersions: ["0", "1"],
@@ -167,7 +167,7 @@ export interface RuntimeRecoveryPort<
   TVerifyOptions = RuntimeVerifyOptions,
   TRestoreOptions = RuntimeRestoreOptions,
   TSnapshot = RuntimeRecoverySnapshot,
-  TReport = RuntimeRecoveryVerificationOrRestoreReportV2,
+  TReport = RuntimeRecoveryVerificationOrRestoreReport,
 > {
   backup(options: TBackupOptions): Promise<TSnapshot>;
   verify(snapshot: TSnapshot, options: TVerifyOptions): Promise<TReport>;
@@ -266,7 +266,7 @@ const emptyReport = (
   operation: "verify" | "restore",
   compatibilityReasons: readonly string[],
   integrityReasons: readonly string[],
-): RuntimeRecoveryVerificationOrRestoreReportV2 => ({
+): RuntimeRecoveryVerificationOrRestoreReport => ({
   report_schema_version: REPORT_SCHEMA_VERSION,
   operation,
   authority_revision: null,
@@ -280,9 +280,9 @@ const emptyReport = (
 });
 
 const withOperation = (
-  report: RuntimeRecoveryVerificationOrRestoreReportV2,
+  report: RuntimeRecoveryVerificationOrRestoreReport,
   operation: "verify" | "restore",
-): RuntimeRecoveryVerificationOrRestoreReportV2 => ({ ...report, operation });
+): RuntimeRecoveryVerificationOrRestoreReport => ({ ...report, operation });
 
 export function createRuntimeVerifyOptions(
   packageVersion: string,
@@ -860,7 +860,7 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
   async verify(
     snapshot: RuntimeRecoverySnapshot,
     options: RuntimeVerifyOptions,
-  ): Promise<RuntimeRecoveryVerificationOrRestoreReportV2> {
+  ): Promise<RuntimeRecoveryVerificationOrRestoreReport> {
     if (options.access !== "read_only") {
       return emptyReport("verify", [], ["VERIFY_NOT_READ_ONLY"]);
     }
@@ -966,7 +966,7 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
   async restore(
     snapshot: RuntimeRecoverySnapshot,
     options: RuntimeRestoreOptions,
-  ): Promise<RuntimeRecoveryVerificationOrRestoreReportV2> {
+  ): Promise<RuntimeRecoveryVerificationOrRestoreReport> {
     const targetPath = databasePathFor(
       this.#options.stateRoot,
       options.targetInstanceId,

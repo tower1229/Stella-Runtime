@@ -94,12 +94,12 @@ const createLifecycle = ({ failOperation } = {}) => {
         openclawVersion: "2026.6.34",
         capabilityChecksum: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         contractVersions: [
-          "cognitive-runtime.runtime-recovery-snapshot-manifest/v1",
+          "cognitive-runtime.runtime-recovery-snapshot-manifest/v2",
           "cognitive-runtime.runtime-recovery-report/v2",
         ],
         compatiblePackageVersions: ["0.1.0-beta.0", "0.1.0-beta.1"],
         compatibleContractVersions: [
-          "cognitive-runtime.runtime-recovery-snapshot-manifest/v1",
+          "cognitive-runtime.runtime-recovery-snapshot-manifest/v2",
           "cognitive-runtime.runtime-recovery-report/v2",
         ],
         mode,

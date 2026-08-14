@@ -5,7 +5,7 @@ import test from "node:test";
 const readSchema = async (name) =>
   JSON.parse(
     await readFile(
-      new URL(`../../contracts/v1/${name}.schema.json`, import.meta.url),
+      new URL(`../../contracts/v2/${name}.schema.json`, import.meta.url),
       "utf8",
     ),
   );
@@ -15,7 +15,7 @@ test("recovery snapshot manifest freezes the authoritative state boundary", asyn
 
   assert.equal(
     schema.$id,
-    "cognitive-runtime.runtime-recovery-snapshot-manifest/v1",
+    "cognitive-runtime.runtime-recovery-snapshot-manifest/v2",
   );
   assert.equal(schema.additionalProperties, false);
   assert.deepEqual(schema.required, [
@@ -43,17 +43,18 @@ test("recovery snapshot manifest freezes the authoritative state boundary", asyn
   ]);
 });
 
-test("recovery report v1 remains compatible and v2 adds authority revision", async () => {
+test("recovery report exposes only the v2 authority-bound shape", async () => {
   const schema = await readSchema("runtime-recovery-report");
 
   assert.equal(
     schema.$id,
-    "cognitive-runtime.runtime-recovery-report/v1",
+    "cognitive-runtime.runtime-recovery-report/v2",
   );
   assert.equal(schema.additionalProperties, false);
   assert.deepEqual(schema.required, [
     "report_schema_version",
     "operation",
+    "authority_revision",
     "compatibility_result",
     "integrity_result",
     "restored_active_head",
@@ -62,10 +63,5 @@ test("recovery report v1 remains compatible and v2 adds authority revision", asy
     "rollback_result",
     "projections_requiring_rebuild",
   ]);
-  assert.equal("authority_revision" in schema.properties, false);
-
-  const v2 = await readSchema("runtime-recovery-report-v2");
-  assert.equal(v2.$id, "cognitive-runtime.runtime-recovery-report/v2");
-  assert.equal(v2.additionalProperties, false);
-  assert.ok(v2.required.includes("authority_revision"));
+  assert.equal("authority_revision" in schema.properties, true);
 });

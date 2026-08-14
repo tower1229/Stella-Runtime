@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cognitive-runtime.capability-fixture/v1",
+  "schemaVersion": "cognitive-runtime.capability-fixture/v2",
   "synthetic": true,
   "releaseChannel": "extended-stable",
   "openclawVersion": "2026.6.34",

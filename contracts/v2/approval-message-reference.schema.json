@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cognitive-runtime.approval-message-reference/v2",
+  "title": "Approval Message Reference",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "provider", "instance_id", "account_id", "conversation_id", "message_id"],
+  "properties": {
+    "schema_version": { "const": "cognitive-runtime.approval-message-reference/v2" },
+    "provider": { "const": "telegram" },
+    "instance_id": { "$ref": "#/$defs/id" },
+    "account_id": { "type": "string", "minLength": 1 },
+    "conversation_id": { "type": "string", "minLength": 1 },
+    "message_id": { "type": "string", "minLength": 1 }
+  },
+  "$defs": { "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" } }
+}

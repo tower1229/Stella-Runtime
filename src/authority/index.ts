@@ -49,25 +49,25 @@ const cognitiveSections = [
 ] as const;
 
 const authoritySchemas = {
-  "cognitive-runtime.evidence/v1": {
+  "cognitive-runtime.evidence/v2": {
     contract: "evidence",
     idField: "source_id",
     recordTypeField: "source_type",
     layer: "evidence",
   },
-  "cognitive-runtime.semantic/v1": {
+  "cognitive-runtime.semantic/v2": {
     contract: "semantic",
     idField: "claim_id",
     recordTypeField: "record_type",
     layer: "semantic",
   },
-  "cognitive-runtime.personal-model/v1": {
+  "cognitive-runtime.personal-model/v2": {
     contract: "personal-model",
     idField: "claim_id",
     recordTypeField: "record_type",
     layer: "semantic",
   },
-  "cognitive-runtime.cognitive/v1": {
+  "cognitive-runtime.cognitive/v2": {
     contract: "cognitive",
     idField: "cognitive_id",
     recordTypeField: "entity_type",
@@ -202,7 +202,7 @@ export function lintAuthorityRecord(
   }
 
   if (
-    record.schemaVersion === "cognitive-runtime.personal-model/v1" &&
+    record.schemaVersion === "cognitive-runtime.personal-model/v2" &&
     /\b(?:the\s+)?user\s+is\s+inherently\b|用户(?:天生|本质上)/iu.test(record.body)
   ) {
     issues.push({ code: "ESSENTIALIZED_PERSONAL_MODEL" });

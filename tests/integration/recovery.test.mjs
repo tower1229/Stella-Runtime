@@ -74,11 +74,11 @@ const createFixture = async (t, name) => {
 const verifyOptions = {
   expectedInstanceId: "instance-synthetic",
   supportedSnapshotSchemaVersions: [
-    "cognitive-runtime.runtime-recovery-snapshot-manifest/v1",
+    "cognitive-runtime.runtime-recovery-snapshot-manifest/v2",
   ],
   supportedStorageSchemaVersions: ["1"],
   supportedPackageVersions: ["0.0.0"],
-  supportedContractVersions: ["v1"],
+  supportedContractVersions: ["v2"],
   access: "read_only",
 };
 
@@ -204,7 +204,7 @@ test("verify deterministically rejects checksum and compatibility damage", async
   const versionCases = [
     ["supportedSnapshotSchemaVersions", ["future-snapshot"], "SNAPSHOT_SCHEMA_INCOMPATIBLE"],
     ["supportedPackageVersions", ["9.9.9"], "PACKAGE_VERSION_INCOMPATIBLE"],
-    ["supportedContractVersions", ["v2"], "CONTRACT_VERSION_INCOMPATIBLE"],
+    ["supportedContractVersions", ["v1"], "CONTRACT_VERSION_INCOMPATIBLE"],
   ];
   for (const [field, supportedVersions, reason] of versionCases) {
     const report = await fixture.recovery.verify(snapshot, {
@@ -466,10 +466,10 @@ test("a process crash after replacement is rolled back on the next restore", asy
       restoreIdempotencyKey: "restore-process-crash",
       rollback: "required",
       signal,
-      supportedSnapshotSchemaVersions: ["cognitive-runtime.runtime-recovery-snapshot-manifest/v1"],
+      supportedSnapshotSchemaVersions: ["cognitive-runtime.runtime-recovery-snapshot-manifest/v2"],
       supportedStorageSchemaVersions: ["1"],
       supportedPackageVersions: ["0.0.0"],
-      supportedContractVersions: ["v1"]
+      supportedContractVersions: ["v2"]
     });
   `;
   const exit = await new Promise((resolve, reject) => {

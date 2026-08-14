@@ -26,9 +26,24 @@ test("contract validator accepts independent positive fixtures", async () => {
     ["router-result", "router-result"],
     ["runtime-recovery-snapshot-manifest", "recovery-manifest"],
     ["runtime-recovery-report", "recovery-report"],
-    ["runtime-recovery-report-v2", "recovery-report-v2"],
     ["release-pin", "release-pin"],
     ["conformance-receipt", "conformance-receipt"],
+    ["discovery-authorization", "discovery-authorization"],
+    ["authority-candidate", "authority-candidate"],
+    ["candidate-review-artifact", "candidate-review-artifact"],
+    ["approval-message-reference", "approval-message-reference"],
+    ["decision-receipt", "decision-receipt"],
+    ["change-set", "change-set"],
+    ["state-view", "state-view"],
+    ["state-import-manifest", "state-import-manifest"],
+    ["state-correction-preview", "state-correction-preview"],
+    ["state-correction-receipt", "state-correction-receipt"],
+    ["generation-manifest", "generation-manifest"],
+    ["projection-entry", "projection-entry"],
+    ["active-generation-pointer", "active-generation-pointer"],
+    ["activation-receipt", "activation-receipt"],
+    ["instance-runtime-config", "instance-runtime-config"],
+    ["instance-cutover-plan", "instance-cutover-plan"],
   ];
 
   for (const [contract, fixture] of cases) {
@@ -37,6 +52,12 @@ test("contract validator accepts independent positive fixtures", async () => {
       valid: true,
       errors: [],
     });
+    const unknownField = validateContract(contract, {
+      ...value,
+      unexpected_public_field: true,
+    });
+    assert.equal(unknownField.valid, false, `${contract} must reject unknown fields`);
+    assert.ok(unknownField.errors.some((error) => error.keyword === "additionalProperties"));
   }
 });
 
@@ -54,9 +75,24 @@ test("contract validator rejects independent negative fixtures", async () => {
     ["router-result", "router-result-extra-chain-of-thought"],
     ["runtime-recovery-snapshot-manifest", "recovery-manifest-credential-file"],
     ["runtime-recovery-report", "recovery-report-live-database-path"],
-    ["runtime-recovery-report-v2", "recovery-report-v2-live-database-path"],
     ["release-pin", "release-pin-floating-locator"],
     ["conformance-receipt", "conformance-receipt-private-path"],
+    ["discovery-authorization", "discovery-authorization-extra-field"],
+    ["authority-candidate", "authority-candidate-extra-field"],
+    ["candidate-review-artifact", "candidate-review-artifact-extra-field"],
+    ["approval-message-reference", "approval-message-reference-extra-field"],
+    ["decision-receipt", "decision-receipt-extra-field"],
+    ["change-set", "change-set-extra-field"],
+    ["state-view", "state-view-extra-field"],
+    ["state-import-manifest", "state-import-manifest-extra-field"],
+    ["state-correction-preview", "state-correction-preview-extra-field"],
+    ["state-correction-receipt", "state-correction-receipt-extra-field"],
+    ["generation-manifest", "generation-manifest-extra-field"],
+    ["projection-entry", "projection-entry-extra-field"],
+    ["active-generation-pointer", "active-generation-pointer-extra-field"],
+    ["activation-receipt", "activation-receipt-extra-field"],
+    ["instance-runtime-config", "instance-runtime-config-extra-field"],
+    ["instance-cutover-plan", "instance-cutover-plan-extra-field"],
   ];
 
   for (const [contract, fixture] of cases) {
@@ -65,4 +101,48 @@ test("contract validator rejects independent negative fixtures", async () => {
     assert.equal(result.valid, false, `${contract} should reject ${fixture}`);
     assert.ok(result.errors.length > 0);
   }
+});
+
+test("public contracts form one closed v2 set", async () => {
+  const { readdir } = await import("node:fs/promises");
+  const contractRoot = new URL("../../contracts/v2/", import.meta.url);
+  const names = await readdir(contractRoot);
+
+  assert.equal(names.every((name) => name.endsWith(".schema.json")), true);
+  for (const name of names) {
+    const schema = JSON.parse(await readFile(new URL(name, contractRoot), "utf8"));
+    assert.match(schema.$id, /^cognitive-runtime\.[a-z0-9-]+\/v2$/);
+    assert.equal(schema.additionalProperties, false);
+  }
+
+  await assert.rejects(readFile(new URL("../../contracts/v1/evidence.schema.json", import.meta.url)));
+});
+
+test("Evidence v2 preserves media and declared temporal precision", async () => {
+  const evidence = await loadFixture("valid", "evidence");
+  assert.deepEqual(validateContract("evidence", evidence), { valid: true, errors: [] });
+
+  for (const temporal of [
+    { value: "2026", precision: "year" },
+    { value: "2026-08", precision: "month" },
+    { value: "2026-08-14", precision: "day" },
+    { value: "2026-08-14T10:30:00+08:00", precision: "instant" },
+  ]) {
+    assert.equal(validateContract("evidence", { ...evidence, created_at: temporal }).valid, true);
+  }
+
+  assert.equal(
+    validateContract("evidence", {
+      ...evidence,
+      created_at: { value: "2026-01-01", precision: "year" },
+    }).valid,
+    false,
+  );
+  assert.equal(
+    validateContract("evidence", {
+      ...evidence,
+      media: [{ id: "media-primary", path: "assets/primary.png", role: "primary", importance: "high", caption: "Synthetic diagram" }],
+    }).valid,
+    false,
+  );
 });

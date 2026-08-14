@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cognitive-runtime.runtime-recovery-report/v2",
+  "title": "Runtime Recovery Verification or Restore Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "report_schema_version",
+    "operation",
+    "authority_revision",
+    "compatibility_result",
+    "integrity_result",
+    "restored_active_head",
+    "pending_outbox_state",
+    "storage_migrations_applied",
+    "rollback_result",
+    "projections_requiring_rebuild"
+  ],
+  "properties": {
+    "report_schema_version": {
+      "const": "cognitive-runtime.runtime-recovery-report/v2"
+    },
+    "operation": {
+      "type": "string",
+      "enum": ["verify", "restore"]
+    },
+    "authority_revision": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 1 }
+      ]
+    },
+    "compatibility_result": {
+      "$ref": "#/$defs/checkResult"
+    },
+    "integrity_result": {
+      "$ref": "#/$defs/checkResult"
+    },
+    "restored_active_head": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["active_seq", "state_view_version", "checksum"],
+          "properties": {
+            "active_seq": { "type": "integer", "minimum": 0 },
+            "state_view_version": { "type": "string", "minLength": 1 },
+            "checksum": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            }
+          }
+        }
+      ]
+    },
+    "pending_outbox_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pending_count", "in_flight_count"],
+      "properties": {
+        "pending_count": { "type": "integer", "minimum": 0 },
+        "in_flight_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "storage_migrations_applied": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "rollback_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason_codes"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["not_required", "completed", "failed"]
+        },
+        "reason_codes": { "$ref": "#/$defs/reasonCodes" }
+      }
+    },
+    "projections_requiring_rebuild": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "checkResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason_codes"],
+      "properties": {
+        "status": { "type": "string", "enum": ["pass", "fail"] },
+        "reason_codes": { "$ref": "#/$defs/reasonCodes" }
+      }
+    },
+    "reasonCodes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9_]*$"
+      },
+      "uniqueItems": true
+    }
+  }
+}

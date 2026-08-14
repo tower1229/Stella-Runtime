@@ -1,11 +1,11 @@
-/* Generated from contracts/v1. Do not edit directly. */
+/* Generated from contracts/v2. Do not edit directly. */
 
 export type ExactVersion = string;
 export type Integrity = string;
 export type Sha256 = string;
 
 export interface ReleasePin {
-  schema_version: "cognitive-runtime.release-pin/v1";
+  schema_version: "cognitive-runtime.release-pin/v2";
   package: {
     name: string;
     version: ExactVersion;

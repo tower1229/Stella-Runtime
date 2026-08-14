@@ -13,11 +13,26 @@ export type { PersonalModel } from "./generated/personal-model.schema.js";
 export type { ReanswerOutbox } from "./generated/reanswer-outbox.schema.js";
 export type { RouterResult } from "./generated/router-result.schema.js";
 export type { RuntimeRecoveryVerificationOrRestoreReport } from "./generated/runtime-recovery-report.schema.js";
-export type { RuntimeRecoveryVerificationOrRestoreReportV2 } from "./generated/runtime-recovery-report-v2.schema.js";
 export type { RuntimeRecoverySnapshotManifest } from "./generated/runtime-recovery-snapshot-manifest.schema.js";
 export type { SemanticClaim } from "./generated/semantic.schema.js";
 export type { ReleasePin } from "./generated/release-pin.schema.js";
 export type { ConsumerConformanceReceipt } from "./generated/conformance-receipt.schema.js";
+export type { DiscoveryAuthorization } from "./generated/discovery-authorization.schema.js";
+export type { AuthorityCandidate } from "./generated/authority-candidate.schema.js";
+export type { CandidateReviewArtifact } from "./generated/candidate-review-artifact.schema.js";
+export type { ApprovalMessageReference } from "./generated/approval-message-reference.schema.js";
+export type { DecisionReceipt } from "./generated/decision-receipt.schema.js";
+export type { ChangeSet } from "./generated/change-set.schema.js";
+export type { StateView } from "./generated/state-view.schema.js";
+export type { StateImportManifest } from "./generated/state-import-manifest.schema.js";
+export type { StateCorrectionPreview } from "./generated/state-correction-preview.schema.js";
+export type { StateCorrectionReceipt } from "./generated/state-correction-receipt.schema.js";
+export type { GenerationManifest } from "./generated/generation-manifest.schema.js";
+export type { ProjectionEntry } from "./generated/projection-entry.schema.js";
+export type { ActiveGenerationPointer } from "./generated/active-generation-pointer.schema.js";
+export type { ActivationReceipt } from "./generated/activation-receipt.schema.js";
+export type { InstanceRuntimeConfig } from "./generated/instance-runtime-config.schema.js";
+export type { InstanceCutoverPlan } from "./generated/instance-cutover-plan.schema.js";
 
 const contractNames = [
   "evidence",
@@ -32,9 +47,24 @@ const contractNames = [
   "cognitive-provenance-overlay",
   "runtime-recovery-snapshot-manifest",
   "runtime-recovery-report",
-  "runtime-recovery-report-v2",
   "release-pin",
   "conformance-receipt",
+  "discovery-authorization",
+  "authority-candidate",
+  "candidate-review-artifact",
+  "approval-message-reference",
+  "decision-receipt",
+  "change-set",
+  "state-view",
+  "state-import-manifest",
+  "state-correction-preview",
+  "state-correction-receipt",
+  "generation-manifest",
+  "projection-entry",
+  "active-generation-pointer",
+  "activation-receipt",
+  "instance-runtime-config",
+  "instance-cutover-plan",
 ] as const;
 
 export type ContractName = (typeof contractNames)[number];
@@ -66,7 +96,7 @@ const ajv = addFormats(
 
 const schemas = new Map<ContractName, object>();
 for (const name of contractNames) {
-  const schema = require(`../../contracts/v1/${name}.schema.json`) as object;
+  const schema = require(`../../contracts/v2/${name}.schema.json`) as object;
   schemas.set(name, schema);
   ajv.addSchema(schema);
 }

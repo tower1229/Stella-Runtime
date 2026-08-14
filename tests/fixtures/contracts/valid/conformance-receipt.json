@@ -1,5 +1,5 @@
 {
-  "schema_version": "cognitive-runtime.conformance-receipt/v1",
+  "schema_version": "cognitive-runtime.conformance-receipt/v2",
   "status": "pass",
   "package": {
     "name": "@tower1229/stella-cognitive-runtime",

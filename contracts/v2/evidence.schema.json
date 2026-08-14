@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cognitive-runtime.evidence/v2",
+  "title": "Evidence Source",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source_id", "source_type", "created_at", "imported_at", "sensitivity", "allowed_scenarios", "not_allowed_scenarios", "quote_policy", "status", "tags", "media"],
+  "properties": {
+    "schema_version": { "const": "cognitive-runtime.evidence/v2" },
+    "source_id": { "$ref": "#/$defs/stableId" },
+    "source_type": { "type": "string", "minLength": 1 },
+    "created_at": { "$ref": "#/$defs/temporalValue" },
+    "imported_at": { "$ref": "#/$defs/temporalValue" },
+    "sensitivity": { "type": "string", "minLength": 1 },
+    "allowed_scenarios": { "$ref": "#/$defs/nonEmptyUniqueStrings" },
+    "not_allowed_scenarios": { "$ref": "#/$defs/uniqueStrings" },
+    "quote_policy": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "minLength": 1 },
+    "tags": { "$ref": "#/$defs/uniqueStrings" },
+    "media": { "type": "array", "items": { "$ref": "#/$defs/media" }, "uniqueItems": true }
+  },
+  "$defs": {
+    "stableId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "temporalValue": {
+      "type": "object", "additionalProperties": false,
+      "required": ["value", "precision"],
+      "properties": {
+        "value": { "type": "string" },
+        "precision": { "enum": ["year", "month", "day", "instant"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "precision": { "const": "year" } }, "required": ["precision"] }, "then": { "properties": { "value": { "pattern": "^[0-9]{4}$" } } } },
+        { "if": { "properties": { "precision": { "const": "month" } }, "required": ["precision"] }, "then": { "properties": { "value": { "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$" } } } },
+        { "if": { "properties": { "precision": { "const": "day" } }, "required": ["precision"] }, "then": { "properties": { "value": { "format": "date" } } } },
+        { "if": { "properties": { "precision": { "const": "instant" } }, "required": ["precision"] }, "then": { "properties": { "value": { "format": "date-time" } } } }
+      ]
+    },
+    "media": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "path", "role", "importance", "caption"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stableId" },
+        "path": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))assets/[A-Za-z0-9._/-]+$" },
+        "role": { "type": "string", "minLength": 1 },
+        "importance": { "enum": ["low", "medium", "high"] },
+        "caption": { "type": "string", "minLength": 1 },
+        "salient": { "type": "boolean" },
+        "visual_thesis": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        { "if": { "properties": { "importance": { "const": "high" } }, "required": ["importance"] }, "then": { "required": ["visual_thesis"] } }
+      ]
+    },
+    "uniqueStrings": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "nonEmptyUniqueStrings": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+  }
+}

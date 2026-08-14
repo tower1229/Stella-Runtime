@@ -138,7 +138,7 @@ test("build rejects broken references, duplicate stable IDs, and wrong authority
       await writeFile(
         join(authority, "cognitive-binding.json"),
         `${JSON.stringify({
-          schema_version: "cognitive-runtime.cognitive-binding/v1",
+          schema_version: "cognitive-runtime.cognitive-binding/v2",
           active_governing_system: "cog-synthetic-method",
         })}\n`,
       );

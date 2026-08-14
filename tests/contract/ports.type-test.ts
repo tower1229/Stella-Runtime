@@ -59,10 +59,10 @@ capabilities satisfies HostCapabilityManifest;
 
 const verifyOptions: RuntimeVerifyOptions = {
   expectedInstanceId: "instance-synthetic",
-  supportedSnapshotSchemaVersions: ["cognitive-runtime.runtime-recovery-snapshot-manifest/v1"],
+  supportedSnapshotSchemaVersions: ["cognitive-runtime.runtime-recovery-snapshot-manifest/v2"],
   supportedStorageSchemaVersions: ["1"],
   supportedPackageVersions: ["0.0.0"],
-  supportedContractVersions: ["v1"],
+  supportedContractVersions: ["v2"],
   access: "read_only",
 };
 verifyOptions satisfies RuntimeVerifyOptions;
@@ -71,9 +71,9 @@ const restoreOptions: RuntimeRestoreOptions = {
   targetInstanceId: "instance-synthetic",
   restoreIdempotencyKey: "restore-synthetic-1",
   rollback: "required",
-  supportedSnapshotSchemaVersions: ["cognitive-runtime.runtime-recovery-snapshot-manifest/v1"],
+  supportedSnapshotSchemaVersions: ["cognitive-runtime.runtime-recovery-snapshot-manifest/v2"],
   supportedStorageSchemaVersions: ["1"],
   supportedPackageVersions: ["0.0.0"],
-  supportedContractVersions: ["v1"],
+  supportedContractVersions: ["v2"],
 };
 restoreOptions satisfies RuntimeRestoreOptions;

@@ -1,5 +1,5 @@
 {
-  "schema_version": "cognitive-runtime.release-pin/v1",
+  "schema_version": "cognitive-runtime.release-pin/v2",
   "package": {
     "name": "@tower1229/stella-cognitive-runtime",
     "version": "0.1.0-beta.0",

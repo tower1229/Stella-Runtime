@@ -3,6 +3,14 @@
 All notable public changes are recorded here. Versions follow Semantic
 Versioning; cognitive contract namespaces remain independently versioned.
 
+## [Unreleased]
+
+- replaces the never-activated v1 protocol with one closed v2 Contract Set;
+- adds v2 contracts for bounded Candidate approval, Change Sets, State,
+  Generation/Projection identity, activation evidence, and instance cutover;
+- preserves Evidence media and explicit year/month/day/instant precision without
+  retaining a v1 reader or package export.
+
 ## [0.1.0] - 2026-08-13
 
 First stable technical release of Stella Runtime V1.

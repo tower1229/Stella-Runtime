@@ -1,10 +1,10 @@
-/* Generated from contracts/v1. Do not edit directly. */
+/* Generated from contracts/v2. Do not edit directly. */
 
 export type Integrity = string;
 export type Sha256 = string;
 
 export interface ConsumerConformanceReceipt {
-  schema_version: "cognitive-runtime.conformance-receipt/v1";
+  schema_version: "cognitive-runtime.conformance-receipt/v2";
   status: "pass" | "fail";
   package: {
     name: string;

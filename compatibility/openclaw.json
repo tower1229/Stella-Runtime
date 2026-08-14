@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cognitive-runtime.openclaw-compatibility/v1",
+  "schemaVersion": "cognitive-runtime.openclaw-compatibility/v2",
   "packageVersion": "0.1.0",
   "hosts": [
     {

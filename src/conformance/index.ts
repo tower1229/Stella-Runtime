@@ -354,7 +354,7 @@ export async function runReleaseConformance(
 
   if (!currentInstallAttempted) {
     return {
-      schema_version: "cognitive-runtime.conformance-receipt/v1",
+      schema_version: "cognitive-runtime.conformance-receipt/v2",
       status: "fail",
       package: {
         name: options.current.package.name,
@@ -386,7 +386,7 @@ export async function runReleaseConformance(
   }
 
   return {
-    schema_version: "cognitive-runtime.conformance-receipt/v1",
+    schema_version: "cognitive-runtime.conformance-receipt/v2",
     status: failed ? "fail" : "pass",
     package: {
       name: options.current.package.name,

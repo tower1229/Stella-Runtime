@@ -1,4 +1,4 @@
-/* Generated from contracts/v1. Do not edit directly. */
+/* Generated from contracts/v2. Do not edit directly. */
 
 export type PersonalModel = (
   | {
@@ -14,7 +14,7 @@ export type PersonalModel = (
       [k: string]: unknown;
     }
 ) & {
-  schema_version: "cognitive-runtime.personal-model/v1";
+  schema_version: "cognitive-runtime.personal-model/v2";
   claim_id: StableId;
   record_type: "personal_model";
   scope: Scope;

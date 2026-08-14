@@ -1,4 +1,4 @@
-/* Generated from contracts/v1. Do not edit directly. */
+/* Generated from contracts/v2. Do not edit directly. */
 
 export type StableId = string;
 export type UniqueStrings = string[];
@@ -15,7 +15,7 @@ export type NonEmptyIds = [StableId, ...StableId[]];
 export type Date = string;
 
 export interface CognitiveEntity {
-  schema_version: "cognitive-runtime.cognitive/v1";
+  schema_version: "cognitive-runtime.cognitive/v2";
   cognitive_id: StableId;
   entity_type: string;
   entity_version: number;

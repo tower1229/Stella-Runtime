@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cognitive-runtime.conformance-receipt/v2",
+  "title": "Consumer Conformance Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "package", "openclaw_version", "scenarios", "provenance"],
+  "properties": {
+    "schema_version": { "const": "cognitive-runtime.conformance-receipt/v2" },
+    "status": { "type": "string", "enum": ["pass", "fail"] },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "integrity"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$" },
+        "integrity": { "$ref": "#/$defs/integrity" }
+      }
+    },
+    "openclaw_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$" },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "reason_codes"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+          "status": { "type": "string", "enum": ["pass", "fail"] },
+          "reason_codes": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tarball_sha512", "reproduced_tarball_sha512", "release_pin_sha256", "source_revision", "lockfile_sha256", "build_commands"],
+      "properties": {
+        "tarball_sha512": { "$ref": "#/$defs/integrity" },
+        "reproduced_tarball_sha512": { "$ref": "#/$defs/integrity" },
+        "release_pin_sha256": { "$ref": "#/$defs/sha256" },
+        "source_revision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "lockfile_sha256": { "$ref": "#/$defs/sha256" },
+        "build_commands": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "integrity": { "type": "string", "pattern": "^sha512-[A-Za-z0-9+/]{86}==$" },
+    "sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

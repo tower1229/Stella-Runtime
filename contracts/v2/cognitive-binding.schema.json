@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cognitive-runtime.cognitive-binding/v2",
+  "title": "Cognitive Binding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "active_governing_system"],
+  "properties": {
+    "schema_version": { "const": "cognitive-runtime.cognitive-binding/v2" },
+    "active_governing_system": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" }] }
+  }
+}

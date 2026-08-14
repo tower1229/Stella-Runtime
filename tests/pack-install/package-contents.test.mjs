@@ -31,7 +31,7 @@ test("npm tarball contains only allowlisted and non-sensitive public assets", as
     "package.json",
     "openclaw.plugin.json",
     "compatibility/",
-    "contracts/v1/",
+    "contracts/v2/",
     "docs/CONFIGURATION.md",
     "docs/DATA-BOUNDARIES.md",
     "docs/OPERATIONS.md",
@@ -55,17 +55,17 @@ test("npm tarball contains only allowlisted and non-sensitive public assets", as
   assert.equal(paths.includes("dist/testing/runner.d.ts"), true);
   assert.equal(
     paths.includes(
-      "contracts/v1/runtime-recovery-snapshot-manifest.schema.json",
+      "contracts/v2/runtime-recovery-snapshot-manifest.schema.json",
     ),
     true,
   );
   assert.equal(
-    paths.includes("contracts/v1/runtime-recovery-report-v2.schema.json"),
+    paths.includes("contracts/v2/runtime-recovery-report.schema.json"),
     true,
   );
-  assert.equal(paths.includes("contracts/v1/release-pin.schema.json"), true);
+  assert.equal(paths.includes("contracts/v2/release-pin.schema.json"), true);
   assert.equal(
-    paths.includes("contracts/v1/conformance-receipt.schema.json"),
+    paths.includes("contracts/v2/conformance-receipt.schema.json"),
     true,
   );
   assert.equal(paths.includes("dist/conformance/index.js"), true);

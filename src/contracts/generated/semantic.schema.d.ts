@@ -1,4 +1,4 @@
-/* Generated from contracts/v1. Do not edit directly. */
+/* Generated from contracts/v2. Do not edit directly. */
 
 export type StableId = string;
 export type UniqueStrings = string[];
@@ -10,7 +10,7 @@ export type NonEmptyRefs = [StableId, ...StableId[]];
 export type UniqueRefs = StableId[];
 
 export interface SemanticClaim {
-  schema_version: "cognitive-runtime.semantic/v1";
+  schema_version: "cognitive-runtime.semantic/v2";
   claim_id: StableId;
   record_type: string;
   aliases: UniqueStrings;

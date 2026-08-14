@@ -1,9 +1,9 @@
-# Stella Runtime V1 data contracts
+# Stella Runtime V2 data contracts
 
 > Status: normative logical contract baseline
-> Serialization authority: generated JSON Schema in `contracts/v1`
+> Serialization authority: generated JSON Schema in `contracts/v2`
 
-This document freezes the logical V1 shapes and invariants that issue #2 must
+This document freezes the coherent logical V2 shapes and invariants that issue #12 must
 express as JSON Schema, generated TypeScript types, runtime validation, and
 positive and negative fixtures. Examples are synthetic and do not introduce new
 enumerations beyond the schemas.
@@ -17,7 +17,7 @@ enumerations beyond the schemas.
   and `record_type` in memory.
 - Directory structure may determine `layer`; legacy files need not duplicate it.
 - Evidence `status` describes source-material handling, not authority lifecycle.
-- V1 does not infer or serialize an unconfirmed general `lifecycle` field.
+- V2 does not infer or serialize an unconfirmed general `lifecycle` field.
 - Replacement is represented by forward `supersedes` links, entity version, source
   revision, and generation; history is never overwritten.
 - Every stable reference resolves within one authority revision and every derived
@@ -37,17 +37,25 @@ One source is one directory package:
 Minimal synthetic frontmatter:
 
 ```yaml
-schema_version: cognitive-runtime.evidence/v1
+schema_version: cognitive-runtime.evidence/v2
 source_id: src-synthetic-note
 source_type: user_note
-created_at: 2026-08-11
-imported_at: 2026-08-11
+created_at: { value: 2026-08, precision: month }
+imported_at: { value: 2026-08-11T09:00:00+08:00, precision: instant }
 sensitivity: private
 allowed_scenarios: [private_main_session]
 not_allowed_scenarios: [public_output]
 quote_policy: paraphrase_only
 status: curated_summary
 tags: []
+media:
+  - id: media-primary
+    path: assets/primary.png
+    role: primary
+    importance: high
+    caption: Synthetic diagram
+    salient: true
+    visual_thesis: The synthetic flow is visibly ordered.
 ```
 
 Invariants:
@@ -58,6 +66,9 @@ Invariants:
 - Evidence proves what a source contains; it does not define current fact,
   Personal Model, or Cognitive authority;
 - relative asset references cannot escape the source package;
+- temporal values declare `year`, `month`, `day`, or `instant` precision and the
+  serialized value must match that precision;
+- high-importance media requires a non-empty `visual_thesis`;
 - scenario and quote policy are enforced before retrieval content is injected.
 
 ## 3. Semantic Claim
@@ -65,7 +76,7 @@ Invariants:
 One file contains one independently correctable primary claim:
 
 ```yaml
-schema_version: cognitive-runtime.semantic/v1
+schema_version: cognitive-runtime.semantic/v2
 claim_id: sem-synthetic-preference
 record_type: preference
 aliases: []
@@ -96,7 +107,7 @@ Personal Model is a special Semantic record whose body is a conditional,
 falsifiable hypothesis rather than an identity label:
 
 ```yaml
-schema_version: cognitive-runtime.personal-model/v1
+schema_version: cognitive-runtime.personal-model/v2
 claim_id: pm-synthetic-feedback-pattern
 record_type: personal_model
 scope:
@@ -123,7 +134,7 @@ qualified interpretation and cannot silently create, rewrite, or delete it.
 Each entity has one hand-written authority entry `entity.md`:
 
 ```yaml
-schema_version: cognitive-runtime.cognitive/v1
+schema_version: cognitive-runtime.cognitive/v2
 cognitive_id: cog-synthetic-method
 entity_type: epistemic_method
 entity_version: 1
@@ -168,7 +179,7 @@ become a Module through Router configuration.
 Binding contains identity only, never framework content:
 
 ```yaml
-schema_version: cognitive-runtime.cognitive-binding/v1
+schema_version: cognitive-runtime.cognitive-binding/v2
 active_governing_system: null
 ```
 
@@ -279,16 +290,25 @@ state_view_version, files[{path, size, checksum}], pending_outbox_summary,
 created_at
 ```
 
-The compatible V1 verification/restore report remains available. Recovery
-implementations use the V2 report contract to add authority revision alongside
+The V2 verification/restore report requires authority revision alongside
 compatibility result, integrity result, restored active head, pending outbox
 state, storage migrations applied, rollback result, and projections requiring
 rebuild. The report never exposes credentials, private
 bodies, database table names, or live database paths.
 
-## 12. Contract evolution
+## 12. Runtime 0.2 contracts
 
-Schemas under `contracts/v1` are the executable authority. A change that alters
+The same Contract Set also defines bounded discovery authorization, immutable
+Candidate revisions and review artifacts, deterministic Decision/Approval
+Receipts, Change Sets, State import/correction/view documents, Generation and
+Projection identity, Active Generation pointers, Activation Receipts, Instance
+Runtime Config, and Instance Cutover Plans. Each schema has a
+`cognitive-runtime.<contract>/v2` identity and rejects unknown top-level fields.
+
+## 13. Contract evolution
+
+Schemas under `contracts/v2` are the executable authority. V1 was never formally
+activated and has no reader, alias, or parallel public path. A future change that alters
 meaning, required fields, accepted values, identity, authority role, or state
 transition requires a new compatible schema revision or contract namespace,
 fixtures for old and new forms, explicit migration, and a documented refusal path.

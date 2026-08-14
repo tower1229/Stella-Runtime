@@ -23,7 +23,7 @@ export const cognitiveMarkdown = ({
   sourceRefs = ["src-synthetic-note"],
   extraSections = [],
 } = {}) => `---
-schema_version: cognitive-runtime.cognitive/v1
+schema_version: cognitive-runtime.cognitive/v2
 cognitive_id: ${id}
 entity_type: ${entityType}
 entity_version: 1
@@ -50,22 +50,23 @@ export async function writeSyntheticAuthority(root, options = {}) {
   await mkdir(join(root, "semantic"), { recursive: true });
   await mkdir(join(root, "cognitive", "cog-synthetic-method"), { recursive: true });
   await writeFile(join(root, "evidence", "src-synthetic-note", "source.md"), `---
-schema_version: cognitive-runtime.evidence/v1
+schema_version: cognitive-runtime.evidence/v2
 source_id: src-synthetic-note
 source_type: user_note
-created_at: 2026-08-11
-imported_at: 2026-08-11
+created_at: { value: 2026-08-11, precision: day }
+imported_at: { value: 2026-08-11, precision: day }
 sensitivity: private
 allowed_scenarios: [private_main_session]
 not_allowed_scenarios: []
 quote_policy: paraphrase_only
 status: curated_summary
 tags: []
+media: []
 ---
 A synthetic note.
 `);
   await writeFile(join(root, "semantic", "claim.md"), `---
-schema_version: cognitive-runtime.semantic/v1
+schema_version: cognitive-runtime.semantic/v2
 claim_id: sem-synthetic-claim
 record_type: fact
 aliases: []
@@ -88,7 +89,7 @@ Synthetic claims can be tested.
   await writeFile(
     join(root, "cognitive-binding.json"),
     `${JSON.stringify({
-      schema_version: "cognitive-runtime.cognitive-binding/v1",
+      schema_version: "cognitive-runtime.cognitive-binding/v2",
       active_governing_system: options.activeGoverningSystem ?? null,
     })}\n`,
   );

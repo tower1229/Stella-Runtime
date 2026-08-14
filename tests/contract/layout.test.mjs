@@ -13,7 +13,7 @@ const requiredDirectories = [
   "src/conformance",
   "src/provenance",
   "src/cli",
-  "contracts/v1",
+  "contracts/v2",
   "skills/framework-admission",
   "examples/minimal-user",
   "tests/unit",

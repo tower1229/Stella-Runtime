@@ -1,0 +1,1 @@
+{"schema_version":"cognitive-runtime.state-view/v2","instance_id":"instance-synthetic","view_version":"view-1","active_seq":1,"values":[{"state_id":"state-synthetic","value":{"status":"active"},"source_event_id":"event-synthetic"}],"checksum":"sha256:0000000000000000000000000000000000000000000000000000000000000000","created_at":"2026-08-14T01:00:00Z"}

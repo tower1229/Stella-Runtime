@@ -21,7 +21,7 @@ separate throughout the conversation:
    `rejected`, or `rewritten`, recording the user's own bounded understanding.
 
 Do not write an authority file for `rejected`. For `accepted` or `rewritten`,
-prepare a `cognitive-runtime.cognitive/v1` Markdown record, calculate its stable
+prepare a `cognitive-runtime.cognitive/v2` Markdown record, calculate its stable
 checksum with the installed Runtime package's `calculateCognitiveAuthorityChecksum`
 export, and obtain confirmation of that checksum. Validate the candidate and
 confirmation through `admitFramework` before presenting it for the consumer's

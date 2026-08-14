@@ -1,12 +1,12 @@
-/* Generated from contracts/v1. Do not edit directly. */
+/* Generated from contracts/v2. Do not edit directly. */
 
 export type Checksum = string;
 
 export interface RuntimeRecoverySnapshotManifest {
-  snapshot_schema_version: "cognitive-runtime.runtime-recovery-snapshot-manifest/v1";
+  snapshot_schema_version: "cognitive-runtime.runtime-recovery-snapshot-manifest/v2";
   storage_schema_version: string;
   package_version: string;
-  contract_version: "v1";
+  contract_version: "v2";
   instance_id: string;
   authority_revision: string;
   state_boundary: {

@@ -8,7 +8,7 @@ smoke evidence are normative. No version range, later version, or rolling
 documentation implies support.
 
 Node.js support is `^22.19.0 || ^24.0.0`. The public contracts under
-`cognitive-runtime.<contract>/v1` remain compatible unless a versioned migration
+`cognitive-runtime.<contract>/v2` remain compatible unless a versioned migration
 and rejection behavior are published.
 
 Security, correctness, privacy-boundary, recovery, and exact-host compatibility

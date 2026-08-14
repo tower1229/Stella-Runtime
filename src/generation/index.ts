@@ -24,7 +24,7 @@ import {
   type RouterRegistryEntry,
 } from "../router/index.js";
 
-const CONTRACT_VERSION = "v1";
+const CONTRACT_VERSION = "v2";
 const GENERATION_PATTERN = /^generation-[a-f0-9]{64}$/;
 const CHECKSUM_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
@@ -63,7 +63,7 @@ export interface GenerationManifestFile {
 }
 
 export interface GenerationManifest {
-  readonly schema_version: "cognitive-runtime.generation-manifest/v1";
+  readonly schema_version: "cognitive-runtime.generation-manifest/v2";
   readonly contract_version: string;
   readonly package_version: string;
   readonly source_revision: string;
@@ -220,6 +220,13 @@ const versionFor = (record: AuthorityRecord): string => {
     ?? record.frontmatter.imported_at
     ?? record.frontmatter.created_at;
   if (typeof value !== "string" && typeof value !== "number") {
+    if (
+      isRecord(value) &&
+      typeof value.value === "string" &&
+      typeof value.precision === "string"
+    ) {
+      return `${value.precision}:${value.value}`;
+    }
     throw new Error(`AUTHORITY_VERSION_REQUIRED:${record.id}`);
   }
   return String(value);
@@ -270,13 +277,13 @@ const authorityRecordFromNormalized = (value: unknown): AuthorityRecord => {
     body: requireText(value.body, "NORMALIZED_RECORD_INVALID"),
     sections,
   };
-  const contract = record.schemaVersion === "cognitive-runtime.evidence/v1"
+  const contract = record.schemaVersion === "cognitive-runtime.evidence/v2"
     ? "evidence"
-    : record.schemaVersion === "cognitive-runtime.semantic/v1"
+    : record.schemaVersion === "cognitive-runtime.semantic/v2"
       ? "semantic"
-      : record.schemaVersion === "cognitive-runtime.personal-model/v1"
+      : record.schemaVersion === "cognitive-runtime.personal-model/v2"
         ? "personal-model"
-        : record.schemaVersion === "cognitive-runtime.cognitive/v1"
+        : record.schemaVersion === "cognitive-runtime.cognitive/v2"
           ? "cognitive"
           : null;
   if (contract === null || !validateContract(contract, record.frontmatter).valid) {
@@ -396,7 +403,7 @@ const validateReferences = (
     if (record.layer === "semantic") {
       resolveRefs(records, record, "source_refs", "evidence");
       resolveRefs(records, record, "supersedes", "semantic");
-      if (record.schemaVersion === "cognitive-runtime.semantic/v1") {
+      if (record.schemaVersion === "cognitive-runtime.semantic/v2") {
         resolveRefs(records, record, "related_claims", "semantic");
       } else {
         resolveRefs(records, record, "counterevidence_refs");
@@ -621,7 +628,7 @@ export async function buildGeneration(
       writeArtifact(stagingDirectory, "view-projection.json", artifact(metadata, viewPayload), ["governing-digest.json", "index-metadata.json", "memory-projection.json", "registry.json"]),
     ]);
     const manifest: GenerationManifest = {
-      schema_version: "cognitive-runtime.generation-manifest/v1",
+      schema_version: "cognitive-runtime.generation-manifest/v2",
       contract_version: CONTRACT_VERSION,
       package_version: options.packageVersion,
       source_revision: options.sourceRevision,
@@ -644,7 +651,10 @@ const readJson = async (path: string): Promise<unknown> =>
   JSON.parse(await readFile(path, "utf8")) as unknown;
 
 const parseManifest = (value: unknown): GenerationManifest => {
-  if (!isRecord(value) || value.schema_version !== "cognitive-runtime.generation-manifest/v1") {
+  if (
+    !isRecord(value) ||
+    !validateContract("generation-manifest", value).valid
+  ) {
     throw new Error("GENERATION_MANIFEST_INVALID");
   }
   const filesValue = value.files;
@@ -666,7 +676,7 @@ const parseManifest = (value: unknown): GenerationManifest => {
     };
   });
   return {
-    schema_version: "cognitive-runtime.generation-manifest/v1",
+    schema_version: "cognitive-runtime.generation-manifest/v2",
     contract_version: requireString(value.contract_version, "GENERATION_MANIFEST_INVALID"),
     package_version: requireString(value.package_version, "GENERATION_MANIFEST_INVALID"),
     source_revision: requireString(value.source_revision, "GENERATION_MANIFEST_INVALID"),

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cognitive-runtime.instance-cutover-plan/v2",
+  "title": "Instance Cutover Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "plan_id", "instance_id", "target_source_revision", "publication_prerequisites", "remove_retrieval_paths", "disable_mechanisms", "preserve_independent_paths", "bootstrap_targets", "checksum"],
+  "properties": {
+    "schema_version": { "const": "cognitive-runtime.instance-cutover-plan/v2" },
+    "plan_id": { "$ref": "#/$defs/id" },
+    "instance_id": { "$ref": "#/$defs/id" },
+    "target_source_revision": { "type": "string", "minLength": 1 },
+    "publication_prerequisites": { "type": "object", "additionalProperties": false, "required": ["remote_base_check", "push_before_sync"], "properties": { "remote_base_check": { "type": "boolean" }, "push_before_sync": { "type": "boolean" } } },
+    "remove_retrieval_paths": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "disable_mechanisms": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "preserve_independent_paths": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "bootstrap_targets": { "type": "array", "uniqueItems": true, "items": { "enum": ["USER.md", "MEMORY.md"] } },
+    "public_corpus_adapter": { "type": "string", "minLength": 1 },
+    "checksum": { "$ref": "#/$defs/checksum" }
+  },
+  "$defs": { "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" }, "checksum": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" } }
+}

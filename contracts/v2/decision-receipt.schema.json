@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cognitive-runtime.decision-receipt/v2",
+  "title": "Decision Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "receipt_id", "request_id", "candidate_id", "candidate_revision", "candidate_checksum", "base_authority_version", "decision", "decided_by", "message_reference", "decided_at", "single_use"],
+  "properties": {
+    "schema_version": { "const": "cognitive-runtime.decision-receipt/v2" },
+    "receipt_id": { "$ref": "#/$defs/id" },
+    "request_id": { "$ref": "#/$defs/id" },
+    "candidate_id": { "$ref": "#/$defs/id" },
+    "candidate_revision": { "type": "integer", "minimum": 1 },
+    "candidate_checksum": { "$ref": "#/$defs/checksum" },
+    "base_authority_version": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }] },
+    "decision": { "enum": ["accepted", "rejected", "rewritten"] },
+    "decided_by": { "$ref": "#/$defs/id" },
+    "message_reference": { "type": "object", "additionalProperties": false, "required": ["provider", "instance_id", "account_id", "conversation_id", "message_id"], "properties": { "provider": { "const": "telegram" }, "instance_id": { "$ref": "#/$defs/id" }, "account_id": { "type": "string", "minLength": 1 }, "conversation_id": { "type": "string", "minLength": 1 }, "message_id": { "type": "string", "minLength": 1 } } },
+    "decided_at": { "type": "string", "format": "date-time" },
+    "single_use": { "const": true }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "checksum": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

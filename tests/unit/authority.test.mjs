@@ -23,7 +23,7 @@ const cognitiveSections = [
 ];
 
 const cognitiveMarkdown = (extraSection = "") => `---
-schema_version: cognitive-runtime.cognitive/v1
+schema_version: cognitive-runtime.cognitive/v2
 cognitive_id: cog-synthetic-method
 entity_type: epistemic_method
 entity_version: 1
@@ -61,7 +61,7 @@ test("authority parser derives path-independent logical identity", () => {
 test("stable ID resolver rejects missing, duplicate, and wrong-layer references", () => {
   const cognitive = parseAuthorityMarkdown(cognitiveMarkdown());
   const semantic = parseAuthorityMarkdown(`---
-schema_version: cognitive-runtime.semantic/v1
+schema_version: cognitive-runtime.semantic/v2
 claim_id: sem-synthetic-preference
 record_type: preference
 aliases: []
@@ -118,7 +118,7 @@ test("cognitive lint rejects empty required sections and governing systems witho
 
 test("personal-model lint rejects essentialized statements", () => {
   const record = parseAuthorityMarkdown(`---
-schema_version: cognitive-runtime.personal-model/v1
+schema_version: cognitive-runtime.personal-model/v2
 claim_id: pm-synthetic-pattern
 record_type: personal_model
 scope: { contexts: [writing], conditions: [under_pressure] }

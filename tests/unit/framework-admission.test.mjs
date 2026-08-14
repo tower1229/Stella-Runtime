@@ -83,17 +83,18 @@ test("missing Cognitive fields and raw Evidence promotion fail closed", () => {
   );
   assert.throws(
     () => admitFramework(proposal("accepted", `---
-schema_version: cognitive-runtime.evidence/v1
+schema_version: cognitive-runtime.evidence/v2
 source_id: src-synthetic-note
 source_type: user_note
-created_at: 2026-08-11
-imported_at: 2026-08-11
+created_at: { value: 2026-08-11, precision: day }
+imported_at: { value: 2026-08-11, precision: day }
 sensitivity: private
 allowed_scenarios: [private_main_session]
 not_allowed_scenarios: []
 quote_policy: paraphrase_only
 status: curated_summary
 tags: []
+media: []
 ---
 Raw evidence.`)),
     /ADMISSION_COGNITIVE_REQUIRED/,

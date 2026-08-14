@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cognitive-runtime.cognitive-provenance-overlay/v2",
+  "title": "Cognitive Provenance Overlay",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["trace_id", "run_id", "session_key_hash", "sync_generation", "knowledge_snapshot", "state_view_version", "validated_router_result", "cognitive_bindings", "stable_refs", "unresolved_conflicts", "trace_status", "eval_eligible", "created_at"],
+  "properties": {
+    "trace_id": { "$ref": "#/$defs/id" },
+    "run_id": { "$ref": "#/$defs/id" },
+    "session_key_hash": { "$ref": "#/$defs/checksum" },
+    "sync_generation": { "type": "string", "minLength": 1 },
+    "knowledge_snapshot": { "type": "string", "minLength": 1 },
+    "state_view_version": { "type": "string", "minLength": 1 },
+    "validated_router_result": { "oneOf": [{ "type": "null" }, { "$ref": "router-result.schema.json" }] },
+    "cognitive_bindings": { "type": "array", "items": { "$ref": "#/$defs/cognitiveRef" }, "uniqueItems": true },
+    "stable_refs": { "type": "array", "items": { "$ref": "#/$defs/ref" }, "uniqueItems": true },
+    "unresolved_conflicts": { "type": "array", "items": { "$ref": "#/$defs/id" }, "uniqueItems": true },
+    "trace_status": { "type": "string", "minLength": 1 },
+    "eval_eligible": { "type": "boolean" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "checksum": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "ref": { "type": "object", "additionalProperties": false, "required": ["id", "status"], "properties": { "id": { "$ref": "#/$defs/id" }, "status": { "enum": ["planned", "retrieved", "injected", "declared_used", "declared_excluded"] } } },
+    "cognitiveRef": { "type": "object", "additionalProperties": false, "required": ["id", "status"], "properties": { "id": { "$ref": "#/$defs/id" }, "role": { "enum": ["evidence", "semantic", "current_state", "governing_system", "governing_module", "ordinary_framework"] }, "version": { "type": "string", "minLength": 1 }, "status": { "const": "injected" } } }
+  }
+}
