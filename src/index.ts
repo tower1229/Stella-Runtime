@@ -96,18 +96,23 @@ export type {
   ReleaseLifecyclePort,
 } from "./conformance/index.js";
 export {
-  activateGeneration,
   buildGeneration,
   loadActiveGeneration,
-  rebuildGeneration,
+  showGeneration,
+  validateAuthoritySource,
   verifyGeneration,
 } from "./generation/index.js";
 export type {
   ActiveGeneration,
+  AuthorityValidationOptions,
+  AuthorityValidationResult,
+  BootstrapProjectionResult,
+  BootstrapTarget,
   GenerationArtifact,
   GenerationBuildOptions,
   GenerationBuildResult,
   GenerationManifestFile,
+  GenerationStatus,
   GenerationVerificationResult,
 } from "./generation/index.js";
 export { MemoryObservationAdapter } from "./openclaw/ports.js";

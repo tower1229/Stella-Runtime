@@ -1,5 +1,9 @@
+import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 const cognitiveSections = [
   ["User definition", "A synthetic method for evaluating claims."],
@@ -93,4 +97,21 @@ Synthetic claims can be tested.
       active_governing_system: options.activeGoverningSystem ?? null,
     })}\n`,
   );
+}
+
+export async function commitSyntheticAuthority(root, message = "synthetic authority") {
+  await execFileAsync("git", ["init", "--initial-branch=main", root]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Synthetic Authority"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "synthetic@example.invalid"]);
+  await execFileAsync("git", ["-C", root, "add", "."]);
+  await execFileAsync("git", ["-C", root, "commit", "-m", message]);
+  const { stdout } = await execFileAsync("git", ["-C", root, "rev-parse", "HEAD"]);
+  return stdout.trim();
+}
+
+export async function commitAuthorityChanges(root, message = "update synthetic authority") {
+  await execFileAsync("git", ["-C", root, "add", "."]);
+  await execFileAsync("git", ["-C", root, "commit", "-m", message]);
+  const { stdout } = await execFileAsync("git", ["-C", root, "rev-parse", "HEAD"]);
+  return stdout.trim();
 }

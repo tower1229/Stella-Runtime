@@ -7,11 +7,11 @@ import type {
   StateImportManifest,
 } from "../contracts/index.js";
 import {
-  activateGeneration,
   buildGeneration,
-  rebuildGeneration,
-  verifyGeneration,
+  showGeneration,
+  validateAuthoritySource,
 } from "../generation/index.js";
+import type { BootstrapTarget } from "../generation/index.js";
 import {
   createRuntimeVerifyOptions,
   createRuntimeRecoveryPort,
@@ -105,6 +105,20 @@ const readOptionalInteger = (
     throw new Error(`CLI_OPTION_INVALID:${name}`);
   }
   return parsed;
+};
+
+const readBootstrapTargets = (
+  options: Readonly<Record<string, unknown>>,
+): readonly BootstrapTarget[] => {
+  const value = readOptionalString(options, "bootstrap");
+  if (value === undefined) {
+    return [];
+  }
+  const targets = value.split(",");
+  if (targets.some((target) => target !== "USER.md" && target !== "MEMORY.md")) {
+    throw new Error("CLI_OPTION_INVALID:bootstrap");
+  }
+  return targets as readonly BootstrapTarget[];
 };
 
 const readJsonFile = async <T>(path: string): Promise<T> =>
@@ -291,16 +305,33 @@ const plugin = {
             }));
           });
 
-        const generation = cognitive
-          .command("generation")
-          .description("Build and activate authority projections");
+        cognitive
+          .command("validate")
+          .description("Validate one exact clean Authority Source Revision without mutation")
+          .requiredOption("--authority <path>", "Authority Repository directory")
+          .requiredOption("--revision <revision>", "Authority source revision")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            const result = await validateAuthoritySource({
+              authorityDirectory: readStringOption(options, "authority"),
+              sourceRevision: readStringOption(options, "revision"),
+            });
+            console.log(JSON.stringify({
+              operation: "validate",
+              source_revision: result.sourceRevision,
+              record_count: result.recordCount,
+              active_governing_system: result.activeGoverningSystem,
+            }));
+          });
 
-        generation
+        cognitive
           .command("build")
-          .description("Build a staged generation")
+          .description("Build or reuse one immutable Generation without activating it")
           .requiredOption("--authority <path>", "Authority Repository directory")
           .requiredOption("--state <path>", "Generation state directory")
           .requiredOption("--revision <revision>", "Authority source revision")
+          .option("--bootstrap <targets>", "Optional comma-separated USER.md,MEMORY.md projections")
           .option("--json", "Emit a machine-readable result")
           .action(async (options) => {
             requireJson(options);
@@ -309,73 +340,42 @@ const plugin = {
               stateDirectory: readStringOption(options, "state"),
               sourceRevision: readStringOption(options, "revision"),
               packageVersion,
+              bootstrapTargets: readBootstrapTargets(options),
             });
             console.log(JSON.stringify({
-              operation: "generation-build",
-              package_version: packageVersion,
-              sync_generation: result.syncGeneration,
-              staging_directory: result.stagingDirectory,
-            }));
-          });
-
-        generation
-          .command("verify")
-          .description("Verify a complete staged or active generation")
-          .requiredOption("--generation <path>", "Generation directory")
-          .option("--json", "Emit a machine-readable result")
-          .action(async (options) => {
-            requireJson(options);
-            const result = await verifyGeneration(
-              readStringOption(options, "generation"),
-            );
-            console.log(JSON.stringify({
-              operation: "generation-verify",
-              package_version: packageVersion,
-              valid: result.valid,
-              issues: result.issues,
-              sync_generation: result.manifest?.sync_generation ?? null,
-            }));
-          });
-
-        generation
-          .command("activate")
-          .description("Atomically activate a verified staged generation")
-          .requiredOption("--generation <path>", "Staged generation directory")
-          .requiredOption("--state <path>", "Generation state directory")
-          .option("--json", "Emit a machine-readable result")
-          .action(async (options) => {
-            requireJson(options);
-            const result = await activateGeneration({
-              stagingDirectory: readStringOption(options, "generation"),
-              stateDirectory: readStringOption(options, "state"),
-            });
-            console.log(JSON.stringify({
-              operation: "generation-activate",
-              package_version: packageVersion,
-              sync_generation: result.syncGeneration,
-            }));
-          });
-
-        generation
-          .command("rebuild")
-          .description("Deterministically rebuild and activate one authority revision")
-          .requiredOption("--authority <path>", "Authority Repository directory")
-          .requiredOption("--state <path>", "Generation state directory")
-          .requiredOption("--revision <revision>", "Authority source revision")
-          .option("--json", "Emit a machine-readable result")
-          .action(async (options) => {
-            requireJson(options);
-            const result = await rebuildGeneration({
-              authorityDirectory: readStringOption(options, "authority"),
-              stateDirectory: readStringOption(options, "state"),
-              sourceRevision: readStringOption(options, "revision"),
-              packageVersion,
-            });
-            console.log(JSON.stringify({
-              operation: "generation-rebuild",
-              package_version: packageVersion,
-              sync_generation: result.manifest.sync_generation,
+              operation: "build",
+              package_version: result.manifest.package_version,
               source_revision: result.manifest.source_revision,
+              sync_generation: result.syncGeneration,
+              generation_directory: result.generationDirectory,
+              reused: result.reused,
+              bootstrap_projections: result.bootstrapProjections,
+            }));
+          });
+
+        const generation = cognitive
+          .command("generation")
+          .description("Inspect immutable Generations");
+
+        generation
+          .command("show")
+          .description("Show one built Generation without implying activation")
+          .requiredOption("--state <path>", "Generation state directory")
+          .requiredOption("--generation <id>", "Generation identity")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            const result = await showGeneration({
+              stateDirectory: readStringOption(options, "state"),
+              syncGeneration: readStringOption(options, "generation"),
+            });
+            console.log(JSON.stringify({
+              operation: "generation_show",
+              sync_generation: result.syncGeneration,
+              source_revision: result.sourceRevision,
+              active: result.active,
+              active_generation: result.activeGeneration,
+              active_source_revision: result.activeSourceRevision,
             }));
           });
 

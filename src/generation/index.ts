@@ -1,15 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import {
   lstat,
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   readdir,
   rename,
   rm,
   writeFile,
 } from "node:fs/promises";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, posix, relative, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 
 import {
   lintAuthorityRecord,
@@ -25,8 +28,16 @@ import {
 } from "../router/index.js";
 
 const CONTRACT_VERSION = "v2";
+const BUILDER_FORMAT_VERSION = "generation-builder/v2";
 const GENERATION_PATTERN = /^generation-[a-f0-9]{64}$/;
 const CHECKSUM_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const SOURCE_REVISION_PATTERN = /^[a-f0-9]{40}$/;
+const BOOTSTRAP_TARGETS = ["USER.md", "MEMORY.md"] as const;
+const execFileAsync = promisify(execFile);
+const gitReadOnlyOptions = {
+  encoding: "utf8",
+  env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+} as const;
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
@@ -47,6 +58,18 @@ interface NormalizedRecord {
   readonly checksum: string;
 }
 
+interface GitTreeEntry {
+  readonly mode: string;
+  readonly type: string;
+  readonly objectId: string;
+}
+
+interface VerifiedAuthorityCheckout {
+  readonly authorityDirectory: string;
+  readonly sourceRevision: string;
+  readonly entries: ReadonlyMap<string, GitTreeEntry>;
+}
+
 export interface GenerationArtifact<TPayload = unknown> {
   readonly contract_version: string;
   readonly package_version: string;
@@ -65,6 +88,7 @@ export interface GenerationManifestFile {
 export interface GenerationManifest {
   readonly schema_version: "cognitive-runtime.generation-manifest/v2";
   readonly contract_version: string;
+  readonly builder_format_version: typeof BUILDER_FORMAT_VERSION;
   readonly package_version: string;
   readonly source_revision: string;
   readonly sync_generation: string;
@@ -76,18 +100,49 @@ export interface GenerationBuildOptions {
   readonly stateDirectory: string;
   readonly sourceRevision: string;
   readonly packageVersion: string;
+  readonly bootstrapTargets?: readonly BootstrapTarget[];
+}
+
+export type BootstrapTarget = typeof BOOTSTRAP_TARGETS[number];
+
+export interface BootstrapProjectionResult {
+  readonly target: BootstrapTarget;
+  readonly path: string;
+  readonly checksum: string;
+  readonly reused: boolean;
 }
 
 export interface GenerationBuildResult {
   readonly syncGeneration: string;
-  readonly stagingDirectory: string;
+  readonly generationDirectory: string;
+  readonly reused: boolean;
   readonly manifest: GenerationManifest;
+  readonly bootstrapProjections: readonly BootstrapProjectionResult[];
+}
+
+export interface AuthorityValidationOptions {
+  readonly authorityDirectory: string;
+  readonly sourceRevision: string;
+}
+
+export interface AuthorityValidationResult {
+  readonly sourceRevision: string;
+  readonly recordCount: number;
+  readonly activeGoverningSystem: string | null;
 }
 
 export interface GenerationVerificationResult {
   readonly valid: boolean;
   readonly issues: readonly string[];
   readonly manifest: GenerationManifest | null;
+}
+
+export interface GenerationStatus {
+  readonly syncGeneration: string;
+  readonly sourceRevision: string;
+  readonly active: boolean;
+  readonly activeGeneration: string | null;
+  readonly activeSourceRevision: string | null;
 }
 
 interface RegistryPayload {
@@ -111,15 +166,20 @@ interface GoverningDigestPayload {
   }[];
 }
 
-interface MemoryProjectionPayload {
-  readonly entries: readonly {
-    readonly id: string;
-    readonly layer: AuthorityRecord["layer"];
-    readonly role: RegistryRole;
-    readonly version: string;
-    readonly content: string;
-    readonly checksum: string;
-  }[];
+interface ProjectionEntry {
+  readonly schema_version: "cognitive-runtime.projection-entry/v2";
+  readonly generation_id: string;
+  readonly layer: AuthorityRecord["layer"];
+  readonly stable_id: string;
+  readonly authority_version: string;
+  readonly role: Exclude<RegistryRole, "current_state"> | "personal_model";
+  readonly checksum: string;
+  readonly source_refs: readonly string[];
+  readonly content: string;
+}
+
+interface ProjectionEntriesPayload {
+  readonly entries: readonly ProjectionEntry[];
 }
 
 interface IndexMetadataPayload {
@@ -144,7 +204,7 @@ export interface ActiveGeneration {
   readonly normalizedRecords: GenerationArtifact<{ readonly records: readonly NormalizedRecord[] }>;
   readonly registry: GenerationArtifact<RegistryPayload>;
   readonly governingDigest: GenerationArtifact<GoverningDigestPayload>;
-  readonly memoryProjection: GenerationArtifact<MemoryProjectionPayload>;
+  readonly projectionEntries: GenerationArtifact<ProjectionEntriesPayload>;
   readonly indexMetadata: GenerationArtifact<IndexMetadataPayload>;
   readonly viewProjection: GenerationArtifact<ViewProjectionPayload>;
 }
@@ -313,6 +373,18 @@ const assertInside = (parent: string, child: string, reason: string): void => {
   }
 };
 
+const isAuthorityEntrypoint = (path: string): boolean => {
+  const parts = path.split("/");
+  const fileName = parts.at(-1);
+  if (parts[0] === "evidence") {
+    return fileName === "source.md" && !parts.includes("original") && !parts.includes("assets");
+  }
+  if (parts[0] === "semantic") {
+    return fileName === "claim.md";
+  }
+  return parts[0] === "cognitive" && fileName === "entity.md";
+};
+
 const discoverMarkdown = async (
   directory: string,
   authorityDirectory = directory,
@@ -325,14 +397,14 @@ const discoverMarkdown = async (
       throw new Error(`AUTHORITY_SYMLINK_UNSUPPORTED:${path}`);
     }
     if (entry.isDirectory()) {
+      const relativeParts = relative(authorityDirectory, path).split(sep);
+      if (relativeParts[0] === "evidence" && ["original", "assets"].includes(entry.name)) {
+        continue;
+      }
       discovered.push(...await discoverMarkdown(path, authorityDirectory));
     } else if (entry.isFile() && entry.name.endsWith(".md")) {
-      const [layer] = relative(authorityDirectory, path).split(sep);
-      if (
-        (layer === "evidence" && entry.name === "source.md") ||
-        (layer === "cognitive" && entry.name === "entity.md") ||
-        layer === "semantic"
-      ) {
+      const authorityPath = relative(authorityDirectory, path).split(sep).join("/");
+      if (isAuthorityEntrypoint(authorityPath)) {
         discovered.push(path);
       }
     }
@@ -340,18 +412,59 @@ const discoverMarkdown = async (
   return discovered;
 };
 
-const readAuthority = async (
+const discoverAuthorityMarkdown = async (
   authorityDirectory: string,
+): Promise<readonly string[]> => {
+  const paths: string[] = [];
+  for (const layer of ["evidence", "semantic", "cognitive"] as const) {
+    const directory = join(authorityDirectory, layer);
+    let stat;
+    try {
+      stat = await lstat(directory);
+    } catch (error: unknown) {
+      if (isRecord(error) && error.code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error(`AUTHORITY_ENTRYPOINT_DIRECTORY_INVALID:${layer}`);
+    }
+    paths.push(...await discoverMarkdown(directory, authorityDirectory));
+  }
+  return paths;
+};
+
+const readAuthority = async (
+  checkout: VerifiedAuthorityCheckout,
 ): Promise<{
   readonly records: readonly AuthorityRecord[];
   readonly activeGoverningSystem: string | null;
 }> => {
-  const paths = await discoverMarkdown(authorityDirectory);
-  if (paths.length === 0) {
+  const paths = await discoverAuthorityMarkdown(checkout.authorityDirectory);
+  const workingPaths = new Set(paths.map((path) =>
+    relative(checkout.authorityDirectory, path).split(sep).join("/")));
+  const committedPaths = [...checkout.entries.keys()]
+    .filter((path) => isAuthorityEntrypoint(path))
+    .sort((left, right) => left.localeCompare(right));
+  for (const path of workingPaths) {
+    if (!checkout.entries.has(path)) {
+      throw new Error(`AUTHORITY_ENTRYPOINT_UNCOMMITTED:${path}`);
+    }
+  }
+  for (const path of committedPaths) {
+    if (!workingPaths.has(path)) {
+      throw new Error(`AUTHORITY_ENTRYPOINT_NOT_CHECKED_OUT:${path}`);
+    }
+  }
+  if (committedPaths.length === 0) {
     throw new Error("AUTHORITY_RECORDS_REQUIRED");
   }
-  const records = await Promise.all(paths.map(async (path) =>
-    parseAuthorityMarkdown(await readFile(path, "utf8"), { sourcePath: path })));
+  const records = await Promise.all(committedPaths.map(async (path) =>
+    parseAuthorityMarkdown(
+      await readAuthorityBlob(checkout, path),
+      { sourcePath: join(checkout.authorityDirectory, path) },
+    )));
   const seen = new Set<string>();
   for (const record of records) {
     if (seen.has(record.id)) {
@@ -366,8 +479,12 @@ const readAuthority = async (
     }
   }
 
-  const bindingPath = join(authorityDirectory, "cognitive-binding.json");
-  const binding = JSON.parse(await readFile(bindingPath, "utf8")) as unknown;
+  if (!checkout.entries.has("cognitive-binding.json")) {
+    throw new Error("AUTHORITY_ENTRYPOINT_UNCOMMITTED:cognitive-binding.json");
+  }
+  const binding = JSON.parse(
+    await readAuthorityBlob(checkout, "cognitive-binding.json"),
+  ) as unknown;
   const bindingValidation = validateContract("cognitive-binding", binding);
   if (!bindingValidation.valid || !isRecord(binding)) {
     throw new Error("COGNITIVE_BINDING_INVALID");
@@ -380,6 +497,107 @@ const readAuthority = async (
   validateReferences(records, active);
   return { records, activeGoverningSystem: active };
 };
+
+const readAuthorityBlob = async (
+  checkout: VerifiedAuthorityCheckout,
+  path: string,
+): Promise<string> => {
+  const entry = checkout.entries.get(path);
+  if (entry === undefined || entry.type !== "blob" || entry.mode === "120000") {
+    throw new Error(`AUTHORITY_ENTRYPOINT_INVALID:${path}`);
+  }
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["-C", checkout.authorityDirectory, "cat-file", "blob", entry.objectId],
+      { ...gitReadOnlyOptions, maxBuffer: 64 * 1024 * 1024 },
+    );
+    return stdout;
+  } catch {
+    throw new Error(`AUTHORITY_ENTRYPOINT_UNREADABLE:${path}`);
+  }
+};
+
+const verifyAuthorityCheckout = async (
+  options: AuthorityValidationOptions,
+): Promise<VerifiedAuthorityCheckout> => {
+  const authorityDirectory = resolve(options.authorityDirectory);
+  if (!SOURCE_REVISION_PATTERN.test(options.sourceRevision)) {
+    throw new Error("SOURCE_REVISION_AMBIGUOUS");
+  }
+  let repositoryRoot: string;
+  let headRevision: string;
+  let worktreeStatus: string;
+  try {
+    ({ stdout: repositoryRoot } = await execFileAsync(
+      "git",
+      ["-C", authorityDirectory, "rev-parse", "--show-toplevel"],
+      gitReadOnlyOptions,
+    ));
+    ({ stdout: headRevision } = await execFileAsync(
+      "git",
+      ["-C", authorityDirectory, "rev-parse", "HEAD"],
+      gitReadOnlyOptions,
+    ));
+    ({ stdout: worktreeStatus } = await execFileAsync(
+      "git",
+      ["-C", authorityDirectory, "status", "--porcelain=v1", "--untracked-files=all"],
+      gitReadOnlyOptions,
+    ));
+  } catch {
+    throw new Error("AUTHORITY_GIT_REPOSITORY_REQUIRED");
+  }
+  if (await realpath(repositoryRoot.trim()) !== await realpath(authorityDirectory)) {
+    throw new Error("AUTHORITY_REPOSITORY_ROOT_REQUIRED");
+  }
+  if (headRevision.trim() !== options.sourceRevision) {
+    throw new Error("SOURCE_REVISION_NOT_CHECKED_OUT");
+  }
+  if (worktreeStatus.length > 0) {
+    throw new Error("AUTHORITY_WORKTREE_DIRTY");
+  }
+  let trackedFiles: string;
+  try {
+    ({ stdout: trackedFiles } = await execFileAsync(
+      "git",
+      ["-C", authorityDirectory, "ls-tree", "-r", "-z", options.sourceRevision],
+      { ...gitReadOnlyOptions, maxBuffer: 64 * 1024 * 1024 },
+    ));
+  } catch {
+    throw new Error("AUTHORITY_SOURCE_REVISION_UNREADABLE");
+  }
+  const entries = new Map<string, GitTreeEntry>();
+  for (const rawEntry of trackedFiles.split("\0")) {
+    if (rawEntry.length === 0) {
+      continue;
+    }
+    const separator = rawEntry.indexOf("\t");
+    const metadata = rawEntry.slice(0, separator).split(" ");
+    const path = rawEntry.slice(separator + 1);
+    const [mode, type, objectId] = metadata;
+    if (separator < 0 || mode === undefined || type === undefined || objectId === undefined) {
+      throw new Error("AUTHORITY_SOURCE_TREE_INVALID");
+    }
+    entries.set(path, { mode, type, objectId });
+  }
+  return {
+    authorityDirectory,
+    sourceRevision: options.sourceRevision,
+    entries,
+  };
+};
+
+export async function validateAuthoritySource(
+  options: AuthorityValidationOptions,
+): Promise<AuthorityValidationResult> {
+  const checkout = await verifyAuthorityCheckout(options);
+  const authority = await readAuthority(checkout);
+  return {
+    sourceRevision: options.sourceRevision,
+    recordCount: authority.records.length,
+    activeGoverningSystem: authority.activeGoverningSystem,
+  };
+}
 
 const resolveRefs = (
   records: readonly AuthorityRecord[],
@@ -478,6 +696,96 @@ const writeArtifact = async (
   return { path, checksum: checksum(content), dependencies };
 };
 
+const writeTextArtifact = async (
+  directory: string,
+  path: string,
+  content: string,
+  dependencies: readonly string[],
+): Promise<GenerationManifestFile> => {
+  const target = join(directory, path);
+  assertInside(directory, target, "GENERATION_FILE_OUTSIDE_DIRECTORY");
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, content, { flag: "wx" });
+  return { path, checksum: checksum(content), dependencies };
+};
+
+const projectionDocumentPath = (entry: ProjectionEntry): string =>
+  posix.join(
+    "projections",
+    entry.generation_id,
+    entry.layer,
+    entry.role,
+    entry.stable_id,
+    `${checksum(entry.authority_version).slice("sha256:".length)}-${entry.checksum.slice("sha256:".length)}.md`,
+  );
+
+const projectionDocument = (entry: ProjectionEntry): string => {
+  const sourceRefs = entry.source_refs.length === 0
+    ? "source_refs: []"
+    : `source_refs:\n${entry.source_refs.map((sourceRef) => `  - ${sourceRef}`).join("\n")}`;
+  return [
+    "---",
+    `generation_id: ${entry.generation_id}`,
+    `layer: ${entry.layer}`,
+    `stable_id: ${entry.stable_id}`,
+    `authority_version: ${JSON.stringify(entry.authority_version)}`,
+    `role: ${entry.role}`,
+    `checksum: ${entry.checksum}`,
+    sourceRefs,
+    "---",
+    entry.content,
+    "",
+  ].join("\n");
+};
+
+const bootstrapProjection = (
+  target: BootstrapTarget,
+  entries: readonly ProjectionEntry[],
+): string => [
+  `# ${target === "USER.md" ? "User Bootstrap Projection" : "Memory Bootstrap Projection"}`,
+  "",
+  "Generated from an immutable Stella Runtime Generation. Do not edit as Authority.",
+  "",
+  ...entries.flatMap((entry) => [
+    `- ${entry.stable_id} (${entry.layer}, ${entry.role}, ${entry.authority_version})`,
+    `  - projection: generations/${entry.generation_id}/${projectionDocumentPath(entry)}`,
+    `  - checksum: ${entry.checksum}`,
+  ]),
+  "",
+].join("\n");
+
+const writeBootstrapProjections = async (
+  stateDirectory: string,
+  syncGeneration: string,
+  entries: readonly ProjectionEntry[],
+  requestedTargets: readonly BootstrapTarget[] = [],
+): Promise<readonly BootstrapProjectionResult[]> => {
+  const targets = [...new Set(requestedTargets)].sort((left, right) => left.localeCompare(right));
+  const results: BootstrapProjectionResult[] = [];
+  for (const target of targets) {
+    if (!BOOTSTRAP_TARGETS.includes(target)) {
+      throw new Error(`BOOTSTRAP_TARGET_INVALID:${target}`);
+    }
+    const content = bootstrapProjection(target, entries);
+    const path = join(stateDirectory, "bootstrap", syncGeneration, target);
+    await mkdir(dirname(path), { recursive: true });
+    let reused = false;
+    try {
+      await writeFile(path, content, { flag: "wx" });
+    } catch (error: unknown) {
+      if (!isRecord(error) || error.code !== "EEXIST") {
+        throw error;
+      }
+      if (await readFile(path, "utf8") !== content) {
+        throw new Error(`BOOTSTRAP_TARGET_TAMPERED:${target}`);
+      }
+      reused = true;
+    }
+    results.push({ target, path, checksum: checksum(content), reused });
+  }
+  return results;
+};
+
 const governingDigestPayload = (
   records: readonly NormalizedRecord[],
   activeGoverningSystem: string | null,
@@ -537,16 +845,39 @@ const registryPayloadFor = (
   return { checksum: calculateRegistryChecksum(entries), entries };
 };
 
-const memoryProjectionPayload = (
+const sourceRefsFor = (record: NormalizedRecord): readonly string[] => {
+  const value = record.frontmatter.source_refs;
+  if (value === undefined) {
+    return [];
+  }
+  return [...requireStringArray(value, `AUTHORITY_REF_FIELD_INVALID:${record.id}:source_refs`)]
+    .sort((left, right) => left.localeCompare(right));
+};
+
+const projectionRoleFor = (record: NormalizedRecord): ProjectionEntry["role"] => {
+  if (record.record_type === "personal_model") {
+    return "personal_model";
+  }
+  if (record.role === "current_state") {
+    throw new Error(`CURRENT_STATE_NOT_PROJECTABLE:${record.id}`);
+  }
+  return record.role;
+};
+
+const projectionEntriesPayload = (
   records: readonly NormalizedRecord[],
-): MemoryProjectionPayload => ({
+  syncGeneration: string,
+): ProjectionEntriesPayload => ({
   entries: records.map((record) => ({
-    id: record.id,
+    schema_version: "cognitive-runtime.projection-entry/v2",
+    generation_id: syncGeneration,
     layer: record.layer,
-    role: record.role,
-    version: record.version,
-    content: record.body,
+    stable_id: record.id,
+    authority_version: record.version,
+    role: projectionRoleFor(record),
     checksum: record.checksum,
+    source_refs: sourceRefsFor(record),
+    content: record.body,
   })),
 });
 
@@ -575,27 +906,28 @@ const viewProjectionPayload = (
 export async function buildGeneration(
   options: GenerationBuildOptions,
 ): Promise<GenerationBuildResult> {
-  if (options.sourceRevision.trim().length === 0) {
-    throw new Error("SOURCE_REVISION_REQUIRED");
-  }
   if (options.packageVersion.trim().length === 0) {
     throw new Error("PACKAGE_VERSION_REQUIRED");
   }
-  const authorityDirectory = resolve(options.authorityDirectory);
+  const checkout = await verifyAuthorityCheckout(options);
+  const authorityDirectory = checkout.authorityDirectory;
   const stateDirectory = resolve(options.stateDirectory);
   const authorityStat = await lstat(authorityDirectory);
   if (!authorityStat.isDirectory()) {
     throw new Error("AUTHORITY_DIRECTORY_REQUIRED");
   }
-  const authority = await readAuthority(authorityDirectory);
+  const authority = await readAuthority(checkout);
   const records = authority.records
     .map(normalizedRecord)
     .sort((left, right) => left.id.localeCompare(right.id));
   const generationSeed = {
-    contract_version: CONTRACT_VERSION,
-    package_version: options.packageVersion,
+    contract_set: CONTRACT_VERSION,
+    builder_format_version: BUILDER_FORMAT_VERSION,
     source_revision: options.sourceRevision,
-    active_governing_system: authority.activeGoverningSystem,
+    binding: {
+      schema_version: "cognitive-runtime.cognitive-binding/v2",
+      active_governing_system: authority.activeGoverningSystem,
+    },
     records,
   };
   const syncGeneration = `generation-${checksum(canonicalJson(generationSeed)).slice("sha256:".length)}`;
@@ -607,13 +939,36 @@ export async function buildGeneration(
   };
   const registryPayload = registryPayloadFor(records, syncGeneration);
   const governingPayload = governingDigestPayload(records, authority.activeGoverningSystem);
-  const memoryPayload = memoryProjectionPayload(records);
+  const projectionPayload = projectionEntriesPayload(records, syncGeneration);
   const indexPayload = indexMetadataPayload(records);
   const viewPayload = viewProjectionPayload(
     records,
     options.sourceRevision,
     authority.activeGoverningSystem,
   );
+
+  const generationsDirectory = join(stateDirectory, "generations");
+  const generationDirectory = join(generationsDirectory, syncGeneration);
+  const existing = await lstat(generationDirectory).catch(() => null);
+  if (existing !== null) {
+    const verification = await verifyGeneration(generationDirectory);
+    if (!verification.valid || verification.manifest === null) {
+      throw new Error(`GENERATION_TARGET_INVALID:${verification.issues.join(",")}`);
+    }
+    const bootstrapProjections = await writeBootstrapProjections(
+      stateDirectory,
+      syncGeneration,
+      projectionPayload.entries,
+      options.bootstrapTargets,
+    );
+    return {
+      syncGeneration,
+      generationDirectory,
+      reused: true,
+      manifest: verification.manifest,
+      bootstrapProjections,
+    };
+  }
 
   const stagingRoot = join(stateDirectory, "staging");
   await mkdir(stagingRoot, { recursive: true });
@@ -623,24 +978,71 @@ export async function buildGeneration(
       writeArtifact(stagingDirectory, "normalized-records.json", artifact(metadata, { records }), []),
       writeArtifact(stagingDirectory, "registry.json", artifact(metadata, registryPayload), ["normalized-records.json"]),
       writeArtifact(stagingDirectory, "governing-digest.json", artifact(metadata, governingPayload), ["normalized-records.json", "registry.json"]),
-      writeArtifact(stagingDirectory, "memory-projection.json", artifact(metadata, memoryPayload), ["normalized-records.json", "registry.json"]),
+      writeArtifact(stagingDirectory, "projection-entries.json", artifact(metadata, projectionPayload), ["normalized-records.json", "registry.json"]),
       writeArtifact(stagingDirectory, "index-metadata.json", artifact(metadata, indexPayload), ["registry.json"]),
-      writeArtifact(stagingDirectory, "view-projection.json", artifact(metadata, viewPayload), ["governing-digest.json", "index-metadata.json", "memory-projection.json", "registry.json"]),
+      writeArtifact(stagingDirectory, "view-projection.json", artifact(metadata, viewPayload), ["governing-digest.json", "index-metadata.json", "projection-entries.json", "registry.json"]),
+      ...projectionPayload.entries.map((entry) => writeTextArtifact(
+        stagingDirectory,
+        projectionDocumentPath(entry),
+        projectionDocument(entry),
+        ["projection-entries.json"],
+      )),
     ]);
     const manifest: GenerationManifest = {
       schema_version: "cognitive-runtime.generation-manifest/v2",
       contract_version: CONTRACT_VERSION,
+      builder_format_version: BUILDER_FORMAT_VERSION,
       package_version: options.packageVersion,
       source_revision: options.sourceRevision,
       sync_generation: syncGeneration,
       files: files.sort((left, right) => left.path.localeCompare(right.path)),
     };
+    const manifestValidation = validateContract("generation-manifest", manifest);
+    if (!manifestValidation.valid) {
+      throw new Error(`GENERATION_MANIFEST_INVALID:${manifestValidation.errors
+        .map((error) => `${error.instancePath}:${error.keyword}:${error.message}`)
+        .join(",")}`);
+    }
     await writeFile(join(stagingDirectory, "manifest.json"), canonicalJson(manifest), { flag: "wx" });
     const verification = await verifyGeneration(stagingDirectory);
     if (!verification.valid) {
       throw new Error(`GENERATION_BUILD_INVALID:${verification.issues.join(",")}`);
     }
-    return { syncGeneration, stagingDirectory, manifest };
+    await mkdir(generationsDirectory, { recursive: true });
+    try {
+      await rename(stagingDirectory, generationDirectory);
+    } catch (error: unknown) {
+      const targetVerification = await verifyGeneration(generationDirectory);
+      if (!targetVerification.valid || targetVerification.manifest === null) {
+        throw error;
+      }
+      await rm(stagingDirectory, { recursive: true, force: true });
+      const bootstrapProjections = await writeBootstrapProjections(
+        stateDirectory,
+        syncGeneration,
+        projectionPayload.entries,
+        options.bootstrapTargets,
+      );
+      return {
+        syncGeneration,
+        generationDirectory,
+        reused: true,
+        manifest: targetVerification.manifest,
+        bootstrapProjections,
+      };
+    }
+    return {
+      syncGeneration,
+      generationDirectory,
+      reused: false,
+      manifest,
+      bootstrapProjections: await writeBootstrapProjections(
+        stateDirectory,
+        syncGeneration,
+        projectionPayload.entries,
+        options.bootstrapTargets,
+      ),
+    };
   } catch (error: unknown) {
     await rm(stagingDirectory, { recursive: true, force: true });
     throw error;
@@ -651,11 +1053,14 @@ const readJson = async (path: string): Promise<unknown> =>
   JSON.parse(await readFile(path, "utf8")) as unknown;
 
 const parseManifest = (value: unknown): GenerationManifest => {
-  if (
-    !isRecord(value) ||
-    !validateContract("generation-manifest", value).valid
-  ) {
+  if (!isRecord(value)) {
     throw new Error("GENERATION_MANIFEST_INVALID");
+  }
+  const validation = validateContract("generation-manifest", value);
+  if (!validation.valid) {
+    throw new Error(`GENERATION_MANIFEST_INVALID:${validation.errors
+      .map((error) => `${error.instancePath}:${error.keyword}`)
+      .join(",")}`);
   }
   const filesValue = value.files;
   if (!Array.isArray(filesValue)) {
@@ -666,7 +1071,7 @@ const parseManifest = (value: unknown): GenerationManifest => {
       throw new Error("GENERATION_MANIFEST_INVALID");
     }
     const path = requireString(item.path, "GENERATION_MANIFEST_INVALID");
-    if (basename(path) !== path || path === "manifest.json") {
+    if (path === "manifest.json") {
       throw new Error("GENERATION_MANIFEST_INVALID");
     }
     return {
@@ -678,6 +1083,10 @@ const parseManifest = (value: unknown): GenerationManifest => {
   return {
     schema_version: "cognitive-runtime.generation-manifest/v2",
     contract_version: requireString(value.contract_version, "GENERATION_MANIFEST_INVALID"),
+    builder_format_version: requireString(
+      value.builder_format_version,
+      "GENERATION_MANIFEST_INVALID",
+    ) as typeof BUILDER_FORMAT_VERSION,
     package_version: requireString(value.package_version, "GENERATION_MANIFEST_INVALID"),
     source_revision: requireString(value.source_revision, "GENERATION_MANIFEST_INVALID"),
     sync_generation: requireString(value.sync_generation, "GENERATION_MANIFEST_INVALID"),
@@ -699,6 +1108,29 @@ const parseArtifact = (value: unknown): GenerationArtifact => {
   };
 };
 
+const listGenerationFiles = async (
+  directory: string,
+  root = directory,
+): Promise<readonly string[]> => {
+  const files: string[] = [];
+  for (const entry of (await readdir(directory, { withFileTypes: true }))
+    .sort((left, right) => left.name.localeCompare(right.name))) {
+    const path = join(directory, entry.name);
+    const manifestPath = relative(root, path).split(sep).join("/");
+    if (entry.isSymbolicLink()) {
+      throw new Error(`GENERATION_FILE_INVALID:${manifestPath}`);
+    }
+    if (entry.isDirectory()) {
+      files.push(...await listGenerationFiles(path, root));
+    } else if (entry.isFile()) {
+      files.push(manifestPath);
+    } else {
+      throw new Error(`GENERATION_FILE_INVALID:${manifestPath}`);
+    }
+  }
+  return files;
+};
+
 export async function verifyGeneration(
   generationDirectory: string,
 ): Promise<GenerationVerificationResult> {
@@ -706,7 +1138,34 @@ export async function verifyGeneration(
   let manifest: GenerationManifest | null = null;
   const artifacts = new Map<string, GenerationArtifact>();
   try {
-    manifest = parseManifest(await readJson(join(generationDirectory, "manifest.json")));
+    const generationStat = await lstat(generationDirectory);
+    if (!generationStat.isDirectory() || generationStat.isSymbolicLink()) {
+      throw new Error("GENERATION_DIRECTORY_INVALID");
+    }
+    const manifestPath = join(generationDirectory, "manifest.json");
+    const manifestStat = await lstat(manifestPath);
+    if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) {
+      throw new Error("GENERATION_MANIFEST_INVALID");
+    }
+    manifest = parseManifest(await readJson(manifestPath));
+    const directoryGeneration = basename(resolve(generationDirectory));
+    if (
+      GENERATION_PATTERN.test(directoryGeneration) &&
+      manifest.sync_generation !== directoryGeneration
+    ) {
+      issues.push("GENERATION_DIRECTORY_MISMATCH");
+    }
+    const expectedFiles = new Set(["manifest.json", ...manifest.files.map((file) => file.path)]);
+    for (const path of await listGenerationFiles(generationDirectory)) {
+      if (!expectedFiles.delete(path)) {
+        issues.push(`GENERATION_UNMANIFESTED_FILE:${path}`);
+      }
+    }
+    for (const path of expectedFiles) {
+      if (path !== "manifest.json") {
+        issues.push(`GENERATION_ARTIFACT_MISSING:${path}`);
+      }
+    }
     if (!GENERATION_PATTERN.test(manifest.sync_generation)) {
       issues.push("SYNC_GENERATION_INVALID");
     }
@@ -723,9 +1182,17 @@ export async function verifyGeneration(
       }
       const path = join(generationDirectory, file.path);
       assertInside(generationDirectory, path, "GENERATION_FILE_OUTSIDE_DIRECTORY");
+      const fileStat = await lstat(path);
+      if (!fileStat.isFile() || fileStat.isSymbolicLink()) {
+        issues.push(`GENERATION_FILE_INVALID:${file.path}`);
+        continue;
+      }
       const content = await readFile(path, "utf8");
       if (checksum(content) !== file.checksum) {
         issues.push(`FILE_CHECKSUM_MISMATCH:${file.path}`);
+        continue;
+      }
+      if (!file.path.endsWith(".json")) {
         continue;
       }
       const parsed = parseArtifact(JSON.parse(content) as unknown);
@@ -745,8 +1212,8 @@ export async function verifyGeneration(
     const required = [
       "governing-digest.json",
       "index-metadata.json",
-      "memory-projection.json",
       "normalized-records.json",
+      "projection-entries.json",
       "registry.json",
       "view-projection.json",
     ];
@@ -810,10 +1277,13 @@ export async function verifyGeneration(
         }
         validateReferences(authorityRecords, activeGoverningSystem);
         const expectedGeneration = `generation-${checksum(canonicalJson({
-          contract_version: manifest.contract_version,
-          package_version: manifest.package_version,
+          contract_set: manifest.contract_version,
+          builder_format_version: manifest.builder_format_version,
           source_revision: manifest.source_revision,
-          active_governing_system: activeGoverningSystem,
+          binding: {
+            schema_version: "cognitive-runtime.cognitive-binding/v2",
+            active_governing_system: activeGoverningSystem,
+          },
           records: normalizedRecords,
         })).slice("sha256:".length)}`;
         if (expectedGeneration !== manifest.sync_generation) {
@@ -822,7 +1292,10 @@ export async function verifyGeneration(
         const expectedPayloads = new Map<string, unknown>([
           ["registry.json", registryPayloadFor(normalizedRecords, manifest.sync_generation)],
           ["governing-digest.json", governingDigestPayload(normalizedRecords, activeGoverningSystem)],
-          ["memory-projection.json", memoryProjectionPayload(normalizedRecords)],
+          ["projection-entries.json", projectionEntriesPayload(
+            normalizedRecords,
+            manifest.sync_generation,
+          )],
           ["index-metadata.json", indexMetadataPayload(normalizedRecords)],
           ["view-projection.json", viewProjectionPayload(
             normalizedRecords,
@@ -842,29 +1315,29 @@ export async function verifyGeneration(
       }
     }
     const indexArtifact = artifacts.get("index-metadata.json");
-    const memoryArtifact = artifacts.get("memory-projection.json");
+    const projectionArtifact = artifacts.get("projection-entries.json");
     const viewArtifact = artifacts.get("view-projection.json");
     if (
       registryArtifact !== undefined &&
       indexArtifact !== undefined &&
-      memoryArtifact !== undefined &&
+      projectionArtifact !== undefined &&
       viewArtifact !== undefined
     ) {
       const registryPayloadValue = registryArtifact.payload;
       const indexPayloadValue = indexArtifact.payload;
-      const memoryPayloadValue = memoryArtifact.payload;
+      const projectionPayloadValue = projectionArtifact.payload;
       const viewPayloadValue = viewArtifact.payload;
       if (
         !isRecord(registryPayloadValue) || !Array.isArray(registryPayloadValue.entries) ||
         !isRecord(indexPayloadValue) || !Array.isArray(indexPayloadValue.entries) ||
-        !isRecord(memoryPayloadValue) || !Array.isArray(memoryPayloadValue.entries) ||
+        !isRecord(projectionPayloadValue) || !Array.isArray(projectionPayloadValue.entries) ||
         !isRecord(viewPayloadValue) || !Array.isArray(viewPayloadValue.record_refs)
       ) {
         issues.push("GENERATION_PROJECTION_INVALID");
       } else {
-        const ids = (entries: readonly unknown[]): readonly string[] => entries
+        const ids = (entries: readonly unknown[], key = "id"): readonly string[] => entries
           .filter(isRecord)
-          .map((entry) => typeof entry.id === "string" ? entry.id : "")
+          .map((entry) => typeof entry[key] === "string" ? entry[key] : "")
           .sort();
         const registryIds = ids(registryPayloadValue.entries);
         const viewIds = viewPayloadValue.record_refs
@@ -872,10 +1345,30 @@ export async function verifyGeneration(
           .sort();
         if (
           registryIds.join("\n") !== ids(indexPayloadValue.entries).join("\n") ||
-          registryIds.join("\n") !== ids(memoryPayloadValue.entries).join("\n") ||
+          registryIds.join("\n") !== ids(projectionPayloadValue.entries, "stable_id").join("\n") ||
           registryIds.join("\n") !== viewIds.join("\n")
         ) {
           issues.push("GENERATION_PROJECTION_REF_MISMATCH");
+        }
+      }
+    }
+    if (projectionArtifact !== undefined && isRecord(projectionArtifact.payload)
+      && Array.isArray(projectionArtifact.payload.entries)) {
+      for (const value of projectionArtifact.payload.entries) {
+        if (!isRecord(value) || !validateContract("projection-entry", value).valid) {
+          issues.push("PROJECTION_ENTRY_INVALID");
+          continue;
+        }
+        const entry = value as unknown as ProjectionEntry;
+        const path = projectionDocumentPath(entry);
+        const manifestFile = manifest.files.find((file) => file.path === path);
+        if (manifestFile === undefined) {
+          issues.push(`PROJECTION_DOCUMENT_MISSING:${entry.stable_id}`);
+          continue;
+        }
+        const content = await readFile(join(generationDirectory, path), "utf8");
+        if (content !== projectionDocument(entry)) {
+          issues.push(`PROJECTION_DOCUMENT_MISMATCH:${entry.stable_id}`);
         }
       }
     }
@@ -891,7 +1384,13 @@ export async function activateGeneration(options: {
 }): Promise<{ readonly syncGeneration: string; readonly directory: string }> {
   const stateDirectory = resolve(options.stateDirectory);
   const stagingDirectory = resolve(options.stagingDirectory);
-  assertInside(join(stateDirectory, "staging"), stagingDirectory, "GENERATION_STAGE_OUTSIDE_STATE");
+  const staged = relative(join(stateDirectory, "staging"), stagingDirectory);
+  const built = relative(join(stateDirectory, "generations"), stagingDirectory);
+  const isStaged = staged !== "" && !staged.startsWith("..") && !staged.startsWith(sep);
+  const isBuilt = built !== "" && !built.startsWith("..") && !built.startsWith(sep);
+  if (!isStaged && !isBuilt) {
+    throw new Error("GENERATION_STAGE_OUTSIDE_STATE");
+  }
   const verification = await verifyGeneration(stagingDirectory);
   if (!verification.valid || verification.manifest === null) {
     throw new Error(`GENERATION_VERIFY_FAILED:${verification.issues.join(",")}`);
@@ -901,9 +1400,9 @@ export async function activateGeneration(options: {
   const targetDirectory = join(generationsDirectory, generation);
   await mkdir(generationsDirectory, { recursive: true });
   const existing = await lstat(targetDirectory).catch(() => null);
-  if (existing === null) {
+  if (existing === null && isStaged) {
     await rename(stagingDirectory, targetDirectory);
-  } else {
+  } else if (stagingDirectory !== targetDirectory) {
     const targetVerification = await verifyGeneration(targetDirectory);
     if (!targetVerification.valid) {
       throw new Error(`GENERATION_TARGET_INVALID:${targetVerification.issues.join(",")}`);
@@ -941,9 +1440,42 @@ export async function loadActiveGeneration(
     normalizedRecords: typedArtifact<{ readonly records: readonly NormalizedRecord[] }>(await load("normalized-records.json")),
     registry: typedArtifact<RegistryPayload>(await load("registry.json")),
     governingDigest: typedArtifact<GoverningDigestPayload>(await load("governing-digest.json")),
-    memoryProjection: typedArtifact<MemoryProjectionPayload>(await load("memory-projection.json")),
+    projectionEntries: typedArtifact<ProjectionEntriesPayload>(await load("projection-entries.json")),
     indexMetadata: typedArtifact<IndexMetadataPayload>(await load("index-metadata.json")),
     viewProjection: typedArtifact<ViewProjectionPayload>(await load("view-projection.json")),
+  };
+}
+
+export async function showGeneration(options: {
+  readonly stateDirectory: string;
+  readonly syncGeneration: string;
+}): Promise<GenerationStatus> {
+  if (!GENERATION_PATTERN.test(options.syncGeneration)) {
+    throw new Error("SYNC_GENERATION_INVALID");
+  }
+  const targetDirectory = join(
+    resolve(options.stateDirectory),
+    "generations",
+    options.syncGeneration,
+  );
+  const target = await verifyGeneration(targetDirectory);
+  if (!target.valid || target.manifest === null) {
+    throw new Error(`GENERATION_TARGET_INVALID:${target.issues.join(",")}`);
+  }
+  let activeGeneration: ActiveGeneration | null = null;
+  try {
+    activeGeneration = await loadActiveGeneration(options.stateDirectory);
+  } catch (error: unknown) {
+    if (!isRecord(error) || error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  return {
+    syncGeneration: target.manifest.sync_generation,
+    sourceRevision: target.manifest.source_revision,
+    active: activeGeneration?.manifest.sync_generation === target.manifest.sync_generation,
+    activeGeneration: activeGeneration?.manifest.sync_generation ?? null,
+    activeSourceRevision: activeGeneration?.manifest.source_revision ?? null,
   };
 }
 
@@ -953,7 +1485,7 @@ export async function rebuildGeneration(
   const built = await buildGeneration(options);
   await activateGeneration({
     stateDirectory: options.stateDirectory,
-    stagingDirectory: built.stagingDirectory,
+    stagingDirectory: built.generationDirectory,
   });
   return loadActiveGeneration(options.stateDirectory);
 }

@@ -17,7 +17,10 @@ import {
   createStateManagementPort,
   prepareStateImportManifest,
 } from "../../dist/state/management.js";
-import { writeSyntheticAuthority } from "../helpers/synthetic-authority.mjs";
+import {
+  commitSyntheticAuthority,
+  writeSyntheticAuthority,
+} from "../helpers/synthetic-authority.mjs";
 
 class FakeCommand {
   children = new Map();
@@ -101,12 +104,13 @@ test("OpenClaw discovers cognitive self-check through the plugin entry", async (
   ]);
 });
 
-test("OpenClaw generation commands build, verify, activate, and deterministically rebuild", async (t) => {
+test("OpenClaw exposes read-only validate, non-activating build, and generation show", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-openclaw-generation-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const authorityDirectory = join(root, "authority");
   const stateDirectory = join(root, "state");
   await writeSyntheticAuthority(authorityDirectory);
+  const sourceRevision = await commitSyntheticAuthority(authorityDirectory);
   const program = new FakeCommand();
   const api = {
     version: "0.1.0-beta.0",
@@ -116,41 +120,48 @@ test("OpenClaw generation commands build, verify, activate, and deterministicall
     },
   };
   await plugin.register(api);
-  const generation = program.children.get("cognitive")?.children.get("generation");
+  const cognitive = program.children.get("cognitive");
+  const generation = cognitive.children.get("generation");
   const output = [];
   const originalLog = console.log;
   console.log = (value) => output.push(JSON.parse(value));
   try {
-    await generation.children.get("build").handler({
+    await cognitive.children.get("validate").handler({
+      authority: authorityDirectory,
+      revision: sourceRevision,
+      json: true,
+    });
+    await cognitive.children.get("build").handler({
       authority: authorityDirectory,
       state: stateDirectory,
-      revision: "revision-synthetic-1",
+      revision: sourceRevision,
+      bootstrap: "USER.md",
       json: true,
     });
-    await generation.children.get("verify").handler({
-      generation: output[0].staging_directory,
-      json: true,
-    });
-    await generation.children.get("activate").handler({
-      generation: output[0].staging_directory,
+    await generation.children.get("show").handler({
+      generation: output[1].sync_generation,
       state: stateDirectory,
-      json: true,
-    });
-    await generation.children.get("rebuild").handler({
-      authority: authorityDirectory,
-      state: stateDirectory,
-      revision: "revision-synthetic-1",
       json: true,
     });
   } finally {
     console.log = originalLog;
   }
 
-  assert.equal(output[0].operation, "generation-build");
-  assert.equal(output[1].valid, true);
-  assert.equal(output[2].sync_generation, output[0].sync_generation);
-  assert.equal(output[3].sync_generation, output[0].sync_generation);
-  assert.equal(output[3].source_revision, "revision-synthetic-1");
+  assert.equal(output[0].operation, "validate");
+  assert.equal(output[0].source_revision, sourceRevision);
+  assert.equal(output[0].record_count, 3);
+  assert.equal(output[1].operation, "build");
+  assert.equal(output[1].source_revision, sourceRevision);
+  assert.equal(output[1].reused, false);
+  assert.deepEqual(output[1].bootstrap_projections.map((projection) => projection.target), [
+    "USER.md",
+  ]);
+  assert.equal(output[2].operation, "generation_show");
+  assert.equal(output[2].sync_generation, output[1].sync_generation);
+  assert.equal(output[2].source_revision, sourceRevision);
+  assert.equal(output[2].active, false);
+  assert.equal(generation.children.has("activate"), false);
+  assert.equal(generation.children.has("rebuild"), false);
 });
 
 test("OpenClaw registration does not use rejected host paths", async () => {

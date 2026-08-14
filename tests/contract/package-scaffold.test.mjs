@@ -40,6 +40,11 @@ test("public entry does not expose SQLite storage paths", async () => {
   assert.equal(typeof publicEntry.rehearseRecoveryTransport, "function");
   assert.equal(typeof publicEntry.createStateManagementPort, "function");
   assert.equal(typeof publicEntry.createExactStateImportPolicy, "function");
+  assert.equal(typeof publicEntry.validateAuthoritySource, "function");
+  assert.equal(typeof publicEntry.buildGeneration, "function");
+  assert.equal(typeof publicEntry.showGeneration, "function");
+  assert.equal("activateGeneration" in publicEntry, false);
+  assert.equal("rebuildGeneration" in publicEntry, false);
   assert.equal("runtimeDatabasePath" in publicEntry, false);
 });
 

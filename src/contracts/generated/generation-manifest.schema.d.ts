@@ -6,6 +6,7 @@ export type Checksum = string;
 export interface GenerationManifest {
   schema_version: "cognitive-runtime.generation-manifest/v2";
   contract_version: "v2";
+  builder_format_version: "generation-builder/v2";
   package_version: string;
   source_revision: string;
   sync_generation: Generation;
