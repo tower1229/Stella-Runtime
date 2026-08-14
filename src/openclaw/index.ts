@@ -1,4 +1,11 @@
+import { readFile } from "node:fs/promises";
+
 import { runSelfCheck } from "../cli/index.js";
+import type {
+  CurrentStateEvent,
+  StateCorrectionPreview,
+  StateImportManifest,
+} from "../contracts/index.js";
 import {
   activateGeneration,
   buildGeneration,
@@ -16,11 +23,12 @@ import {
   provenanceDatabasePath,
   SqliteProvenanceStore,
 } from "../provenance/index.js";
+import { markRuntimeInstanceRunServed } from "../state/index.js";
 import {
-  markRuntimeInstanceRunServed,
-  runtimeDatabasePath,
-  SqliteStateStore,
-} from "../state/index.js";
+  createExactStateImportPolicy,
+  createStateManagementPort,
+} from "../state/management.js";
+import type { ExactStateImportAuthorization } from "../state/management.js";
 import type { CognitiveRuntimePluginApi } from "./plugin-api.js";
 import {
   openClawCandidateAdmissionService,
@@ -97,6 +105,41 @@ const readOptionalInteger = (
     throw new Error(`CLI_OPTION_INVALID:${name}`);
   }
   return parsed;
+};
+
+const readJsonFile = async <T>(path: string): Promise<T> =>
+  JSON.parse(await readFile(path, "utf8")) as T;
+
+const readStateImportAuthorization = async (path: string): Promise<{
+  readonly authorizations: readonly ExactStateImportAuthorization[];
+  readonly maxAuthorizationAgeMs: number;
+}> => {
+  const artifact = await readJsonFile<unknown>(path);
+  if (!isRecord(artifact) || !Array.isArray(artifact.authorizations) ||
+    typeof artifact.max_authorization_age_ms !== "number") {
+    throw new Error("STATE_IMPORT_AUTHORIZATION_INVALID");
+  }
+  const authorizations = artifact.authorizations.map((item) => {
+    if (!isRecord(item) || typeof item.eventId !== "string" ||
+      typeof item.eventChecksum !== "string" ||
+      (item.sourceKind !== "user_confirmed" && item.sourceKind !== "independently_verified") ||
+      typeof item.sourceRef !== "string" || typeof item.verification !== "string" ||
+      typeof item.verifiedAt !== "string") {
+      throw new Error("STATE_IMPORT_AUTHORIZATION_INVALID");
+    }
+    return {
+      eventId: item.eventId,
+      eventChecksum: item.eventChecksum,
+      sourceKind: item.sourceKind,
+      sourceRef: item.sourceRef,
+      verification: item.verification,
+      verifiedAt: item.verifiedAt,
+    } satisfies ExactStateImportAuthorization;
+  });
+  return {
+    authorizations,
+    maxAuthorizationAgeMs: artifact.max_authorization_age_ms,
+  };
 };
 
 const readRecoveryConfig = (
@@ -336,8 +379,70 @@ const plugin = {
             }));
           });
 
-        cognitive
+        const state = cognitive
           .command("state")
+          .description("Manage Current State through explicit domain operations");
+
+        state
+          .command("initialize")
+          .description("Explicitly initialize an empty Current State Head")
+          .requiredOption("--instance <id>", "Private Instance ID")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            const config = readRecoveryConfig(api.pluginConfig);
+            const instanceId = readStringOption(options, "instance");
+            requireInstance(config, instanceId);
+            const port = createStateManagementPort({
+              stateRoot: config.stateRoot,
+              instanceId,
+            });
+            try {
+              console.log(JSON.stringify({
+                operation: "state_initialize",
+                ...await port.initialize(),
+              }));
+            } finally {
+              port.close();
+            }
+          });
+
+        state
+          .command("import")
+          .description("Atomically import one checksummed baseline manifest")
+          .requiredOption("--instance <id>", "Private Instance ID")
+          .requiredOption("--manifest <path>", "State Import Manifest JSON")
+          .requiredOption("--authorization <path>", "Fresh exact import authorization JSON")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            const config = readRecoveryConfig(api.pluginConfig);
+            const instanceId = readStringOption(options, "instance");
+            requireInstance(config, instanceId);
+            const port = createStateManagementPort({ stateRoot: config.stateRoot, instanceId });
+            try {
+              const manifest = await readJsonFile<StateImportManifest>(
+                readStringOption(options, "manifest"),
+              );
+              const authorization = await readStateImportAuthorization(
+                readStringOption(options, "authorization"),
+              );
+              console.log(JSON.stringify({
+                operation: "state_import",
+                ...await port.import(manifest, {
+                  policy: createExactStateImportPolicy({
+                    ...authorization,
+                    now: () => new Date().toISOString(),
+                  }),
+                }),
+              }));
+            } finally {
+              port.close();
+            }
+          });
+
+        state
+          .command("view")
           .description("Read an immutable Current State View")
           .requiredOption("--instance <id>", "Private Instance ID")
           .option("--revision <number>", "Event boundary revision")
@@ -347,22 +452,81 @@ const plugin = {
             const config = readRecoveryConfig(api.pluginConfig);
             const instanceId = readStringOption(options, "instance");
             requireInstance(config, instanceId);
-            const store = new SqliteStateStore({
-              databasePath: runtimeDatabasePath(config.stateRoot, instanceId),
-              instanceId,
-              readOnly: true,
-            });
+            const port = createStateManagementPort({ stateRoot: config.stateRoot, instanceId });
             try {
               const revision = readOptionalInteger(options, "revision");
               console.log(JSON.stringify({
-                operation: "state",
-                view: await store.view({
-                  instanceId,
-                  ...(revision === undefined ? {} : { revision }),
+                operation: "state_view",
+                view: await port.view(revision === undefined ? {} : { revision }),
+              }));
+            } finally {
+              port.close();
+            }
+          });
+
+        const correct = state
+          .command("correct")
+          .description("Plan or apply one exact State Correction");
+
+        correct
+          .command("plan")
+          .description("Render an exact State Correction Preview")
+          .requiredOption("--instance <id>", "Private Instance ID")
+          .requiredOption("--preview <id>", "Stable Preview ID")
+          .requiredOption("--event <path>", "Proposed Current State Event JSON")
+          .requiredOption("--expires <instant>", "Preview expiry instant")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            const config = readRecoveryConfig(api.pluginConfig);
+            const instanceId = readStringOption(options, "instance");
+            requireInstance(config, instanceId);
+            const port = createStateManagementPort({ stateRoot: config.stateRoot, instanceId });
+            try {
+              console.log(JSON.stringify({
+                operation: "state_correct_plan",
+                preview: await port.planCorrection({
+                  previewId: readStringOption(options, "preview"),
+                  event: await readJsonFile<CurrentStateEvent>(readStringOption(options, "event")),
+                  expiresAt: readStringOption(options, "expires"),
                 }),
               }));
             } finally {
-              store.close();
+              port.close();
+            }
+          });
+
+        correct
+          .command("apply")
+          .description("Apply a Preview by exact checksum and unchanged base View")
+          .requiredOption("--instance <id>", "Private Instance ID")
+          .requiredOption("--preview <path>", "State Correction Preview JSON")
+          .requiredOption("--checksum <checksum>", "Exact Preview checksum")
+          .requiredOption("--correction <id>", "Correction ID")
+          .requiredOption("--session <checksum>", "Session key hash")
+          .requiredOption("--prior-run <id>", "Prior Run ID")
+          .requiredOption("--idempotency-key <key>", "Outbox idempotency key")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            const config = readRecoveryConfig(api.pluginConfig);
+            const instanceId = readStringOption(options, "instance");
+            requireInstance(config, instanceId);
+            const port = createStateManagementPort({ stateRoot: config.stateRoot, instanceId });
+            try {
+              console.log(JSON.stringify({
+                operation: "state_correct_apply",
+                ...await port.applyCorrection({
+                  preview: await readJsonFile<StateCorrectionPreview>(readStringOption(options, "preview")),
+                  previewChecksum: readStringOption(options, "checksum"),
+                  correctionId: readStringOption(options, "correction"),
+                  sessionKeyHash: readStringOption(options, "session"),
+                  priorRunId: readStringOption(options, "priorRun"),
+                  outboxIdempotencyKey: readStringOption(options, "idempotencyKey"),
+                }),
+              }));
+            } finally {
+              port.close();
             }
           });
 

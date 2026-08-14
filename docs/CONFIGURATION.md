@@ -75,7 +75,11 @@ All structured operational commands require `--json` where offered.
 | `openclaw cognitive self-check` | Verify Plugin discovery and host completion availability. |
 | `openclaw cognitive metrics --json` | Read bounded Runtime metrics. |
 | `openclaw cognitive generation build|verify|activate|rebuild ... --json` | Manage one immutable authority generation. |
-| `openclaw cognitive state --instance ID [--revision N] --json` | Read an immutable State View. |
+| `openclaw cognitive state initialize --instance ID --json` | Explicitly create a valid empty Current State Head. |
+| `openclaw cognitive state import --instance ID --manifest FILE --authorization FILE --json` | Validate fresh external authorization for each exact Event, then atomically import one checksummed baseline before the first real Run. |
+| `openclaw cognitive state view --instance ID [--revision N] --json` | Read an immutable, checksummed State View. |
+| `openclaw cognitive state correct plan --instance ID --preview ID --event FILE --expires INSTANT --json` | Render an exact Correction Preview and checksum. |
+| `openclaw cognitive state correct apply --instance ID --preview FILE --checksum SHA256 --correction ID --session SHA256 --prior-run ID --idempotency-key KEY --json` | Apply an unchanged Preview and atomically create its successor outbox. |
 | `openclaw cognitive trace get|query ... --json` | Read minimized cognitive provenance. |
 | `openclaw cognitive backup --instance ID --output DIR --json` | Create a new Recovery Snapshot. |
 | `openclaw cognitive verify --snapshot DIR --json` | Verify a snapshot read-only. |

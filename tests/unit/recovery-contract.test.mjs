@@ -11,6 +11,9 @@ test("recovery contract freezes authoritative and rebuildable/private classifica
     "current_state_event_ledger",
     "active_state_head",
     "unfinished_corrections",
+    "state_import_receipts",
+    "state_correction_confirmations",
+    "state_view_activation_history",
     "reanswer_outbox",
     "storage_schema_version",
   ]);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,7 +9,14 @@ import {
   provenanceDatabasePath,
   SqliteProvenanceStore,
 } from "../../dist/provenance/index.js";
-import { SqliteReanswerStore } from "../../dist/state/index.js";
+import {
+  SqliteReanswerStore,
+} from "../../dist/state/index.js";
+import {
+  calculateCurrentStateEventChecksum,
+  createStateManagementPort,
+  prepareStateImportManifest,
+} from "../../dist/state/management.js";
 import { writeSyntheticAuthority } from "../helpers/synthetic-authority.mjs";
 
 class FakeCommand {
@@ -350,7 +357,7 @@ test("OpenClaw cognitive state and trace get/query return structured read-only r
   const originalLog = console.log;
   console.log = (value) => output.push(JSON.parse(value));
   try {
-    await cognitive.children.get("state").handler({
+    await cognitive.children.get("state").children.get("view").handler({
       instance: instanceId,
       revision: "1",
       json: true,
@@ -371,13 +378,127 @@ test("OpenClaw cognitive state and trace get/query return structured read-only r
     console.log = originalLog;
   }
 
-  assert.equal(output[0].operation, "state");
-  assert.equal(output[0].view.revision, 1);
-  assert.equal(output[0].view.states[0].payload.value, "synthetic");
+  assert.equal(output[0].operation, "state_view");
+  assert.equal(output[0].view.active_seq, 1);
+  assert.equal(output[0].view.values[0].value, "synthetic");
   assert.equal(output[1].operation, "trace_get");
   assert.equal(output[1].trace.trace_id, "trace-synthetic-1");
   assert.equal(output[2].operation, "trace_query");
   assert.deepEqual(output[2].traces.map((trace) => trace.trace_id), [
     "trace-synthetic-1",
   ]);
+});
+
+test("OpenClaw state initialize/import/view/correct expose the formal JSON workflow", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-openclaw-state-operations-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const stateRoot = join(root, "state");
+  const instanceId = "instance-operations";
+  const program = new FakeCommand();
+  await plugin.register({
+    pluginConfig: {
+      recovery: {
+        stateRoot,
+        activeInstanceId: instanceId,
+        instances: { [instanceId]: { authorityRevision: "revision-synthetic-1" } },
+      },
+    },
+    runtime: { llm: { complete: async () => ({}) } },
+    registerCli(registrar) { return registrar({ program }); },
+  });
+  const state = program.children.get("cognitive").children.get("state");
+  const output = [];
+  const originalLog = console.log;
+  console.log = (value) => output.push(JSON.parse(value));
+  try {
+    await state.children.get("initialize").handler({ instance: instanceId, json: true });
+    const helper = createStateManagementPort({ stateRoot, instanceId });
+    const baselineEvent = {
+      seq: 1,
+      event_id: "event-cli-baseline-1",
+      state_id: "state-cli-location",
+      event_type: "imported_baseline",
+      payload: { value: "Shanghai", prior_history: "unknown" },
+      observed_at: "2026-08-14T00:00:00.000Z",
+      source_kind: "user_confirmed",
+      source_ref: "confirmation-cli-1",
+      idempotency_key: "event-cli-baseline-key-1",
+      created_at: "2026-08-14T00:00:00.000Z",
+    };
+    const manifest = await prepareStateImportManifest(helper, {
+      importId: "import-cli-1",
+      events: [baselineEvent],
+      sourceMappings: [{
+        event_id: baselineEvent.event_id,
+        source_kind: "user_confirmed",
+        source_ref: baselineEvent.source_ref,
+        verification: "Exact value confirmed at cutover",
+      }],
+      createdAt: "2026-08-14T00:00:00.000Z",
+    });
+    helper.close();
+    const manifestPath = join(root, "manifest.json");
+    await writeFile(manifestPath, JSON.stringify(manifest), "utf8");
+    const authorizationPath = join(root, "authorization.json");
+    await writeFile(authorizationPath, JSON.stringify({
+      authorizations: [{
+        eventId: baselineEvent.event_id,
+        eventChecksum: calculateCurrentStateEventChecksum(baselineEvent),
+        sourceKind: "user_confirmed",
+        sourceRef: baselineEvent.source_ref,
+        verification: "Exact value confirmed at cutover",
+        verifiedAt: new Date().toISOString(),
+      }],
+      max_authorization_age_ms: 60_000,
+    }), "utf8");
+    await state.children.get("import").handler({
+      instance: instanceId,
+      manifest: manifestPath,
+      authorization: authorizationPath,
+      json: true,
+    });
+    await state.children.get("view").handler({ instance: instanceId, json: true });
+
+    const correctionEventPath = join(root, "correction-event.json");
+    await writeFile(correctionEventPath, JSON.stringify({
+      ...baselineEvent,
+      seq: 2,
+      event_id: "event-cli-correction-2",
+      event_type: "correction",
+      payload: { value: "Hangzhou" },
+      source_ref: undefined,
+      idempotency_key: "event-cli-correction-key-2",
+    }), "utf8");
+    await state.children.get("correct").children.get("plan").handler({
+      instance: instanceId,
+      preview: "preview-cli-2",
+      event: correctionEventPath,
+      expires: "2099-08-15T00:00:00.000Z",
+      json: true,
+    });
+    const previewPath = join(root, "preview.json");
+    await writeFile(previewPath, JSON.stringify(output.at(-1).preview), "utf8");
+    await state.children.get("correct").children.get("apply").handler({
+      instance: instanceId,
+      preview: previewPath,
+      checksum: output.at(-1).preview.preview_checksum,
+      correction: "correction-cli-2",
+      session: `sha256:${"5".repeat(64)}`,
+      priorRun: "run-cli-prior-2",
+      idempotencyKey: "outbox-cli-key-2",
+      json: true,
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(output.map((entry) => entry.operation), [
+    "state_initialize",
+    "state_import",
+    "state_view",
+    "state_correct_plan",
+    "state_correct_apply",
+  ]);
+  assert.equal(output[2].view.values[0].value, "Shanghai");
+  assert.equal(output[4].view.values[0].value, "Hangzhou");
 });

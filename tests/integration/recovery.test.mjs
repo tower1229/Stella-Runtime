@@ -16,6 +16,12 @@ import {
   markRuntimeInstanceRunServed,
   SqliteReanswerStore,
 } from "../../dist/state/index.js";
+import {
+  calculateCurrentStateEventChecksum,
+  createExactStateImportPolicy,
+  createStateManagementPort,
+  prepareStateImportManifest,
+} from "../../dist/state/management.js";
 
 const zeroChecksum = `sha256:${"0".repeat(64)}`;
 const checksum = (value) =>
@@ -81,6 +87,114 @@ const verifyOptions = {
   supportedContractVersions: ["v2"],
   access: "read_only",
 };
+
+test("recovery preserves State Import and Correction confirmation idempotency", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-recovery-state-management-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sourceRoot = join(root, "source-state");
+  const instanceId = "instance-state-management";
+  const now = () => "2026-08-14T00:00:00.000Z";
+  const state = createStateManagementPort({ stateRoot: sourceRoot, instanceId, now });
+  const initialized = await state.initialize();
+  const baselineEvent = {
+    seq: 1,
+    event_id: "event-recovery-baseline-1",
+    state_id: "state-recovery-location",
+    event_type: "imported_baseline",
+    payload: { value: "Shanghai", prior_history: "unknown" },
+    observed_at: now(),
+    source_kind: "user_confirmed",
+    source_ref: "confirmation-recovery-1",
+    idempotency_key: "event-recovery-baseline-key-1",
+    created_at: now(),
+  };
+  const manifest = await prepareStateImportManifest(state, {
+    importId: "import-recovery-1",
+    events: [baselineEvent],
+    sourceMappings: [{
+      event_id: baselineEvent.event_id,
+      source_kind: "user_confirmed",
+      source_ref: baselineEvent.source_ref,
+      verification: "Exact value confirmed at recovery cutover",
+    }],
+    createdAt: now(),
+  });
+  const importPolicy = createExactStateImportPolicy({
+    authorizations: [{
+      eventId: baselineEvent.event_id,
+      eventChecksum: calculateCurrentStateEventChecksum(baselineEvent),
+      sourceKind: "user_confirmed",
+      sourceRef: baselineEvent.source_ref,
+      verification: "Exact value confirmed at recovery cutover",
+      verifiedAt: now(),
+    }],
+    now,
+    maxAuthorizationAgeMs: 60_000,
+  });
+  await state.import(manifest, { policy: importPolicy });
+  const preview = await state.planCorrection({
+    previewId: "preview-recovery-2",
+    event: {
+      ...baselineEvent,
+      seq: 2,
+      event_id: "event-recovery-correction-2",
+      event_type: "correction",
+      payload: { value: "Hangzhou" },
+      source_ref: undefined,
+      idempotency_key: "event-recovery-correction-key-2",
+    },
+    expiresAt: "2099-08-15T00:00:00.000Z",
+  });
+  const correctionInput = {
+    preview,
+    previewChecksum: preview.preview_checksum,
+    correctionId: "correction-recovery-2",
+    sessionKeyHash: `sha256:${"7".repeat(64)}`,
+    priorRunId: "run-recovery-prior-2",
+    outboxIdempotencyKey: "outbox-recovery-key-2",
+  };
+  const correctionResult = await state.applyCorrection(correctionInput);
+  state.close();
+
+  const recovery = createRuntimeRecoveryPort({
+    stateRoot: sourceRoot,
+    packageVersion: "0.0.0",
+    storageSchemaVersion: "2",
+    now,
+  });
+  const snapshot = await recovery.backup({
+    instanceId,
+    authorityRevision: "revision-recovery-1",
+    outputDirectory: join(root, "snapshot"),
+    consistency: "transactional_boundary",
+  });
+  const targetRoot = join(root, "target-state");
+  const target = createRuntimeRecoveryPort({
+    stateRoot: targetRoot,
+    packageVersion: "0.0.0",
+    storageSchemaVersion: "2",
+    now,
+  });
+  const report = await target.restore(snapshot, {
+    targetInstanceId: instanceId,
+    restoreIdempotencyKey: "restore-state-management-1",
+    rollback: "required",
+    expectedInstanceId: instanceId,
+    supportedSnapshotSchemaVersions: [
+      "cognitive-runtime.runtime-recovery-snapshot-manifest/v2",
+    ],
+    supportedStorageSchemaVersions: ["2"],
+    supportedPackageVersions: ["0.0.0"],
+    supportedContractVersions: ["v2"],
+  });
+  assert.equal(report.integrity_result.status, "pass");
+
+  const restored = createStateManagementPort({ stateRoot: targetRoot, instanceId, now });
+  assert.equal((await restored.import(manifest, { policy: importPolicy })).imported, false);
+  assert.deepEqual(await restored.applyCorrection(correctionInput), correctionResult);
+  assert.deepEqual(await restored.view({ revision: 0 }), initialized.view);
+  restored.close();
+});
 
 test("backup exports one immutable authoritative snapshot and verify is read-only", async (t) => {
   const fixture = await createFixture(t, "backup");
@@ -356,7 +470,7 @@ test("restore migrates a supported older storage schema inside Runtime", async (
   const target = createRuntimeRecoveryPort({
     stateRoot: join(source.root, "target-state"),
     packageVersion: "0.0.0",
-    storageSchemaVersion: "1",
+    storageSchemaVersion: "2",
   });
 
   const report = await target.restore(snapshot, {
@@ -365,13 +479,16 @@ test("restore migrates a supported older storage schema inside Runtime", async (
     rollback: "required",
     supportedSnapshotSchemaVersions:
       verifyOptions.supportedSnapshotSchemaVersions,
-    supportedStorageSchemaVersions: ["0", "1"],
+    supportedStorageSchemaVersions: ["0", "1", "2"],
     supportedPackageVersions: verifyOptions.supportedPackageVersions,
     supportedContractVersions: verifyOptions.supportedContractVersions,
   });
 
   assert.equal(report.integrity_result.status, "pass");
-  assert.deepEqual(report.storage_migrations_applied, ["STORAGE_SCHEMA_0_TO_1"]);
+  assert.deepEqual(report.storage_migrations_applied, [
+    "STORAGE_SCHEMA_0_TO_1",
+    "STORAGE_SCHEMA_1_TO_2",
+  ]);
 });
 
 test("restore interruption rolls the original target back", async (t) => {

@@ -38,6 +38,9 @@ test("public entry does not expose SQLite storage paths", async () => {
   assert.equal(typeof publicEntry.runReleaseConformance, "function");
   assert.equal(typeof publicEntry.createReleaseProvenance, "function");
   assert.equal(typeof publicEntry.rehearseRecoveryTransport, "function");
+  assert.equal(typeof publicEntry.createStateManagementPort, "function");
+  assert.equal(typeof publicEntry.createExactStateImportPolicy, "function");
+  assert.equal("runtimeDatabasePath" in publicEntry, false);
 });
 
 test("plugin manifest declares a strict config and packaged Skill", async () => {

@@ -193,3 +193,21 @@ export type {
   StateViewEntry,
   StateViewRequest,
 } from "./state/index.js";
+export {
+  calculateCurrentStateEventChecksum,
+  calculateStateImportManifestChecksum,
+  createExactStateImportPolicy,
+  createStateManagementPort,
+  prepareStateImportManifest,
+} from "./state/management.js";
+export type {
+  ExactStateImportAuthorization,
+  StateCorrectionApplyInput,
+  StateCorrectionPlanInput,
+  StateCorrectionResult,
+  StateImportResult,
+  StateImportSourcePolicy,
+  StateInitializationResult,
+  StateManagementOptions,
+  StateManagementPort,
+} from "./state/management.js";

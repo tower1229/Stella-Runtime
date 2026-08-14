@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -9,6 +8,11 @@ import type {
   ReanswerOutbox,
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
+import {
+  calculateStateViewChecksum,
+  compareCanonicalStrings,
+  stateViewVersion,
+} from "./canonical.js";
 
 export type ReanswerDeliveryMode =
   | "command_continuation"
@@ -48,6 +52,11 @@ export interface SessionReanswerPort<TClaim = ReanswerClaim> {
 
 export interface CorrectionInput {
   readonly event: CurrentStateEvent;
+  readonly confirmation?: {
+    readonly previewId: string;
+    readonly previewChecksum: string;
+    readonly receiptId?: string;
+  };
   readonly outbox: {
     readonly correctionId: string;
     readonly instanceId: string;
@@ -101,6 +110,14 @@ export interface StatePort<
   correct(input: TCorrection): Promise<TReceipt>;
 }
 
+export interface StateBaselineImportInput {
+  readonly importId: string;
+  readonly manifestChecksum: string;
+  readonly initializedHeadChecksum: string;
+  readonly events: readonly CurrentStateEvent[];
+  readonly expectedHead: CurrentStateHead;
+}
+
 const schema = `
 CREATE TABLE IF NOT EXISTS state_events (
   seq INTEGER PRIMARY KEY,
@@ -152,6 +169,53 @@ CREATE UNIQUE INDEX IF NOT EXISTS runtime_state_events_idempotency
   ON state_events(idempotency_key);
 `;
 
+export const STATE_MANAGEMENT_TABLES_SCHEMA_V2 = `
+CREATE TABLE IF NOT EXISTS state_correction_confirmations (
+  correction_id TEXT PRIMARY KEY,
+  preview_id TEXT NOT NULL,
+  preview_checksum TEXT NOT NULL,
+  receipt_id TEXT UNIQUE,
+  FOREIGN KEY(correction_id) REFERENCES reanswer_outbox(correction_id)
+);
+CREATE TABLE IF NOT EXISTS state_imports (
+  import_id TEXT PRIMARY KEY,
+  manifest_checksum TEXT NOT NULL UNIQUE,
+  initialized_head_checksum TEXT NOT NULL,
+  final_head_checksum TEXT NOT NULL,
+  imported_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS state_view_history (
+  active_seq INTEGER PRIMARY KEY,
+  view_version TEXT NOT NULL,
+  checksum TEXT NOT NULL,
+  activated_at TEXT NOT NULL
+);
+`;
+
+export const applyStateManagementSchemaV2 = (
+  database: DatabaseSync,
+  appliedAt: string,
+): void => {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS runtime_schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    )
+  `);
+  database.exec(STATE_MANAGEMENT_TABLES_SCHEMA_V2);
+  database.exec(`
+    INSERT OR IGNORE INTO state_view_history(active_seq, view_version, checksum, activated_at)
+    SELECT active_seq, view_version, checksum, activated_at FROM state_head WHERE singleton = 1
+  `);
+  database
+    .prepare(
+      "INSERT OR IGNORE INTO runtime_schema_migrations(version, name, applied_at) VALUES (2, 'state-management', ?)",
+    )
+    .run(appliedAt);
+  database.exec("PRAGMA user_version = 2");
+};
+
 const migrateRuntimeDatabase = (database: DatabaseSync): void => {
   database.exec("BEGIN IMMEDIATE");
   try {
@@ -173,7 +237,12 @@ const migrateRuntimeDatabase = (database: DatabaseSync): void => {
         )
         .run(new Date().toISOString());
     }
-    database.exec("PRAGMA user_version = 1");
+    const stateManagementApplied = database
+      .prepare("SELECT 1 FROM runtime_schema_migrations WHERE version = 2")
+      .get();
+    if (stateManagementApplied === undefined) {
+      applyStateManagementSchemaV2(database, new Date().toISOString());
+    }
     database.exec("COMMIT");
   } catch (error: unknown) {
     database.exec("ROLLBACK");
@@ -287,29 +356,17 @@ const optionalString = (
   return typeof value === "string" ? value : undefined;
 };
 
-const canonicalize = (value: unknown): unknown => {
-  if (Array.isArray(value)) {
-    return value.map(canonicalize);
-  }
-  if (typeof value !== "object" || value === null) {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
-      .map(([key, child]) => [key, canonicalize(child)]),
-  );
-};
-
 const checksumView = (
   instanceId: string,
   revision: number,
   states: readonly StateViewEntry[],
 ): string => {
-  const digest = createHash("sha256")
-    .update(JSON.stringify(canonicalize({ instanceId, revision, states })))
-    .digest("hex");
-  return `sha256:${digest}`;
+  const values = states.map((entry) => ({
+    state_id: entry.stateId,
+    value: Object.hasOwn(entry.payload, "value") ? entry.payload.value : entry.payload,
+    source_event_id: entry.eventId,
+  }));
+  return calculateStateViewChecksum(instanceId, revision, values);
 };
 
 const deepFreeze = <T>(value: T): Readonly<T> => {
@@ -337,6 +394,7 @@ export class SqliteStateStore
     if (options.initialHead !== undefined) {
       requireValidContract("current-state-head", options.initialHead);
     }
+    const databaseExisted = options.databasePath === ":memory:" || existsSync(options.databasePath);
     this.#database = new DatabaseSync(options.databasePath, {
       readOnly: options.readOnly ?? false,
     });
@@ -355,23 +413,145 @@ export class SqliteStateStore
         throw new Error("STATE_STORE_NOT_INITIALIZED");
       }
     } else {
-      if (options.initialHead === undefined) {
+      if (options.initialHead === undefined && !databaseExisted) {
         this.#database.close();
         throw new Error("STATE_INITIAL_HEAD_REQUIRED");
       }
       this.#database.exec("PRAGMA foreign_keys = ON");
       migrateRuntimeDatabase(this.#database);
       initializeRuntimeRunGuard(this.#database);
-      this.#database
+      if (options.initialHead !== undefined) {
+        this.#database
+          .prepare(
+            "INSERT OR IGNORE INTO state_head(singleton, active_seq, view_version, checksum, activated_at) VALUES (1, ?, ?, ?, ?)",
+          )
+          .run(
+            options.initialHead.active_seq,
+            options.initialHead.view_version,
+            options.initialHead.checksum,
+            options.initialHead.activated_at,
+          );
+        this.#database
+          .prepare(
+            "INSERT OR IGNORE INTO state_view_history(active_seq, view_version, checksum, activated_at) VALUES (?, ?, ?, ?)",
+          )
+          .run(
+            options.initialHead.active_seq,
+            options.initialHead.view_version,
+            options.initialHead.checksum,
+            options.initialHead.activated_at,
+          );
+      } else if (this.#database.prepare("SELECT 1 FROM state_head WHERE singleton = 1").get() === undefined) {
+        this.#database.close();
+        throw new Error("STATE_HEAD_MISSING");
+      }
+    }
+  }
+
+  importBaseline(input: StateBaselineImportInput): boolean {
+    input.events.forEach((event) => requireValidContract("current-state-event", event));
+    requireValidContract("current-state-head", input.expectedHead);
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const existingImport = this.#database
         .prepare(
-          "INSERT OR IGNORE INTO state_head(singleton, active_seq, view_version, checksum, activated_at) VALUES (1, ?, ?, ?, ?)",
+          "SELECT import_id, manifest_checksum FROM state_imports WHERE import_id = ? OR manifest_checksum = ? LIMIT 1",
+        )
+        .get(input.importId, input.manifestChecksum);
+      if (existingImport !== undefined) {
+        if (readString(existingImport, "import_id") !== input.importId ||
+          readString(existingImport, "manifest_checksum") !== input.manifestChecksum) {
+          throw new Error("STATE_IMPORT_IDEMPOTENCY_CONFLICT");
+        }
+        this.#database.exec("COMMIT");
+        return false;
+      }
+      const head = this.getHead();
+      const served = this.#database
+        .prepare("SELECT 1 FROM runtime_served_runs LIMIT 1")
+        .get();
+      if (served !== undefined) {
+        throw new Error("STATE_IMPORT_AFTER_FIRST_RUN");
+      }
+      if (head.active_seq !== 0 || this.getEventCount() !== 0 ||
+        head.checksum !== input.initializedHeadChecksum) {
+        throw new Error("STATE_IMPORT_REQUIRES_EMPTY_HEAD");
+      }
+      for (const event of input.events) {
+        this.#database
+          .prepare(
+            `INSERT INTO state_events(
+              seq, event_id, state_id, event_type, payload, observed_at, source_kind,
+              source_ref, corrects_event_id, supersedes_event_id, idempotency_key, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            event.seq,
+            event.event_id,
+            event.state_id,
+            event.event_type,
+            JSON.stringify(event.payload),
+            event.observed_at,
+            event.source_kind,
+            event.source_ref ?? null,
+            event.corrects_event_id ?? null,
+            event.supersedes_event_id ?? null,
+            event.idempotency_key,
+            event.created_at,
+          );
+      }
+      for (const event of input.events) {
+        const view = this.#reduceView(event.seq);
+        this.#database
+          .prepare(
+            "INSERT INTO state_view_history(active_seq, view_version, checksum, activated_at) VALUES (?, ?, ?, ?)",
+          )
+          .run(
+            view.revision,
+            view.viewVersion,
+            view.checksum,
+            input.expectedHead.activated_at,
+          );
+      }
+      const update = this.#database
+        .prepare(
+          "UPDATE state_head SET active_seq = ?, view_version = ?, checksum = ?, activated_at = ? WHERE singleton = 1 AND active_seq = 0",
         )
         .run(
-          options.initialHead.active_seq,
-          options.initialHead.view_version,
-          options.initialHead.checksum,
-          options.initialHead.activated_at,
+          input.expectedHead.active_seq,
+          input.expectedHead.view_version,
+          input.expectedHead.checksum,
+          input.expectedHead.activated_at,
         );
+      if (Number(update.changes) !== 1) {
+        throw new Error("STATE_HEAD_CAS_FAILED");
+      }
+      this.#database
+        .prepare(
+          "INSERT INTO state_imports(import_id, manifest_checksum, initialized_head_checksum, final_head_checksum, imported_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(
+          input.importId,
+          input.manifestChecksum,
+          input.initializedHeadChecksum,
+          input.expectedHead.checksum,
+          input.expectedHead.activated_at,
+        );
+      this.#database
+        .prepare(
+          "INSERT OR IGNORE INTO state_view_history(active_seq, view_version, checksum, activated_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(
+          input.expectedHead.active_seq,
+          input.expectedHead.view_version,
+          input.expectedHead.checksum,
+          input.expectedHead.activated_at,
+        );
+      this.#database.exec("COMMIT");
+      return true;
+    } catch (error: unknown) {
+      this.#database.exec("ROLLBACK");
+      throw error;
     }
   }
 
@@ -388,6 +568,7 @@ export class SqliteStateStore
         input.outbox.idempotencyKey,
       );
       if (existing !== null) {
+        this.#assertExistingConfirmation(input);
         this.#database.exec("COMMIT");
         return existing;
       }
@@ -469,6 +650,16 @@ export class SqliteStateStore
       }
       this.#database
         .prepare(
+          "INSERT INTO state_view_history(active_seq, view_version, checksum, activated_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(
+          nextHead.active_seq,
+          nextHead.view_version,
+          nextHead.checksum,
+          nextHead.activated_at,
+        );
+      this.#database
+        .prepare(
           `INSERT INTO reanswer_outbox(
             correction_id, instance_id, session_key_hash, prior_run_id,
             new_view_version, status, attempt_count, successful_completion_count,
@@ -485,6 +676,18 @@ export class SqliteStateStore
           outbox.created_at,
           outbox.updated_at,
         );
+      if (input.confirmation !== undefined) {
+        this.#database
+          .prepare(
+            "INSERT INTO state_correction_confirmations(correction_id, preview_id, preview_checksum, receipt_id) VALUES (?, ?, ?, ?)",
+          )
+          .run(
+            outbox.correction_id,
+            input.confirmation.previewId,
+            input.confirmation.previewChecksum,
+            input.confirmation.receiptId ?? null,
+          );
+      }
       this.#database.exec("COMMIT");
       return outbox;
     } catch (error: unknown) {
@@ -632,6 +835,16 @@ export class SqliteStateStore
     return row === undefined ? 0 : readNumber(row, "count");
   }
 
+  getViewActivatedAt(revision: number): string {
+    const history = this.#database
+      .prepare("SELECT activated_at FROM state_view_history WHERE active_seq = ?")
+      .get(revision);
+    if (history !== undefined) {
+      return readString(history, "activated_at");
+    }
+    throw new Error(`STATE_VIEW_HISTORY_MISSING:${revision}`);
+  }
+
   markRunServed(runId: string): void {
     recordServedRun(this.#database, this.#databasePath, runId, this.#now());
   }
@@ -647,6 +860,23 @@ export class SqliteStateStore
       )
       .get(correctionId, idempotencyKey);
     return row === undefined ? null : this.#toOutbox(row);
+  }
+
+  #assertExistingConfirmation(input: CorrectionInput): void {
+    if (input.confirmation === undefined) {
+      return;
+    }
+    const row = this.#database
+      .prepare(
+        "SELECT preview_id, preview_checksum, receipt_id FROM state_correction_confirmations WHERE correction_id = ?",
+      )
+      .get(input.outbox.correctionId);
+    if (row === undefined ||
+      readString(row, "preview_id") !== input.confirmation.previewId ||
+      readString(row, "preview_checksum") !== input.confirmation.previewChecksum ||
+      optionalString(row, "receipt_id") !== input.confirmation.receiptId) {
+      throw new Error("STATE_CORRECTION_IDEMPOTENCY_CONFLICT");
+    }
   }
 
   #toOutbox(row: Readonly<Record<string, unknown>>): ReanswerOutbox {
@@ -715,13 +945,12 @@ export class SqliteStateStore
       });
     }
     const states = [...current.values()].sort((left, right) =>
-      left.stateId < right.stateId ? -1 : left.stateId > right.stateId ? 1 : 0
-    );
+      compareCanonicalStrings(left.stateId, right.stateId));
     const checksum = checksumView(this.#instanceId, revision, states);
     const view: StateView = {
       instanceId: this.#instanceId,
       revision,
-      viewVersion: `state-view-${revision}-${checksum.slice(7, 19)}`,
+      viewVersion: stateViewVersion(revision, checksum),
       checksum,
       states,
     };

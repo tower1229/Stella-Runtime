@@ -20,15 +20,20 @@ import type {
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
 import {
+  applyStateManagementSchemaV2,
   initializeRuntimeRunGuard,
   runtimeDatabasePath,
   runtimeRestoreLockPath,
+  STATE_MANAGEMENT_TABLES_SCHEMA_V2,
 } from "../state/index.js";
 
 export const AUTHORITATIVE_RUNTIME_STATE_CONTENTS = [
   "current_state_event_ledger",
   "active_state_head",
   "unfinished_corrections",
+  "state_import_receipts",
+  "state_correction_confirmations",
+  "state_view_activation_history",
   "reanswer_outbox",
   "storage_schema_version",
 ] as const;
@@ -53,8 +58,8 @@ const REPORT_SCHEMA_VERSION =
 const CONTRACT_VERSION = "v2" as const;
 export const RUNTIME_RECOVERY_COMPATIBILITY = {
   snapshotSchemaVersions: [SNAPSHOT_SCHEMA_VERSION],
-  storageSchemaVersions: ["0", "1"],
-  currentStorageSchemaVersion: "1",
+  storageSchemaVersions: ["0", "1", "2"],
+  currentStorageSchemaVersion: "2",
   contractVersions: [CONTRACT_VERSION],
 } as const;
 const SNAPSHOT_DATABASE_PATH = "authoritative/state.sqlite";
@@ -123,6 +128,7 @@ CREATE TABLE reanswer_outbox (
 CREATE UNIQUE INDEX one_open_reanswer_per_session
   ON reanswer_outbox(session_key_hash)
   WHERE status IN ('pending', 'in_flight');
+${STATE_MANAGEMENT_TABLES_SCHEMA_V2}
 `;
 
 export interface RuntimeRecoverySnapshot {
@@ -387,7 +393,12 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 const insertRows = (
   target: DatabaseSync,
-  table: "state_events" | "reanswer_outbox",
+  table:
+    | "state_events"
+    | "reanswer_outbox"
+    | "state_imports"
+    | "state_correction_confirmations"
+    | "state_view_history",
   columns: readonly string[],
   rows: readonly Row[],
 ): void => {
@@ -412,6 +423,9 @@ const readSnapshotState = (
     "state_events",
     "state_head",
     "reanswer_outbox",
+    "state_imports",
+    "state_correction_confirmations",
+    "state_view_history",
     ...(allowRuntimeRunGuard
       ? ["runtime_served_runs", "runtime_schema_migrations"]
       : []),
@@ -612,6 +626,14 @@ const migrateStorage = (
     database.exec("ALTER TABLE reanswer_outbox ADD COLUMN last_error_code TEXT");
     return ["STORAGE_SCHEMA_0_TO_1"];
   }
+  if (sourceVersion === "1" && targetVersion === "2") {
+    applyStateManagementSchemaV2(database, new Date().toISOString());
+    return ["STORAGE_SCHEMA_1_TO_2"];
+  }
+  if (sourceVersion === "0" && targetVersion === "2") {
+    const migrations = [...migrateStorage(database, "0", "1")];
+    return [...migrations, ...migrateStorage(database, "1", "2")];
+  }
   throw new Error("STORAGE_MIGRATION_UNAVAILABLE");
 };
 
@@ -724,6 +746,24 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
           )
           .all(),
       );
+      const imports = toRows(
+        source.prepare("SELECT * FROM state_imports ORDER BY import_id").all(),
+      );
+      const confirmations = toRows(
+        source
+          .prepare(
+            `SELECT confirmation.* FROM state_correction_confirmations confirmation
+             JOIN reanswer_outbox outbox ON outbox.correction_id = confirmation.correction_id
+             WHERE outbox.status IN ('pending', 'in_flight')
+             ORDER BY confirmation.correction_id`,
+          )
+          .all(),
+      );
+      const viewHistory = toRows(
+        source
+          .prepare("SELECT * FROM state_view_history WHERE active_seq <= ? ORDER BY active_seq")
+          .all(readNumber(head, "active_seq")),
+      );
 
       target = new DatabaseSync(artifactPath);
       target.exec(portableSchema);
@@ -777,6 +817,30 @@ class RuntimeRecovery implements RuntimeRecoveryPort {
           "updated_at",
         ],
         outbox,
+      );
+      insertRows(
+        target,
+        "state_imports",
+        [
+          "import_id",
+          "manifest_checksum",
+          "initialized_head_checksum",
+          "final_head_checksum",
+          "imported_at",
+        ],
+        imports,
+      );
+      insertRows(
+        target,
+        "state_correction_confirmations",
+        ["correction_id", "preview_id", "preview_checksum", "receipt_id"],
+        confirmations,
+      );
+      insertRows(
+        target,
+        "state_view_history",
+        ["active_seq", "view_version", "checksum", "activated_at"],
+        viewHistory,
       );
       target.exec("COMMIT");
       source.exec("COMMIT");

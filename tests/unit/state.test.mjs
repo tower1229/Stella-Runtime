@@ -107,8 +107,11 @@ test("runtime migration is versioned, repeatable, and failed migration is atomic
     .prepare("SELECT version, name FROM runtime_schema_migrations ORDER BY version")
     .all()
     .map((row) => ({ version: row.version, name: row.name }));
-  assert.deepEqual(migrations, [{ version: 1, name: "current-state-and-reanswer" }]);
-  assert.equal(database.prepare("PRAGMA user_version").get().user_version, 1);
+  assert.deepEqual(migrations, [
+    { version: 1, name: "current-state-and-reanswer" },
+    { version: 2, name: "state-management" },
+  ]);
+  assert.equal(database.prepare("PRAGMA user_version").get().user_version, 2);
   database.close();
 
   const brokenPath = join(root, "broken.sqlite");
