@@ -11,7 +11,7 @@
     "mode": { "enum": ["off", "observe", "enforce"] },
     "runtime_storage": { "type": "string", "minLength": 1 },
     "generation_storage": { "type": "string", "minLength": 1 },
-    "host": { "type": "object", "additionalProperties": false, "required": ["agent_id", "eligible_scope"], "properties": { "agent_id": { "$ref": "#/$defs/id" }, "eligible_scope": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } } } },
+    "host": { "type": "object", "additionalProperties": false, "required": ["agent_id", "eligible_scope"], "properties": { "agent_id": { "$ref": "#/$defs/id" }, "eligible_scope": { "const": ["private_main_session"] } } },
     "authority_owner": { "type": "object", "additionalProperties": false, "required": ["provider", "actor_id"], "properties": { "provider": { "const": "telegram" }, "actor_id": { "type": "string", "minLength": 1 } } },
     "limits": { "type": "object", "additionalProperties": false, "required": ["max_active_runs", "drain_timeout_ms"], "properties": { "max_active_runs": { "type": "integer", "minimum": 1 }, "drain_timeout_ms": { "type": "integer", "minimum": 1 } } },
     "adapters": { "type": "object", "additionalProperties": false, "required": ["authority_checkout", "host_retrieval"], "properties": { "authority_checkout": { "type": "string", "minLength": 1 }, "host_retrieval": { "type": "string", "minLength": 1 }, "public_corpus": { "type": "string", "minLength": 1 } } }

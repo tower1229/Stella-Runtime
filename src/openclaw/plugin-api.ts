@@ -59,8 +59,6 @@ export interface PluginHookContext {
   readonly sessionKey?: string;
   readonly toolCallId?: string;
   readonly agentId?: string;
-  readonly scope?: string;
-  readonly runKind?: string;
   readonly trigger?: string;
   readonly messageProvider?: string;
   readonly channelId?: string;

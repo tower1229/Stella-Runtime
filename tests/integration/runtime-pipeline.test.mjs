@@ -89,12 +89,11 @@ const runtimeConfig = (mode = "enforce") => ({
 
 const runContext = (runId, extra = {}) => ({
   runId,
-  sessionKey: `agent:main:${runId}`,
+  sessionKey: "agent:main:telegram:direct:owner-synthetic",
   agentId: "main",
-  scope: "private_main_session",
-  runKind: "agent",
   messageProvider: "telegram",
   senderId: "owner-synthetic",
+  chatId: "owner-synthetic",
   ...extra,
 });
 
@@ -321,6 +320,14 @@ test("runtime config rejects inline static Binding and malformed instance identi
     () => runtime.readRuntimeConfig({ runtime: malformedIdentity }),
     /RUNTIME_CONFIG_INVALID/,
   );
+  const sharedScope = {
+    ...runtimeConfig(),
+    host: { agent_id: "main", eligible_scope: ["shared_session"] },
+  };
+  assert.throws(
+    () => runtime.readRuntimeConfig({ runtime: sharedScope }),
+    /RUNTIME_CONFIG_INVALID/,
+  );
 });
 
 test("agent end records a minimal privacy-safe overlay and always clears the Run", async () => {
@@ -488,7 +495,7 @@ test("host completion nested prompt hook is excluded from Runtime routing", asyn
           completionCalls += 1;
           assert.equal(await hooks.get("before_prompt_build")(
             { prompt: "Nested host completion", messages: [] },
-            runContext("run-host-completion", { runKind: "router_completion" }),
+            runContext("run-host-completion"),
           ), undefined);
           return { text: JSON.stringify(routerResult()) };
         },

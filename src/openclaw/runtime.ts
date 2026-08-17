@@ -92,29 +92,34 @@ const agentIdFrom = (context: PluginHookContext): string | null => {
   return match?.[1] ?? null;
 };
 
+const isPrivateMainSession = (
+  sessionKey: string | undefined,
+  config: InstanceRuntimeConfig,
+): boolean => {
+  if (sessionKey === `agent:${config.host.agent_id}:main`) return true;
+  if (sessionKey === undefined) return false;
+  const segments = sessionKey.split(":");
+  return segments[0] === "agent" &&
+    segments[1] === config.host.agent_id &&
+    segments.at(-2) === "direct" &&
+    segments.at(-1) === config.authority_owner.actor_id;
+};
+
 const isEligibleRun = (
-  event: Readonly<Record<string, unknown>>,
   context: PluginHookContext,
   config: InstanceRuntimeConfig,
 ): boolean => {
-  if (context.runKind !== "agent") return false;
-  if (event.runKind !== undefined && event.runKind !== context.runKind) return false;
   if (agentIdFrom(context) !== config.host.agent_id) return false;
-  if (
-    context.sessionKey === undefined ||
-    /:(?:group|channel|cron|subagent):/i.test(context.sessionKey)
-  ) {
-    return false;
-  }
+  if (!isPrivateMainSession(context.sessionKey, config)) return false;
+  if (context.trigger !== undefined && context.trigger !== "user") return false;
   if (
     context.messageProvider !== config.authority_owner.provider ||
-    context.senderId !== config.authority_owner.actor_id
+    context.senderId !== config.authority_owner.actor_id ||
+    context.chatId !== config.authority_owner.actor_id
   ) {
     return false;
   }
-  if (context.scope !== "private_main_session") return false;
-  if (event.scope !== undefined && event.scope !== context.scope) return false;
-  return config.host.eligible_scope.includes(context.scope);
+  return config.host.eligible_scope.includes("private_main_session");
 };
 
 const completionText = (value: unknown): string => {
@@ -391,7 +396,7 @@ export const registerRuntimeHooks = (
     if (config.mode === "off") {
       return;
     }
-    if (!isEligibleRun(event, context, config)) {
+    if (!isEligibleRun(context, config)) {
       return;
     }
     const runId = runIdFrom(event, context);

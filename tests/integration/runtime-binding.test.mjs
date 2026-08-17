@@ -123,12 +123,11 @@ const createRuntime = ({ mode = "enforce", compile } = {}) => {
 
 const eligible = (runId) => ({
   runId,
-  sessionKey: `agent:main:${runId}`,
+  sessionKey: "agent:main:telegram:direct:owner-synthetic",
   agentId: "main",
-  scope: "private_main_session",
-  runKind: "agent",
   messageProvider: "telegram",
   senderId: "owner-synthetic",
+  chatId: "owner-synthetic",
 });
 
 test("eligible Run compiles once and pins Generation and State View until cleanup", async () => {
@@ -149,7 +148,10 @@ test("eligible Run compiles once and pins Generation and State View until cleanu
     { prompt: "changed", messages: [] }, eligible("run-one"),
   );
   const secondRun = await runtime.hooks.get("before_prompt_build")(
-    { prompt: "second", messages: [] }, eligible("run-two"),
+    { prompt: "second", messages: [] }, {
+      ...eligible("run-two"),
+      sessionKey: "agent:main:main",
+    },
   );
 
   assert.equal(compileCalls, 2);
@@ -166,38 +168,28 @@ test("eligible Run compiles once and pins Generation and State View until cleanu
   assert.equal(runtime.controller.metrics().activeRuns, 0);
 });
 
-test("scope filtering excludes callbacks, probes, index work, and other agents", async () => {
+test("exact OpenClaw hook fields exclude callbacks, probes, shared chats, and other agents", async () => {
   let compileCalls = 0;
   const runtime = createRuntime({ compile: async () => {
     compileCalls += 1;
     return binding();
   } });
   const excluded = [
-    { ...eligible("router"), runKind: "router_completion" },
-    { ...eligible("confirmation"), runKind: "confirmation_callback" },
-    { ...eligible("probe"), runKind: "operational_probe" },
-    { ...eligible("index"), runKind: "index_operation" },
-    { ...eligible("shared"), scope: "shared_session" },
+    { ...eligible("confirmation"), trigger: "confirmation_callback" },
+    { ...eligible("probe"), trigger: "operational_probe" },
+    { ...eligible("index"), trigger: "index_operation" },
+    { ...eligible("shared"), sessionKey: "agent:main:telegram:group:owner-synthetic" },
     { ...eligible("group"), sessionKey: "agent:main:telegram:group:synthetic" },
     { ...eligible("other"), agentId: "public-agent" },
     { ...eligible("wrong-owner"), senderId: "someone-else" },
-    { ...eligible("unclassified"), messageProvider: undefined, senderId: undefined },
-    { ...eligible("missing-kind"), runKind: undefined },
-    { ...eligible("missing-scope"), scope: undefined },
+    { ...eligible("wrong-chat"), chatId: "shared-chat" },
+    { ...eligible("unclassified"), messageProvider: undefined, senderId: undefined, chatId: undefined },
   ];
   for (const context of excluded) {
     assert.equal(await runtime.hooks.get("before_prompt_build")(
       { prompt: "excluded", messages: [] }, context,
     ), undefined);
   }
-  assert.equal(await runtime.hooks.get("before_prompt_build")(
-    { prompt: "conflicting kind", messages: [], runKind: "confirmation_callback" },
-    eligible("conflicting-kind"),
-  ), undefined);
-  assert.equal(await runtime.hooks.get("before_prompt_build")(
-    { prompt: "conflicting scope", messages: [], scope: "shared_session" },
-    eligible("conflicting-scope"),
-  ), undefined);
   assert.equal(compileCalls, 0);
   assert.equal(runtime.calls.length, 0);
 });

@@ -10,10 +10,7 @@ export interface InstanceRuntimeConfig {
   generation_storage: string;
   host: {
     agent_id: Id;
-    /**
-     * @minItems 1
-     */
-    eligible_scope: [string, ...string[]];
+    eligible_scope: ["private_main_session"];
   };
   authority_owner: {
     provider: "telegram";

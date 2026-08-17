@@ -919,6 +919,11 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
     );
     assert.deepEqual(inspection.plugin.cliCommands, ["cognitive"]);
     assert.equal(inspection.plugin.configJsonSchema.additionalProperties, false);
+    assert.deepEqual(
+      inspection.plugin.configJsonSchema.properties.runtime.properties.host
+        .properties.eligible_scope.const,
+      ["private_main_session"],
+    );
     const pluginRoot = dirname(dirname(dirname(inspection.plugin.source)));
     environment.STELLA_RUNTIME_PROBE_ROOT = pluginRoot;
     await verifyRejectedPathsAbsent(pluginRoot);
