@@ -14,6 +14,9 @@ Versioning; cognitive contract namespaces remain independently versioned.
   Receipt, Generation, Host/config identity, and State View for each eligible
   private Run; removes inline static Binding configuration and fails closed in
   `enforce` when activation proof is missing, stale, or inconsistent.
+- adds the public `sync` Activation Barrier with a durable Maintenance Gate and
+  Sync Journal, exact Host/Projection/config/retrieval proof, verified prior-state
+  recovery, Activation Receipt creation, and final atomic Active Pointer switch.
 
 ## [0.1.0] - 2026-08-13
 

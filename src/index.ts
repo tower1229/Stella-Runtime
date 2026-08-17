@@ -224,6 +224,24 @@ export type {
   BindingCompilerInput,
   BindingCompilerPort,
 } from "./runtime/binding.js";
+export {
+  loadMaintenanceGate,
+  MAINTENANCE_GATE_FILE,
+  recoverInterruptedSync,
+  syncGeneration,
+  SYNC_JOURNAL_FILE,
+} from "./sync/index.js";
+export type {
+  EligibleRunDrainPort,
+  HostIndexEvidence,
+  HostSnapshot,
+  HostTransitionPort,
+  MaintenanceGate,
+  SyncGenerationOptions,
+  SyncGenerationResult,
+  SyncRecoveryOptions,
+  SyncTarget,
+} from "./sync/index.js";
 export type {
   CorrectionInput,
   ReanswerAttempt,

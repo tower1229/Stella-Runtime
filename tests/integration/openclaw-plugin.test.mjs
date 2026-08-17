@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -104,17 +104,51 @@ test("OpenClaw discovers cognitive self-check through the plugin entry", async (
   ]);
 });
 
-test("OpenClaw exposes read-only validate, non-activating build, and generation show", async (t) => {
+test("OpenClaw exposes validate, build, generation show, and the full sync Barrier", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-openclaw-generation-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const authorityDirectory = join(root, "authority");
   const stateDirectory = join(root, "state");
   await writeSyntheticAuthority(authorityDirectory);
   const sourceRevision = await commitSyntheticAuthority(authorityDirectory);
+  const runtimeStorage = join(root, "runtime");
+  const runtimeConfig = {
+    schema_version: "cognitive-runtime.instance-runtime-config/v2",
+    instance_id: "instance-synthetic",
+    mode: "enforce",
+    runtime_storage: runtimeStorage,
+    generation_storage: join(stateDirectory, "generations"),
+    host: { agent_id: "main", eligible_scope: ["private_main_session"] },
+    authority_owner: { provider: "telegram", actor_id: "owner-synthetic" },
+    limits: { max_active_runs: 4, drain_timeout_ms: 30_000 },
+    adapters: {
+      authority_checkout: authorityDirectory,
+      host_retrieval: "openclaw-memory",
+    },
+  };
   const program = new FakeCommand();
   const api = {
     version: "0.1.0-beta.0",
-    runtime: { llm: { complete: async () => ({}) } },
+    pluginConfig: { runtime: runtimeConfig },
+    runtime: { version: "2026.6.34", llm: { complete: async () => ({}) } },
+    on() {},
+    cognitiveRuntimeHostTransition: {
+      async capture() { return { config_revision: "prior" }; },
+      async applyTarget() {},
+      async verifyTarget(target) {
+        return {
+          deepStatus: "pass",
+          generationId: target.syncGeneration,
+          sourceRevision: target.sourceRevision,
+          projectionChecksum: target.projectionChecksum,
+          hostConfigChecksum: target.hostConfigChecksum,
+          searchSentinelChecksum: `sha256:${"3".repeat(64)}`,
+          getSentinelChecksum: `sha256:${"4".repeat(64)}`,
+        };
+      },
+      async restore() {},
+      async verifyPrior() { return true; },
+    },
     registerCli(registrar) {
       return registrar({ program });
     },
@@ -143,6 +177,10 @@ test("OpenClaw exposes read-only validate, non-activating build, and generation 
       state: stateDirectory,
       json: true,
     });
+    await cognitive.children.get("sync").handler({
+      revision: sourceRevision,
+      json: true,
+    });
   } finally {
     console.log = originalLog;
   }
@@ -160,6 +198,14 @@ test("OpenClaw exposes read-only validate, non-activating build, and generation 
   assert.equal(output[2].sync_generation, output[1].sync_generation);
   assert.equal(output[2].source_revision, sourceRevision);
   assert.equal(output[2].active, false);
+  assert.equal(output[3].operation, "sync");
+  assert.equal(output[3].source_revision, sourceRevision);
+  assert.equal(output[3].sync_generation, output[1].sync_generation);
+  assert.equal(output[3].reused_generation, true);
+  assert.equal(
+    JSON.parse(await readFile(join(runtimeStorage, "active-generation.json"), "utf8")).generation_id,
+    output[1].sync_generation,
+  );
   assert.equal(generation.children.has("activate"), false);
   assert.equal(generation.children.has("rebuild"), false);
 });
@@ -188,7 +234,7 @@ test("OpenClaw registration does not use rejected host paths", async () => {
   await plugin.register(api);
 });
 
-test("OpenClaw plugin rejects Telegram registration on an unsmoked Host", () => {
+test("OpenClaw plugin rejects Telegram registration on an unsmoked Host", async () => {
   assert.throws(
     () => plugin.register({
       runtime: {
@@ -199,6 +245,74 @@ test("OpenClaw plugin rejects Telegram registration on an unsmoked Host", () => 
       registerCli() {},
     }),
     /TELEGRAM_CONFIRMATION_HOST_UNSUPPORTED/,
+  );
+});
+
+test("OpenClaw startup attempts interrupted sync recovery and keeps admission closed on failure", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-openclaw-sync-recovery-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const runtimeStorage = join(root, "runtime");
+  await mkdir(runtimeStorage, { recursive: true });
+  await writeFile(join(runtimeStorage, "maintenance-gate.json"), JSON.stringify({
+    target_source_revision: "b".repeat(40),
+    closed_at: "2026-08-17T00:00:00.000Z",
+  }));
+  await writeFile(join(runtimeStorage, "sync-journal.json"), JSON.stringify({
+    target_source_revision: "b".repeat(40),
+    sync_generation: `generation-${"b".repeat(64)}`,
+    prior: { config_revision: "prior" },
+    prior_pointer: { invalid: "pointer" },
+    started_at: "2026-08-17T00:00:00.000Z",
+    phase: "host_applied",
+  }));
+  const hooks = new Map();
+  const logs = [];
+  let restoreCalls = 0;
+  await plugin.register({
+    version: "0.2.0-test",
+    pluginConfig: { runtime: {
+      schema_version: "cognitive-runtime.instance-runtime-config/v2",
+      instance_id: "instance-synthetic",
+      mode: "enforce",
+      runtime_storage: runtimeStorage,
+      generation_storage: join(root, "generations"),
+      host: { agent_id: "main", eligible_scope: ["private_main_session"] },
+      authority_owner: { provider: "telegram", actor_id: "owner-synthetic" },
+      limits: { max_active_runs: 4, drain_timeout_ms: 30_000 },
+      adapters: { authority_checkout: join(root, "authority"), host_retrieval: "openclaw-memory" },
+    } },
+    runtime: { version: "2026.6.34", llm: { complete: async () => ({}) } },
+    on(name, handler) { hooks.set(name, handler); },
+    logger: { info() {}, warn(message) { logs.push(JSON.parse(message)); } },
+    cognitiveRuntimeHostTransition: {
+      async capture() { return {}; },
+      async applyTarget() {},
+      async verifyTarget() { throw new Error("UNEXPECTED_TARGET_VERIFY"); },
+      async restore() { restoreCalls += 1; },
+      async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
+    },
+    registerCli() {},
+  });
+
+  for (let attempt = 0; logs.length === 0 && attempt < 100; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  assert.equal(restoreCalls, 1);
+  assert.ok(logs.some((entry) => entry.reasonCode === "SYNC_RECOVERY_FAILED"));
+  await assert.rejects(
+    hooks.get("before_prompt_build")(
+      { prompt: "blocked", messages: [] },
+      {
+        runId: "run-startup-blocked",
+        sessionKey: "agent:main:telegram:direct:owner-synthetic",
+        agentId: "main",
+        trigger: "user",
+        messageProvider: "telegram",
+        senderId: "owner-synthetic",
+        chatId: "owner-synthetic",
+      },
+    ),
+    /COGNITIVE_BINDING_REJECTED:MAINTENANCE_GATE_CLOSED/,
   );
 });
 

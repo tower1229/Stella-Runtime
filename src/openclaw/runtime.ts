@@ -24,6 +24,7 @@ import {
   type ActiveRunBinding,
   type BindingCompilerPort,
 } from "../runtime/binding.js";
+import { loadMaintenanceGate } from "../sync/index.js";
 
 const ROUTER_TIMEOUT_MS = 10_000;
 const ROUTER_MAX_TOKENS = 512;
@@ -60,6 +61,9 @@ export interface RuntimeHookOptions {
 export interface RuntimeHookController {
   metrics(): RuntimeMetricsSnapshot;
   clearLifecycle(lifecycle: "reset" | "disable" | "restart"): number;
+  closeAdmission(targetSourceRevision: string): void;
+  openAdmission(): void;
+  drain(timeoutMs: number): Promise<void>;
 }
 
 const routerCompletionScope = new AsyncLocalStorage<boolean>();
@@ -247,6 +251,7 @@ export const registerRuntimeHooks = (
   let runsDegraded = 0;
   let remediationRevisions = 0;
   let lifecycleEpoch = 0;
+  let admissionClosed = false;
   const bindingCompiler = options.bindingCompiler ?? new FileBindingCompiler();
   const nonLlmDurationSamplesMs: number[] = [];
   const recordDuration = (startedAt: number): void => {
@@ -278,6 +283,27 @@ export const registerRuntimeHooks = (
       return config.mode === "enforce" && packet !== undefined
         ? { prependContext: packet }
         : undefined;
+    }
+    if (admissionClosed) {
+      runsDegraded += 1;
+      log("MAINTENANCE_GATE_CLOSED", runId);
+      throw new Error("COGNITIVE_BINDING_REJECTED:MAINTENANCE_GATE_CLOSED");
+    }
+    let maintenanceGate;
+    try {
+      maintenanceGate = await loadMaintenanceGate(config.runtime_storage);
+    } catch (error: unknown) {
+      const reason = error instanceof Error
+        ? error.message
+        : "MAINTENANCE_GATE_INVALID";
+      runsDegraded += 1;
+      log(reason, runId);
+      throw new Error(`COGNITIVE_BINDING_REJECTED:${reason}`);
+    }
+    if (maintenanceGate !== null) {
+      runsDegraded += 1;
+      log("MAINTENANCE_GATE_CLOSED", runId);
+      throw new Error("COGNITIVE_BINDING_REJECTED:MAINTENANCE_GATE_CLOSED");
     }
     if (invalidatedRuns.has(runId)) {
       runsDegraded += 1;
@@ -551,6 +577,24 @@ export const registerRuntimeHooks = (
       injectedPackets.clear();
       promptBuilds.clear();
       return scratch.clearLifecycle(lifecycle);
+    },
+    closeAdmission: (_targetSourceRevision) => {
+      admissionClosed = true;
+    },
+    openAdmission: () => {
+      admissionClosed = false;
+    },
+    drain: async (timeoutMs) => {
+      if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+        throw new Error("RUN_DRAIN_TIMEOUT_INVALID");
+      }
+      const deadline = Date.now() + timeoutMs;
+      while (scratch.size + promptBuilds.size > 0) {
+        if (Date.now() >= deadline) {
+          throw new Error("RUN_DRAIN_TIMEOUT");
+        }
+        await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
+      }
     },
   };
 };

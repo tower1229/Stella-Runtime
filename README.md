@@ -79,7 +79,7 @@ CI artifacts, or the npm tarball. Read [Data boundaries](docs/DATA-BOUNDARIES.md
 
 The main operational surface is `openclaw cognitive`:
 
-- read-only `validate`, non-activating `build`, and `generation show`;
+- read-only `validate`, non-activating `build`, full-barrier `sync`, and `generation show`;
 - `self-check`, `metrics`;
 - `state`, `trace get|query`;
 - `backup`, read-only `verify`, and rollback-safe `restore`.

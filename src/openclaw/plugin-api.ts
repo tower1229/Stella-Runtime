@@ -1,4 +1,5 @@
 import type { TelegramConfirmationPluginApi } from "./confirmation.js";
+import type { HostTransitionPort } from "../sync/index.js";
 
 export interface CliCommand {
   command(name: string): CliCommand;
@@ -42,6 +43,7 @@ export interface CognitiveRuntimePluginApi {
   };
   readonly on?: (event: PluginHookName, handler: PluginHookHandler) => void;
   readonly registerInteractiveHandler?: TelegramConfirmationPluginApi["registerInteractiveHandler"];
+  readonly cognitiveRuntimeHostTransition?: HostTransitionPort;
   registerCli(
     registrar: (context: { program: CliCommand }) => void | Promise<void>,
     options: { readonly descriptors: readonly CliDescriptor[] },

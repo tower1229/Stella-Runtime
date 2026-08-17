@@ -29,6 +29,10 @@ import {
   createStateManagementPort,
 } from "../state/management.js";
 import type { ExactStateImportAuthorization } from "../state/management.js";
+import {
+  recoverInterruptedSync,
+  syncGeneration,
+} from "../sync/index.js";
 import type { CognitiveRuntimePluginApi } from "./plugin-api.js";
 import {
   openClawCandidateAdmissionService,
@@ -246,6 +250,27 @@ const plugin = {
         });
       }
     }
+    if (
+      runtimeConfig !== null &&
+      runtimeController !== null &&
+      api.cognitiveRuntimeHostTransition !== undefined
+    ) {
+      void recoverInterruptedSync({
+          config: runtimeConfig,
+          hostVersion: api.runtime.version,
+          nodeVersion: process.versions.node,
+          host: api.cognitiveRuntimeHostTransition,
+          runs: runtimeController,
+        }).catch((error: unknown) => {
+        runtimeController.closeAdmission("startup-recovery-failed");
+        api.logger?.warn(JSON.stringify({
+          component: "cognitive-runtime",
+          reasonCode: error instanceof Error
+            ? error.message.split(":", 1)[0]
+            : "SYNC_RECOVERY_FAILED",
+        }));
+      });
+    }
     if (api.on !== undefined && api.pluginConfig?.recovery !== undefined) {
       const recoveryConfig = readRecoveryConfig(api.pluginConfig);
       api.on("before_prompt_build", async (_event, context) => {
@@ -345,6 +370,40 @@ const plugin = {
               generation_directory: result.generationDirectory,
               reused: result.reused,
               bootstrap_projections: result.bootstrapProjections,
+            }));
+          });
+
+        cognitive
+          .command("sync")
+          .description("Synchronize one committed Authority target through the full Activation Barrier")
+          .requiredOption("--revision <revision>", "Authority source revision")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            if (
+              runtimeConfig === null ||
+              runtimeController === null ||
+              api.cognitiveRuntimeHostTransition === undefined
+            ) {
+              throw new Error("SYNC_RUNTIME_PORTS_REQUIRED");
+            }
+            const result = await syncGeneration({
+              config: runtimeConfig,
+              sourceRevision: readStringOption(options, "revision"),
+              packageVersion,
+              hostVersion: api.runtime.version,
+              nodeVersion: process.versions.node,
+              host: api.cognitiveRuntimeHostTransition,
+              runs: runtimeController,
+            });
+            console.log(JSON.stringify({
+              operation: "sync",
+              package_version: packageVersion,
+              source_revision: result.sourceRevision,
+              sync_generation: result.syncGeneration,
+              reused_generation: result.reusedGeneration,
+              receipt_path: result.receiptPath,
+              pointer_path: result.pointerPath,
             }));
           });
 

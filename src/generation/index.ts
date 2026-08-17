@@ -98,6 +98,7 @@ export interface GenerationManifest {
 export interface GenerationBuildOptions {
   readonly authorityDirectory: string;
   readonly stateDirectory: string;
+  readonly generationsDirectory?: string;
   readonly sourceRevision: string;
   readonly packageVersion: string;
   readonly bootstrapTargets?: readonly BootstrapTarget[];
@@ -948,7 +949,9 @@ export async function buildGeneration(
     authority.activeGoverningSystem,
   );
 
-  const generationsDirectory = join(stateDirectory, "generations");
+  const generationsDirectory = options.generationsDirectory === undefined
+    ? join(stateDirectory, "generations")
+    : resolve(options.generationsDirectory);
   const generationDirectory = join(generationsDirectory, syncGeneration);
   const existing = await lstat(generationDirectory).catch(() => null);
   if (existing !== null) {

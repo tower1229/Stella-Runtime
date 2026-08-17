@@ -100,7 +100,7 @@ const binding = (suffix = "one", generationId = generation) => {
   };
 };
 
-const createRuntime = ({ mode = "enforce", compile } = {}) => {
+const createRuntime = ({ mode = "enforce", compile, paths = {} } = {}) => {
   const hooks = new Map();
   const logs = [];
   const calls = [];
@@ -115,7 +115,7 @@ const createRuntime = ({ mode = "enforce", compile } = {}) => {
     on(name, handler) { hooks.set(name, handler); },
     registerCli() {},
     logger: { info() {}, warn(message) { logs.push(JSON.parse(message)); } },
-  }, config(mode), {
+  }, config(mode, paths), {
     bindingCompiler: { compile: compile ?? (async () => binding()) },
   });
   return { hooks, logs, calls, controller };
@@ -225,6 +225,67 @@ test("off bypasses binding, observe validates without injection, and enforce fai
   assert.equal(missing.calls.length, 0);
   assert.ok(missing.logs.some((entry) =>
     entry.reasonCode === "ACTIVE_GENERATION_POINTER_MISSING"));
+});
+
+test("a durable Maintenance Gate rejects new eligible Runs before binding compilation", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-maintenance-gate-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const runtimeStorage = join(root, "runtime");
+  await mkdir(runtimeStorage, { recursive: true });
+  await writeFile(join(runtimeStorage, "maintenance-gate.json"), JSON.stringify({
+    target_source_revision: "a".repeat(40),
+    closed_at: "2026-08-17T00:00:00.000Z",
+  }));
+  let compileCalls = 0;
+  const runtime = createRuntime({
+    paths: { runtimeStorage },
+    compile: async () => {
+      compileCalls += 1;
+      return binding();
+    },
+  });
+
+  await assert.rejects(
+    runtime.hooks.get("before_prompt_build")(
+      { prompt: "blocked", messages: [] },
+      eligible("run-maintenance"),
+    ),
+    /COGNITIVE_BINDING_REJECTED:MAINTENANCE_GATE_CLOSED/,
+  );
+  assert.equal(compileCalls, 0);
+  assert.equal(runtime.controller.metrics().activeRuns, 0);
+});
+
+test("Maintenance Gate lets an existing pinned Run drain while rejecting a new Run", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-maintenance-drain-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const runtimeStorage = join(root, "runtime");
+  const runtime = createRuntime({
+    paths: { runtimeStorage },
+    compile: async () => binding(),
+  });
+  const first = await runtime.hooks.get("before_prompt_build")(
+    { prompt: "first", messages: [] },
+    eligible("run-existing"),
+  );
+  await mkdir(runtimeStorage, { recursive: true });
+  await writeFile(join(runtimeStorage, "maintenance-gate.json"), JSON.stringify({
+    target_source_revision: "a".repeat(40),
+    closed_at: "2026-08-17T00:00:00.000Z",
+  }));
+
+  assert.deepEqual(await runtime.hooks.get("before_prompt_build")(
+    { prompt: "repeat", messages: [] },
+    eligible("run-existing"),
+  ), first);
+  await assert.rejects(
+    runtime.hooks.get("before_prompt_build")(
+      { prompt: "new", messages: [] },
+      eligible("run-new"),
+    ),
+    /COGNITIVE_BINDING_REJECTED:MAINTENANCE_GATE_CLOSED/,
+  );
+  assert.equal(runtime.controller.metrics().activeRuns, 1);
 });
 
 test("filesystem compiler validates Pointer, Receipt, Manifest, Host identity, and State View", async (t) => {

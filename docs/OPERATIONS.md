@@ -34,6 +34,25 @@ generation compatibility, State head, pending outbox, and restart continuity in
 Never infer compatibility from a minimum version. The package version, exact
 OpenClaw row, contract versions, and integrity must all match a release pin.
 
+## Generation synchronization
+
+Run synchronization only with the exact Host transition adapter available:
+
+```sh
+openclaw cognitive sync --revision COMMITTED_AUTHORITY_SHA --json
+```
+
+The command may build a missing deterministic Generation or reuse an existing
+verified one. It closes the durable Maintenance Gate before draining Eligible
+Runs, applies and verifies the Host configuration, Projection, index, and
+search/get sentinels, then writes the Activation Receipt and switches the Active
+Pointer last. Do not delete `maintenance-gate.json` or `sync-journal.json`
+manually after interruption; the next `sync` must first restore and verify the
+recorded prior Host state, or keep the Gate closed.
+The Plugin performs the same recovery check at startup. Concurrent `sync`
+invocations serialize on the Runtime-owned lease rather than interleaving Host
+transitions.
+
 ## Recovery
 
 Create a snapshot and verify it before transport:

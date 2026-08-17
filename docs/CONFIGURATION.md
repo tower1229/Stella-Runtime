@@ -43,6 +43,17 @@ At the start of each eligible Run, the Binding Compiler reads
 Generation, Manifest, Projection, Host, Node, instance, and configuration
 identities once and pins the resulting Active Run Binding until Run cleanup.
 
+`sync` closes `<runtime_storage>/maintenance-gate.json` before draining existing
+eligible Runs. Every Host transition phase is persisted in
+`<runtime_storage>/sync-journal.json`; a restart must recover and verify the
+recorded prior Host state and Pointer before another target can begin. The Gate
+is removed only after matching Projection, configuration, index search/get
+evidence, Activation Receipt, and the final atomic Active Pointer commit.
+Concurrent operators are serialized by a protected Runtime-storage lease. On
+Plugin startup, an unfinished Journal is recovered before admission reopens;
+prior recovery must pass the same Pointer, Receipt, Generation, State, exact
+Host, configuration, index, and search/get proof required for serving.
+
 Eligible scope is derived from OpenClaw's verified Agent hook fields: the
 configured main Agent, a main/direct session key, a user trigger, and matching
 provider, sender, and direct-chat identities for the configured Authority Owner.
@@ -86,6 +97,7 @@ All structured operational commands require `--json` where offered.
 | `openclaw cognitive metrics --json` | Read bounded Runtime metrics. |
 | `openclaw cognitive validate --authority DIR --revision SHA --json` | Read-only validation of one exact clean committed Authority Source Revision. |
 | `openclaw cognitive build --authority DIR --state DIR --revision SHA [--bootstrap USER.md,MEMORY.md] --json` | Build or reuse one immutable Generation without activation, optionally deriving Bootstrap projections outside the Generation manifest. |
+| `openclaw cognitive sync --revision SHA --json` | Build or reuse the configured committed Authority target, drain Eligible Runs, prove the Host transition, write its Receipt, and switch the Active Pointer last. |
 | `openclaw cognitive generation show --state DIR --generation ID --json` | Read a built Generation and its Source Revision without implying that it is active. |
 | `openclaw cognitive state initialize --instance ID --json` | Explicitly create a valid empty Current State Head. |
 | `openclaw cognitive state import --instance ID --manifest FILE --authorization FILE --json` | Validate fresh external authorization for each exact Event, then atomically import one checksummed baseline before the first real Run. |

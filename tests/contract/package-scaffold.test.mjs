@@ -43,6 +43,9 @@ test("public entry does not expose SQLite storage paths", async () => {
   assert.equal(typeof publicEntry.validateAuthoritySource, "function");
   assert.equal(typeof publicEntry.buildGeneration, "function");
   assert.equal(typeof publicEntry.showGeneration, "function");
+  assert.equal(typeof publicEntry.syncGeneration, "function");
+  assert.equal(typeof publicEntry.loadMaintenanceGate, "function");
+  assert.equal(typeof publicEntry.recoverInterruptedSync, "function");
   assert.equal(typeof publicEntry.FileBindingCompiler, "function");
   assert.equal(typeof publicEntry.calculateRuntimeConfigIdentityChecksum, "function");
   assert.equal("activateGeneration" in publicEntry, false);
