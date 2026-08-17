@@ -111,7 +111,7 @@ const isEligibleRun = (
 ): boolean => {
   if (agentIdFrom(context) !== config.host.agent_id) return false;
   if (!isPrivateMainSession(context.sessionKey, config)) return false;
-  if (context.trigger !== undefined && context.trigger !== "user") return false;
+  if (context.trigger !== "user") return false;
   if (
     context.messageProvider !== config.authority_owner.provider ||
     context.senderId !== config.authority_owner.actor_id ||

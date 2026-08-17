@@ -125,6 +125,7 @@ const eligible = (runId) => ({
   runId,
   sessionKey: "agent:main:telegram:direct:owner-synthetic",
   agentId: "main",
+  trigger: "user",
   messageProvider: "telegram",
   senderId: "owner-synthetic",
   chatId: "owner-synthetic",
@@ -183,6 +184,7 @@ test("exact OpenClaw hook fields exclude callbacks, probes, shared chats, and ot
     { ...eligible("other"), agentId: "public-agent" },
     { ...eligible("wrong-owner"), senderId: "someone-else" },
     { ...eligible("wrong-chat"), chatId: "shared-chat" },
+    { ...eligible("missing-trigger"), trigger: undefined },
     { ...eligible("unclassified"), messageProvider: undefined, senderId: undefined, chatId: undefined },
   ];
   for (const context of excluded) {

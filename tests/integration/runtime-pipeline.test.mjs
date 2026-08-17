@@ -91,6 +91,7 @@ const runContext = (runId, extra = {}) => ({
   runId,
   sessionKey: "agent:main:telegram:direct:owner-synthetic",
   agentId: "main",
+  trigger: "user",
   messageProvider: "telegram",
   senderId: "owner-synthetic",
   chatId: "owner-synthetic",
