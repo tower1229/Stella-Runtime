@@ -16,6 +16,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
+import {
+  commitSyntheticAuthority,
+  writeSyntheticAuthority,
+} from "../helpers/synthetic-authority.mjs";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = new URL("../../", import.meta.url);
@@ -919,6 +923,74 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
     const pluginRoot = dirname(dirname(dirname(inspection.plugin.source)));
     environment.STELLA_RUNTIME_PROBE_ROOT = pluginRoot;
     await verifyRejectedPathsAbsent(pluginRoot);
+    const installedRuntime = await import(
+      pathToFileURL(join(pluginRoot, "dist", "index.js")).href
+    );
+    const authorityDirectory = join(root, "authority");
+    const generationState = join(root, "generation-state");
+    const runtimeStorage = join(root, "runtime-binding");
+    await writeSyntheticAuthority(authorityDirectory);
+    const sourceRevision = await commitSyntheticAuthority(authorityDirectory);
+    const built = await installedRuntime.buildGeneration({
+      authorityDirectory,
+      stateDirectory: generationState,
+      sourceRevision,
+      packageVersion: "0.1.0",
+    });
+    const state = installedRuntime.createStateManagementPort({
+      stateRoot: runtimeStorage,
+      instanceId: "instance-synthetic",
+    });
+    await state.initialize();
+    state.close();
+    const runtimeConfig = {
+      schema_version: "cognitive-runtime.instance-runtime-config/v2",
+      instance_id: "instance-synthetic",
+      mode: "enforce",
+      runtime_storage: runtimeStorage,
+      generation_storage: join(generationState, "generations"),
+      host: { agent_id: "main", eligible_scope: ["private_main_session"] },
+      authority_owner: { provider: "telegram", actor_id: "owner-synthetic" },
+      limits: { max_active_runs: 8, drain_timeout_ms: 60_000 },
+      adapters: {
+        authority_checkout: "authority-local",
+        host_retrieval: "openclaw-memory",
+      },
+    };
+    const manifestChecksum = `sha256:${checksum(
+      await readFile(join(built.generationDirectory, "manifest.json")),
+    )}`;
+    const projectionChecksum = built.manifest.files.find(
+      (file) => file.path === "projection-entries.json",
+    ).checksum;
+    await mkdir(join(runtimeStorage, "activation-receipts"), { recursive: true });
+    await writeFile(join(runtimeStorage, "activation-receipts", "activation-synthetic.json"), JSON.stringify({
+      schema_version: "cognitive-runtime.activation-receipt/v2",
+      receipt_id: "activation-synthetic",
+      instance_id: "instance-synthetic",
+      generation_id: built.syncGeneration,
+      source_revision: sourceRevision,
+      manifest_checksum: manifestChecksum,
+      projection_checksum: projectionChecksum,
+      host_config_checksum: installedRuntime.calculateRuntimeConfigIdentityChecksum(runtimeConfig),
+      index_evidence: {
+        deep_status: "pass",
+        search_sentinel_checksum: contractChecksum("3"),
+        get_sentinel_checksum: contractChecksum("4"),
+      },
+      openclaw_version: "2026.6.34",
+      node_version: process.versions.node,
+      verified_at: "2026-08-17T00:00:00.000Z",
+    }));
+    await writeFile(join(runtimeStorage, "active-generation.json"), JSON.stringify({
+      schema_version: "cognitive-runtime.active-generation-pointer/v2",
+      instance_id: "instance-synthetic",
+      generation_id: built.syncGeneration,
+      source_revision: sourceRevision,
+      manifest_checksum: manifestChecksum,
+      activation_receipt_id: "activation-synthetic",
+      activated_at: "2026-08-17T00:00:00.000Z",
+    }));
 
     const compatibility = JSON.parse(
       await readFile(join(pluginRoot, "compatibility", "openclaw.json"), "utf8"),
@@ -993,35 +1065,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
         allowPromptInjection: true,
       },
       config: {
-        runtime: {
-          mode: "enforce",
-          limits: {
-            routerTimeoutMs: 5_000,
-            routerMaxTokens: 512,
-            routerMaxInputCharacters: 8_000,
-            routerMaxOutputCharacters: 8_000,
-            packetMaxCharacters: 8_000,
-            scratchCapacity: 8,
-            scratchTtlMs: 60_000,
-          },
-          binding: {
-            syncGeneration: "generation-synthetic",
-            authorityRevision: "revision-synthetic",
-            stateViewVersion: "view-synthetic",
-            activeGoverningSystem: null,
-            registry: {
-              checksum: `sha256:${checksum("[]")}`,
-              entries: [],
-            },
-            context: {
-              stateView: [],
-              semanticClaims: [],
-              evidenceRefs: [],
-              governing: null,
-              frameworks: [],
-            },
-          },
-        },
+        runtime: runtimeConfig,
       },
     };
     await writeFile(configPath, `${JSON.stringify(installedConfig, null, 2)}\n`, {

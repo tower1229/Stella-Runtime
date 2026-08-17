@@ -44,9 +44,11 @@ Library or Runner consumers can install the exact package with:
 npm install --save-exact @tower1229/stella-cognitive-runtime@0.1.0
 ```
 
-Begin in `off`, configure a checksummed immutable binding and Git-external
-recovery root, then pass exact-host conformance before moving through `observe`
-to `enforce`. See the [operations guide](docs/OPERATIONS.md).
+Begin in `off`, configure the Instance Runtime Config and Git-external Runtime
+and Generation storage, then pass exact-host conformance before moving through
+`observe` to `enforce`. Active Run Bindings are compiled from the active Pointer,
+Activation Receipt, immutable Generation, and State View rather than inline
+configuration. See the [operations guide](docs/OPERATIONS.md).
 
 ## Configuration reference
 
@@ -54,8 +56,8 @@ The machine-readable configuration authority is `openclaw.plugin.json`; unknown
 properties are rejected. The human reference covers:
 
 - `off`, `observe`, and `enforce` semantics;
-- Router, packet, scratch capacity, and TTL limits;
-- generation, authority revision, State View, registry, and governing binding;
+- active Run capacity and drain/cleanup limits;
+- instance/storage identity, eligible Host scope, and binding proof locations;
 - recovery root, active instance, and allowed instance revisions;
 - every `openclaw cognitive` CLI command.
 

@@ -43,6 +43,8 @@ test("public entry does not expose SQLite storage paths", async () => {
   assert.equal(typeof publicEntry.validateAuthoritySource, "function");
   assert.equal(typeof publicEntry.buildGeneration, "function");
   assert.equal(typeof publicEntry.showGeneration, "function");
+  assert.equal(typeof publicEntry.FileBindingCompiler, "function");
+  assert.equal(typeof publicEntry.calculateRuntimeConfigIdentityChecksum, "function");
   assert.equal("activateGeneration" in publicEntry, false);
   assert.equal("rebuildGeneration" in publicEntry, false);
   assert.equal("runtimeDatabasePath" in publicEntry, false);
@@ -57,6 +59,11 @@ test("plugin manifest declares a strict config and packaged Skill", async () => 
   assert.equal(manifest.version, "0.1.0");
   assert.equal(manifest.configSchema.type, "object");
   assert.equal(manifest.configSchema.additionalProperties, false);
+  assert.equal("binding" in manifest.configSchema.properties.runtime.properties, false);
+  assert.deepEqual(
+    manifest.configSchema.properties.runtime.required,
+    ["schema_version", "instance_id", "mode", "runtime_storage", "generation_storage", "host", "authority_owner", "limits", "adapters"],
+  );
   assert.deepEqual(manifest.skills, ["skills/framework-admission"]);
   assert.deepEqual(manifest.activation.onCapabilities, ["hook"]);
 });

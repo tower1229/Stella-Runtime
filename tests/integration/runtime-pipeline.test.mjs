@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import plugin from "../../dist/openclaw/index.js";
+import {
+  readRuntimeConfig,
+  registerRuntimeHooks,
+} from "../../dist/openclaw/runtime.js";
 import { calculateRegistryChecksum } from "../../dist/router/index.js";
 
 const routerResult = (memoryRoute = "none") => ({
@@ -54,18 +57,7 @@ const entries = [
 ];
 const registryChecksum = calculateRegistryChecksum(entries);
 
-const runtimeConfig = (mode = "enforce") => ({
-  mode,
-  limits: {
-    routerTimeoutMs: 1_000,
-    routerMaxTokens: 256,
-    routerMaxInputCharacters: 4_000,
-    routerMaxOutputCharacters: 4_000,
-    packetMaxCharacters: 4_000,
-    scratchCapacity: 2,
-    scratchTtlMs: 10_000,
-  },
-  binding: {
+const staticBinding = () => ({
     syncGeneration: "generation-synthetic",
     authorityRevision: "revision-synthetic",
     stateViewVersion: "view-synthetic",
@@ -81,16 +73,36 @@ const runtimeConfig = (mode = "enforce") => ({
       },
       frameworks: [],
     },
-  },
+});
+
+const runtimeConfig = (mode = "enforce") => ({
+  schema_version: "cognitive-runtime.instance-runtime-config/v2",
+  instance_id: "instance-synthetic",
+  mode,
+  runtime_storage: "/synthetic/runtime",
+  generation_storage: "/synthetic/generations",
+  host: { agent_id: "main", eligible_scope: ["private_main_session"] },
+  authority_owner: { provider: "telegram", actor_id: "owner-synthetic" },
+  limits: { max_active_runs: 2, drain_timeout_ms: 10_000 },
+  adapters: { authority_checkout: "authority-local", host_retrieval: "openclaw-memory" },
+});
+
+const runContext = (runId, extra = {}) => ({
+  runId,
+  sessionKey: `agent:main:${runId}`,
+  agentId: "main",
+  scope: "private_main_session",
+  runKind: "agent",
+  ...extra,
 });
 
 const register = async ({ mode = "enforce", result = routerResult(), complete, recordProvenance } = {}) => {
   const hooks = new Map();
   const logs = [];
   const calls = [];
-  await plugin.register({
-    pluginConfig: { runtime: runtimeConfig(mode) },
+  registerRuntimeHooks({
     runtime: {
+      version: "2026.6.34",
       llm: {
         complete: complete ?? (async (request) => {
           calls.push(request);
@@ -104,13 +116,16 @@ const register = async ({ mode = "enforce", result = routerResult(), complete, r
       info(message) { logs.push(JSON.parse(message)); },
       warn(message) { logs.push(JSON.parse(message)); },
     },
+  }, readRuntimeConfig({ runtime: runtimeConfig(mode) }), {
+    bindingCompiler: { compile: async () => staticBinding() },
+    ...(recordProvenance === undefined ? {} : { recordProvenance }),
   });
   return { hooks, logs, calls };
 };
 
 test("enforce pipeline routes once, reuses binding, and injects an explicit packet", async () => {
   const { hooks, calls } = await register();
-  const context = { runId: "run-synthetic-1", sessionKey: "session-synthetic" };
+  const context = runContext("run-synthetic-1");
   const first = await hooks.get("before_prompt_build")(
     { prompt: "Choose", messages: [{ role: "user", content: "Earlier" }] },
     context,
@@ -121,7 +136,7 @@ test("enforce pipeline routes once, reuses binding, and injects an explicit pack
   );
 
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].maxTokens, 256);
+  assert.deepEqual(calls[0].maxTokens, 512);
   assert.equal(calls[0].temperature, 0);
   assert.match(first.prependContext, /\[governing_kernel:cog-governing@1\]/);
   assert.match(first.prependContext, /\[current_state:state-synthetic\]/);
@@ -130,7 +145,7 @@ test("enforce pipeline routes once, reuses binding, and injects an explicit pack
 
 test("required retrieval accepts only declared memory refs and revises at most once", async () => {
   const { hooks } = await register({ result: requiredRouterResult() });
-  const context = { runId: "run-synthetic-2", sessionKey: "session-synthetic" };
+  const context = runContext("run-synthetic-2");
   await hooks.get("before_prompt_build")({ prompt: "Choose", messages: [] }, context);
 
   assert.deepEqual(await hooks.get("before_agent_finalize")(
@@ -198,7 +213,7 @@ test("none route injects state and governing kernel but no extra retrieval conte
   const { hooks } = await register({ result: adversarial });
   const result = await hooks.get("before_prompt_build")(
     { prompt: "Choose", messages: [] },
-    { runId: "run-none" },
+    runContext("run-none"),
   );
 
   assert.match(result.prependContext, /Synthetic state/);
@@ -206,21 +221,23 @@ test("none route injects state and governing kernel but no extra retrieval conte
   assert.doesNotMatch(result.prependContext, /Synthetic claim|MUST_NOT_BE_INJECTED/);
 });
 
-test("expired Run state fails open and does not reuse a private packet", async () => {
+test("expired Run state fails closed instead of recompiling a drifting binding", async () => {
   const config = runtimeConfig();
-  config.limits.scratchTtlMs = 1;
+  config.limits.drain_timeout_ms = 1;
   const hooks = new Map();
   let calls = 0;
   const runtime = await import("../../dist/openclaw/runtime.js");
   runtime.registerRuntimeHooks({
-    runtime: { llm: { complete: async () => {
+    runtime: { version: "2026.6.34", llm: { complete: async () => {
       calls += 1;
       return { text: JSON.stringify(routerResult()) };
     } } },
     on(name, handler) { hooks.set(name, handler); },
     registerCli() {},
-  }, runtime.readRuntimeConfig({ runtime: config }));
-  const context = { runId: "run-expiring" };
+  }, runtime.readRuntimeConfig({ runtime: config }), {
+    bindingCompiler: { compile: async () => staticBinding() },
+  });
+  const context = runContext("run-expiring");
   const first = await hooks.get("before_prompt_build")(
     { prompt: "PRIVATE_FIRST", messages: [] }, context,
   );
@@ -229,46 +246,47 @@ test("expired Run state fails open and does not reuse a private packet", async (
     toolName: "memory_get", toolCallId: "late", result: {},
   }, context), undefined);
   assert.equal(await hooks.get("before_agent_finalize")({}, context), undefined);
-  const second = await hooks.get("before_prompt_build")(
-    { prompt: "PUBLIC_SECOND", messages: [] }, context,
+  await assert.rejects(
+    hooks.get("before_prompt_build")(
+      { prompt: "MUST_NOT_REBIND", messages: [] }, context,
+    ),
+    /COGNITIVE_BINDING_REJECTED:RUN_BINDING_INVALIDATED/,
   );
 
-  assert.equal(calls, 2);
+  assert.equal(calls, 1);
   assert.match(first.prependContext, /PRIVATE_FIRST/);
-  assert.doesNotMatch(second.prependContext, /PRIVATE_FIRST/);
-  assert.match(second.prependContext, /PUBLIC_SECOND/);
 });
 
 test("observe, off, rejection, missing run id, and capacity fail without interrupting host", async () => {
   const observed = await register({ mode: "observe" });
   assert.equal(await observed.hooks.get("before_prompt_build")(
     { prompt: "Private synthetic prompt", messages: [] },
-    { runId: "run-observe" },
+    runContext("run-observe"),
   ), undefined);
   assert.equal(observed.calls.length, 1);
 
   const off = await register({ mode: "off" });
   assert.equal(await off.hooks.get("before_prompt_build")(
-    { prompt: "Prompt", messages: [] }, { runId: "run-off" },
+    { prompt: "Prompt", messages: [] }, runContext("run-off"),
   ), undefined);
   assert.equal(off.calls.length, 0);
 
   const rejected = await register({ complete: async () => ({ text: "not-json" }) });
   assert.equal(await rejected.hooks.get("before_prompt_build")(
-    { prompt: "Prompt", messages: [] }, { runId: "run-rejected" },
+    { prompt: "Prompt", messages: [] }, runContext("run-rejected"),
   ), undefined);
   assert.ok(rejected.logs.some((entry) => entry.reasonCode === "ROUTER_NON_JSON_OUTPUT"));
   assert.equal(await rejected.hooks.get("before_prompt_build")(
-    { prompt: "Prompt", messages: [] }, {},
+    { prompt: "Prompt", messages: [] }, { ...runContext("missing"), runId: undefined },
   ), undefined);
   assert.ok(rejected.logs.some((entry) => entry.reasonCode === "RUN_ID_REQUIRED"));
 
   await rejected.hooks.get("before_prompt_build")(
-    { prompt: "Prompt", messages: [] }, { runId: "run-capacity-a" },
+    { prompt: "Prompt", messages: [] }, runContext("run-capacity-a"),
   );
   const callsBeforeCapacity = rejected.calls.length;
   assert.equal(await rejected.hooks.get("before_prompt_build")(
-    { prompt: "Prompt", messages: [] }, { runId: "run-capacity-b" },
+    { prompt: "Prompt", messages: [] }, runContext("run-capacity-b"),
   ), undefined);
   assert.ok(rejected.logs.some((entry) => entry.reasonCode === "RUN_SCRATCH_CAPACITY"));
   assert.equal(rejected.calls.length, callsBeforeCapacity);
@@ -281,7 +299,7 @@ test("unserializable recent context degrades safely without interrupting the hos
 
   const result = await hooks.get("before_prompt_build")(
     { prompt: "Prompt", messages: [circular] },
-    { runId: "run-circular-context" },
+    runContext("run-circular-context"),
   );
 
   assert.equal(calls.length, 1);
@@ -289,38 +307,17 @@ test("unserializable recent context degrades safely without interrupting the hos
   assert.match(result.prependContext, /\[current_input\]/);
 });
 
-test("runtime config rejects malformed registry and context before hook registration", async () => {
+test("runtime config rejects inline static Binding and malformed instance identity", async () => {
   const runtime = await import("../../dist/openclaw/runtime.js");
-  const malformedRegistry = runtimeConfig();
-  malformedRegistry.binding.registry.entries = [{ id: "missing-fields" }];
+  const inlineBinding = { ...runtimeConfig(), binding: staticBinding() };
   assert.throws(
-    () => runtime.readRuntimeConfig({ runtime: malformedRegistry }),
-    /RUNTIME_REGISTRY_INVALID/,
+    () => runtime.readRuntimeConfig({ runtime: inlineBinding }),
+    /RUNTIME_CONFIG_INVALID/,
   );
-
-  const malformedContext = runtimeConfig();
-  malformedContext.binding.context.stateView = [{ id: "state-synthetic" }];
+  const malformedIdentity = { ...runtimeConfig(), instance_id: "INVALID ID" };
   assert.throws(
-    () => runtime.readRuntimeConfig({ runtime: malformedContext }),
-    /RUNTIME_CONTEXT_INVALID/,
-  );
-
-  const mismatchedKernel = runtimeConfig();
-  mismatchedKernel.binding.context.governing.system = {
-    id: "governing-unvalidated",
-    version: "999",
-    content: "Unvalidated kernel",
-  };
-  assert.throws(
-    () => runtime.readRuntimeConfig({ runtime: mismatchedKernel }),
-    /GOVERNING_BINDING_INVALID/,
-  );
-
-  const unexpectedKernel = runtimeConfig();
-  unexpectedKernel.binding.activeGoverningSystem = null;
-  assert.throws(
-    () => runtime.readRuntimeConfig({ runtime: unexpectedKernel }),
-    /GOVERNING_BINDING_INVALID/,
+    () => runtime.readRuntimeConfig({ runtime: malformedIdentity }),
+    /RUNTIME_CONFIG_INVALID/,
   );
 });
 
@@ -329,7 +326,7 @@ test("agent end records a minimal privacy-safe overlay and always clears the Run
   const hooks = new Map();
   const runtime = await import("../../dist/openclaw/runtime.js");
   const api = {
-    runtime: { llm: { complete: async () => ({ text: JSON.stringify(requiredRouterResult()) }) } },
+    runtime: { version: "2026.6.34", llm: { complete: async () => ({ text: JSON.stringify(requiredRouterResult()) }) } },
     on(name, handler) { hooks.set(name, handler); },
     registerCli() {},
     logger: { info() {}, warn() {} },
@@ -337,9 +334,12 @@ test("agent end records a minimal privacy-safe overlay and always clears the Run
   const controller = runtime.registerRuntimeHooks(
     api,
     runtime.readRuntimeConfig({ runtime: runtimeConfig() }),
-    { recordProvenance: async (overlay) => { overlays.push(overlay); } },
+    {
+      bindingCompiler: { compile: async () => staticBinding() },
+      recordProvenance: async (overlay) => { overlays.push(overlay); },
+    },
   );
-  const context = { runId: "run-private-safe", sessionKey: "session-private-safe" };
+  const context = runContext("run-private-safe");
   await hooks.get("before_prompt_build")({
     prompt: "PRIVATE_PROMPT_SENTINEL",
     messages: [{ role: "assistant", content: "PRIVATE_ANSWER_SENTINEL" }],
@@ -382,14 +382,15 @@ test("provenance failures log only a fixed bounded reason", async () => {
   const logs = [];
   const runtime = await import("../../dist/openclaw/runtime.js");
   runtime.registerRuntimeHooks({
-    runtime: { llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
+    runtime: { version: "2026.6.34", llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
     on(name, handler) { hooks.set(name, handler); },
     registerCli() {},
     logger: { info() {}, warn(message) { logs.push(message); } },
   }, runtime.readRuntimeConfig({ runtime: runtimeConfig() }), {
+    bindingCompiler: { compile: async () => staticBinding() },
     recordProvenance: async () => { throw new Error("PRIVATE_DATABASE_PATH_SENTINEL"); },
   });
-  const context = { runId: "run-provenance-failure" };
+  const context = runContext("run-provenance-failure");
   await hooks.get("before_prompt_build")({ prompt: "Prompt", messages: [] }, context);
   await hooks.get("agent_end")({ success: true }, context);
 
@@ -404,13 +405,14 @@ test("successful Runtime provenance persists through the real SQLite store", asy
   t.after(() => store.close());
   const hooks = new Map();
   runtime.registerRuntimeHooks({
-    runtime: { llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
+    runtime: { version: "2026.6.34", llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
     on(name, handler) { hooks.set(name, handler); },
     registerCli() {},
   }, runtime.readRuntimeConfig({ runtime: runtimeConfig() }), {
+    bindingCompiler: { compile: async () => staticBinding() },
     recordProvenance: (overlay) => store.record(overlay),
   });
-  const context = { runId: "run-real-provenance", sessionKey: "session-real" };
+  const context = runContext("run-real-provenance");
   await hooks.get("before_prompt_build")({ prompt: "Prompt", messages: [] }, context);
   await hooks.get("agent_end")({ success: true }, context);
 
@@ -426,22 +428,23 @@ test("successful Runtime provenance persists through the real SQLite store", asy
 test("packet includes only Router-selected optional context and lifecycle cleanup is explicit", async () => {
   const hooks = new Map();
   const runtime = await import("../../dist/openclaw/runtime.js");
-  const configured = runtimeConfig();
-  configured.binding.context.semanticClaims = [
+  const configuredBinding = staticBinding();
+  configuredBinding.context.semanticClaims = [
     { id: "sem-synthetic", content: "MUST_NOT_BE_INJECTED" },
   ];
   const api = {
-    runtime: { llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
+    runtime: { version: "2026.6.34", llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
     on(name, handler) { hooks.set(name, handler); },
     registerCli() {},
   };
   const controller = runtime.registerRuntimeHooks(
     api,
-    runtime.readRuntimeConfig({ runtime: configured }),
+    runtime.readRuntimeConfig({ runtime: runtimeConfig() }),
+    { bindingCompiler: { compile: async () => configuredBinding } },
   );
   const result = await hooks.get("before_prompt_build")(
     { prompt: "Choose", messages: [] },
-    { runId: "run-lifecycle" },
+    runContext("run-lifecycle"),
   );
 
   assert.doesNotMatch(result.prependContext, /MUST_NOT_BE_INJECTED/);
@@ -462,7 +465,7 @@ test("concurrent prompt hooks for one Run share one Router completion", async ()
     },
   });
   const event = { prompt: "Choose", messages: [] };
-  const context = { runId: "run-concurrent" };
+  const context = runContext("run-concurrent");
   const first = hooks.get("before_prompt_build")(event, context);
   const second = hooks.get("before_prompt_build")(event, context);
   release();
@@ -476,14 +479,14 @@ test("host completion nested prompt hook is excluded from Runtime routing", asyn
   const hooks = new Map();
   let completionCalls = 0;
   const api = {
-    pluginConfig: { runtime: runtimeConfig() },
     runtime: {
+      version: "2026.6.34",
       llm: {
         complete: async () => {
           completionCalls += 1;
           assert.equal(await hooks.get("before_prompt_build")(
             { prompt: "Nested host completion", messages: [] },
-            { runId: "run-host-completion" },
+            runContext("run-host-completion", { runKind: "router_completion" }),
           ), undefined);
           return { text: JSON.stringify(routerResult()) };
         },
@@ -492,11 +495,13 @@ test("host completion nested prompt hook is excluded from Runtime routing", asyn
     on(name, handler) { hooks.set(name, handler); },
     registerCli() {},
   };
-  await plugin.register(api);
+  registerRuntimeHooks(api, readRuntimeConfig({ runtime: runtimeConfig() }), {
+    bindingCompiler: { compile: async () => staticBinding() },
+  });
 
   const result = await hooks.get("before_prompt_build")(
     { prompt: "User run", messages: [] },
-    { runId: "run-user" },
+    runContext("run-user"),
   );
   assert.equal(completionCalls, 1);
   assert.match(result.prependContext, /\[current_input\]\nUser run/);
@@ -506,23 +511,28 @@ test("plugin lifecycle cleanup clears active Run scratch", async () => {
   const hooks = new Map();
   let lifecycle;
   const api = {
-    pluginConfig: { runtime: runtimeConfig() },
-    runtime: { llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
+    runtime: { version: "2026.6.34", llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
     on(name, handler) { hooks.set(name, handler); },
     lifecycle: { registerRuntimeLifecycle(value) { lifecycle = value; } },
     registerCli() {},
   };
-  await plugin.register(api);
+  const controller = registerRuntimeHooks(api, readRuntimeConfig({ runtime: runtimeConfig() }), {
+    bindingCompiler: { compile: async () => staticBinding() },
+  });
+  lifecycle = {
+    id: "cognitive-runtime-run-scratch",
+    cleanup: ({ reason }) => controller.clearLifecycle(reason === "delete" ? "reset" : reason),
+  };
   await hooks.get("before_prompt_build")(
     { prompt: "User run", messages: [] },
-    { runId: "run-lifecycle-host" },
+    runContext("run-lifecycle-host"),
   );
 
   assert.equal(lifecycle.id, "cognitive-runtime-run-scratch");
   await lifecycle.cleanup({ reason: "restart" });
   assert.equal(await hooks.get("before_agent_finalize")(
     { runId: "run-lifecycle-host", sessionId: "session-id", stopHookActive: false },
-    { runId: "run-lifecycle-host" },
+    runContext("run-lifecycle-host"),
   ), undefined);
 });
 
@@ -532,8 +542,7 @@ test("lifecycle cleanup invalidates an in-flight Router completion", async () =>
   let release;
   const barrier = new Promise((resolve) => { release = resolve; });
   const api = {
-    pluginConfig: { runtime: runtimeConfig() },
-    runtime: { llm: { complete: async () => {
+    runtime: { version: "2026.6.34", llm: { complete: async () => {
       await barrier;
       return { text: JSON.stringify(routerResult()) };
     } } },
@@ -541,16 +550,21 @@ test("lifecycle cleanup invalidates an in-flight Router completion", async () =>
     lifecycle: { registerRuntimeLifecycle(value) { lifecycle = value; } },
     registerCli() {},
   };
-  await plugin.register(api);
+  const controller = registerRuntimeHooks(api, readRuntimeConfig({ runtime: runtimeConfig() }), {
+    bindingCompiler: { compile: async () => staticBinding() },
+  });
+  lifecycle = {
+    cleanup: ({ reason }) => controller.clearLifecycle(reason === "delete" ? "reset" : reason),
+  };
   const pending = hooks.get("before_prompt_build")(
     { prompt: "Must be invalidated", messages: [] },
-    { runId: "run-in-flight-cleanup" },
+    runContext("run-in-flight-cleanup"),
   );
   await lifecycle.cleanup({ reason: "disable" });
   release();
 
   assert.equal(await pending, undefined);
   assert.equal(await hooks.get("before_agent_finalize")(
-    {}, { runId: "run-in-flight-cleanup" },
+    {}, runContext("run-in-flight-cleanup"),
   ), undefined);
 });

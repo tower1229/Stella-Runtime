@@ -23,24 +23,31 @@ All limit values are positive integers:
 
 | Property | Meaning |
 | --- | --- |
-| `routerTimeoutMs` | Maximum host Router completion time. |
-| `routerMaxTokens` | Maximum Router output token request. |
-| `routerMaxInputCharacters` | Maximum bounded Router input size. |
-| `routerMaxOutputCharacters` | Maximum accepted Router output size. |
-| `packetMaxCharacters` | Maximum constructed context packet size. |
-| `scratchCapacity` | Maximum concurrent Run scratch entries. |
-| `scratchTtlMs` | Secondary cleanup TTL for abandoned scratch. |
+| `max_active_runs` | Maximum concurrent eligible Run scratch entries. |
+| `drain_timeout_ms` | Cleanup TTL for abandoned scratch and the later sync drain bound. |
 
 Limit exhaustion degrades closed. It never changes the pinned generation or
 uses `sessionKey` as Run correlation.
 
-## Immutable binding
+## Instance and binding locations
 
-`runtime.binding` pins `syncGeneration`, `authorityRevision`,
-`stateViewVersion`, the optional `activeGoverningSystem`, a checksummed
-`registry`, and role-separated context. Registry entries declare an ID, role,
-version, generation, and SHA-256 checksum. A governing system is supplied by a
-Private Instance; the Runtime contains no built-in worldview.
+`runtime` is an `Instance Runtime Config` and contains only the instance ID,
+operating mode, Runtime and Generation storage locations, Host Agent and eligible
+scope, Authority Owner tuple, limits, and adapter locators. It must not contain
+an inline Registry, Context, or cognitive Binding.
+
+At the start of each eligible Run, the Binding Compiler reads
+`<runtime_storage>/active-generation.json`, the referenced receipt under
+`<runtime_storage>/activation-receipts/`, the immutable Generation under
+`<generation_storage>/`, and one checksummed State View. It validates their
+Generation, Manifest, Projection, Host, Node, instance, and configuration
+identities once and pins the resulting Active Run Binding until Run cleanup.
+
+Eligible scope is the configured private main Agent/session. Router completions,
+confirmation callbacks, operational probes, index operations, other Agents, and
+shared/public scopes are bypassed. `enforce` rejects an eligible Run when binding
+proof is missing, stale, or inconsistent; `observe` traces validation without
+injecting private content; `off` does not read binding storage.
 
 ## Recovery configuration
 

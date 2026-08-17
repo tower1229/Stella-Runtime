@@ -1,5 +1,7 @@
 import type { RouterResult } from "../contracts/index.js";
 import type { CognitiveProvenanceOverlay } from "../contracts/index.js";
+import type { InstanceRuntimeConfig } from "../contracts/index.js";
+import { validateContract } from "../contracts/index.js";
 import { createHash } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { RunScratchMap } from "../core/index.js";
@@ -17,34 +19,17 @@ import type {
   PluginHookContext,
 } from "./plugin-api.js";
 import { MemoryObservationAdapter } from "./ports.js";
+import {
+  FileBindingCompiler,
+  type ActiveRunBinding,
+  type BindingCompilerPort,
+} from "../runtime/binding.js";
 
-const RUNTIME_MODES = ["off", "observe", "enforce"] as const;
-type RuntimeMode = (typeof RUNTIME_MODES)[number];
-
-interface RuntimeLimits {
-  readonly routerTimeoutMs: number;
-  readonly routerMaxTokens: number;
-  readonly routerMaxInputCharacters: number;
-  readonly routerMaxOutputCharacters: number;
-  readonly packetMaxCharacters: number;
-  readonly scratchCapacity: number;
-  readonly scratchTtlMs: number;
-}
-
-interface RuntimeBindingConfig {
-  readonly syncGeneration: string;
-  readonly authorityRevision: string;
-  readonly stateViewVersion: string;
-  readonly activeGoverningSystem: string | null;
-  readonly registry: RouterRegistry;
-  readonly context: Omit<ExplicitContextBinding, "currentInput" | "retrievalInstructions">;
-}
-
-interface RuntimePluginConfig {
-  readonly mode: RuntimeMode;
-  readonly limits: RuntimeLimits;
-  readonly binding: RuntimeBindingConfig;
-}
+const ROUTER_TIMEOUT_MS = 10_000;
+const ROUTER_MAX_TOKENS = 512;
+const ROUTER_MAX_INPUT_CHARACTERS = 16_000;
+const ROUTER_MAX_OUTPUT_CHARACTERS = 16_000;
+const PACKET_MAX_CHARACTERS = 32_000;
 
 interface HookBinding {
   readonly syncGeneration: string;
@@ -52,6 +37,7 @@ interface HookBinding {
   readonly stateViewVersion: string;
   readonly registryChecksum: string;
   readonly stateView: unknown;
+  readonly registry: RouterRegistry;
   readonly routerResult: RouterOutcome;
   readonly packet: string | null;
 }
@@ -68,6 +54,7 @@ export interface RuntimeHookOptions {
   readonly recordProvenance?: (
     overlay: CognitiveProvenanceOverlay,
   ) => Promise<void>;
+  readonly bindingCompiler?: BindingCompilerPort;
 }
 
 export interface RuntimeHookController {
@@ -80,169 +67,15 @@ const routerCompletionScope = new AsyncLocalStorage<boolean>();
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const requireRecord = (
-  value: unknown,
-  reason: string,
-): Readonly<Record<string, unknown>> => {
-  if (!isRecord(value)) {
-    throw new Error(reason);
-  }
-  return value;
-};
-
-const requireString = (value: unknown, reason: string): string => {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(reason);
-  }
-  return value;
-};
-
-const requirePositiveInteger = (value: unknown, reason: string): number => {
-  if (!Number.isInteger(value) || (value as number) < 1) {
-    throw new Error(reason);
-  }
-  return value as number;
-};
-
-const requireArray = (value: unknown, reason: string): readonly unknown[] => {
-  if (!Array.isArray(value)) {
-    throw new Error(reason);
-  }
-  return value;
-};
-
-const parseContextEntries = (
-  value: unknown,
-  versioned: boolean,
-  reason: string,
-): readonly (ExplicitContextBinding["stateView"][number] & { readonly version?: string })[] =>
-  requireArray(value, reason).map((item) => {
-    const entry = requireRecord(item, reason);
-    return {
-      id: requireString(entry.id, reason),
-      content: requireString(entry.content, reason),
-      ...(versioned ? { version: requireString(entry.version, reason) } : {}),
-    };
-  });
-
 export const readRuntimeConfig = (
   pluginConfig: Readonly<Record<string, unknown>> | undefined,
-): RuntimePluginConfig | null => {
+): InstanceRuntimeConfig | null => {
   if (pluginConfig?.runtime === undefined) {
     return null;
   }
-  const runtime = requireRecord(pluginConfig.runtime, "RUNTIME_CONFIG_INVALID");
-  if (!RUNTIME_MODES.includes(runtime.mode as RuntimeMode)) {
-    throw new Error("RUNTIME_MODE_INVALID");
-  }
-  const limits = requireRecord(runtime.limits, "RUNTIME_LIMITS_INVALID");
-  const binding = requireRecord(runtime.binding, "RUNTIME_BINDING_INVALID");
-  const registry = requireRecord(binding.registry, "RUNTIME_REGISTRY_INVALID");
-  const context = requireRecord(binding.context, "RUNTIME_CONTEXT_INVALID");
-  const entries = requireArray(registry.entries, "RUNTIME_REGISTRY_INVALID").map((item) => {
-    const entry = requireRecord(item, "RUNTIME_REGISTRY_INVALID");
-    const role = requireString(entry.role, "RUNTIME_REGISTRY_INVALID");
-    if (!["evidence", "semantic", "current_state", "governing_system", "governing_module", "ordinary_framework"].includes(role)) {
-      throw new Error("RUNTIME_REGISTRY_INVALID");
-    }
-    return {
-      id: requireString(entry.id, "RUNTIME_REGISTRY_INVALID"),
-      role: role as RouterRegistry["entries"][number]["role"],
-      version: requireString(entry.version, "RUNTIME_REGISTRY_INVALID"),
-      syncGeneration: requireString(entry.syncGeneration, "RUNTIME_REGISTRY_INVALID"),
-      checksum: requireString(entry.checksum, "RUNTIME_REGISTRY_INVALID"),
-      ...(entry.governedBy === undefined ? {} : {
-        governedBy: requireString(entry.governedBy, "RUNTIME_REGISTRY_INVALID"),
-      }),
-    };
-  });
-  const governingValue = context.governing;
-  const governing = governingValue === null
-    ? null
-    : (() => {
-        const value = requireRecord(governingValue, "RUNTIME_CONTEXT_INVALID");
-        const systems = parseContextEntries([value.system], true, "RUNTIME_CONTEXT_INVALID");
-        return {
-          system: systems[0] as ExplicitContextBinding["governing"] extends infer T
-            ? T extends { readonly system: infer S } ? S : never
-            : never,
-          modules: parseContextEntries(value.modules, true, "RUNTIME_CONTEXT_INVALID") as ExplicitContextBinding["frameworks"],
-        };
-      })();
-  const syncGeneration = requireString(binding.syncGeneration, "SYNC_GENERATION_REQUIRED");
-  const activeGoverningSystem = binding.activeGoverningSystem === null
-    ? null
-    : requireString(binding.activeGoverningSystem, "GOVERNING_BINDING_INVALID");
-  const registryById = new Map(entries.map((entry) => [entry.id, entry]));
-  if (registryById.size !== entries.length) {
-    throw new Error("RUNTIME_REGISTRY_INVALID");
-  }
-  const assertContextEntry = (
-    entry: { readonly id: string; readonly version?: string },
-    role: RouterRegistry["entries"][number]["role"],
-  ): void => {
-    const registered = registryById.get(entry.id);
-    if (
-      registered === undefined ||
-      registered.role !== role ||
-      registered.syncGeneration !== syncGeneration ||
-      (entry.version !== undefined && registered.version !== entry.version)
-    ) {
-      throw new Error("RUNTIME_CONTEXT_REGISTRY_MISMATCH");
-    }
-  };
-  const stateView = parseContextEntries(context.stateView, false, "RUNTIME_CONTEXT_INVALID");
-  const semanticClaims = parseContextEntries(context.semanticClaims, false, "RUNTIME_CONTEXT_INVALID");
-  const evidenceRefs = parseContextEntries(context.evidenceRefs, false, "RUNTIME_CONTEXT_INVALID");
-  const frameworks = parseContextEntries(context.frameworks, true, "RUNTIME_CONTEXT_INVALID") as ExplicitContextBinding["frameworks"];
-  stateView.forEach((entry) => assertContextEntry(entry, "current_state"));
-  semanticClaims.forEach((entry) => assertContextEntry(entry, "semantic"));
-  evidenceRefs.forEach((entry) => assertContextEntry(entry, "evidence"));
-  frameworks.forEach((entry) => assertContextEntry(entry, "ordinary_framework"));
-  if ((governing === null) !== (activeGoverningSystem === null)) {
-    throw new Error("GOVERNING_BINDING_INVALID");
-  }
-  if (governing !== null) {
-    if (governing.system.id !== activeGoverningSystem) {
-      throw new Error("GOVERNING_BINDING_INVALID");
-    }
-    assertContextEntry(governing.system, "governing_system");
-    governing.modules.forEach((entry) => {
-      assertContextEntry(entry, "governing_module");
-      if (registryById.get(entry.id)?.governedBy !== activeGoverningSystem) {
-        throw new Error("RUNTIME_CONTEXT_REGISTRY_MISMATCH");
-      }
-    });
-  }
-  return {
-    mode: runtime.mode as RuntimeMode,
-    limits: {
-      routerTimeoutMs: requirePositiveInteger(limits.routerTimeoutMs, "ROUTER_TIMEOUT_INVALID"),
-      routerMaxTokens: requirePositiveInteger(limits.routerMaxTokens, "ROUTER_TOKEN_LIMIT_INVALID"),
-      routerMaxInputCharacters: requirePositiveInteger(limits.routerMaxInputCharacters, "ROUTER_INPUT_LIMIT_INVALID"),
-      routerMaxOutputCharacters: requirePositiveInteger(limits.routerMaxOutputCharacters, "ROUTER_OUTPUT_LIMIT_INVALID"),
-      packetMaxCharacters: requirePositiveInteger(limits.packetMaxCharacters, "PACKET_LIMIT_INVALID"),
-      scratchCapacity: requirePositiveInteger(limits.scratchCapacity, "SCRATCH_CAPACITY_INVALID"),
-      scratchTtlMs: requirePositiveInteger(limits.scratchTtlMs, "SCRATCH_TTL_INVALID"),
-    },
-    binding: {
-      syncGeneration,
-      authorityRevision: requireString(binding.authorityRevision, "AUTHORITY_REVISION_REQUIRED"),
-      stateViewVersion: requireString(binding.stateViewVersion, "STATE_VIEW_VERSION_REQUIRED"),
-      activeGoverningSystem,
-      registry: {
-        checksum: requireString(registry.checksum, "REGISTRY_CHECKSUM_REQUIRED"),
-        entries,
-      },
-      context: {
-        stateView,
-        semanticClaims,
-        evidenceRefs,
-        governing,
-        frameworks,
-      },
-    },
-  };
+  const result = validateContract("instance-runtime-config", pluginConfig.runtime);
+  if (!result.valid) throw new Error("RUNTIME_CONFIG_INVALID");
+  return structuredClone(pluginConfig.runtime) as InstanceRuntimeConfig;
 };
 
 const runIdFrom = (
@@ -251,6 +84,41 @@ const runIdFrom = (
 ): string | null => {
   const value = typeof event.runId === "string" ? event.runId : context.runId;
   return typeof value === "string" && value.length > 0 ? value : null;
+};
+
+const EXCLUDED_RUN_KINDS = new Set([
+  "router_completion",
+  "confirmation_callback",
+  "operational_probe",
+  "index_operation",
+]);
+
+const agentIdFrom = (context: PluginHookContext): string | null => {
+  if (context.agentId !== undefined && context.agentId.length > 0) return context.agentId;
+  const match = context.sessionKey?.match(/^agent:([^:]+):/);
+  return match?.[1] ?? null;
+};
+
+const isEligibleRun = (
+  event: Readonly<Record<string, unknown>>,
+  context: PluginHookContext,
+  config: InstanceRuntimeConfig,
+): boolean => {
+  const runKind = typeof event.runKind === "string"
+    ? event.runKind
+    : context.runKind ?? "agent";
+  if (EXCLUDED_RUN_KINDS.has(runKind)) return false;
+  if (agentIdFrom(context) !== config.host.agent_id) return false;
+  if (
+    context.sessionKey === undefined ||
+    /:(?:group|channel|cron|subagent):/i.test(context.sessionKey)
+  ) {
+    return false;
+  }
+  const scope = typeof event.scope === "string"
+    ? event.scope
+    : context.scope ?? "private_main_session";
+  return config.host.eligible_scope.includes(scope);
 };
 
 const completionText = (value: unknown): string => {
@@ -270,7 +138,7 @@ const serializeRecentMessage = (value: unknown): string => {
 
 const selectPacketBinding = (
   prompt: string,
-  configured: RuntimeBindingConfig["context"],
+  configured: ActiveRunBinding["context"],
   result: RouterResult,
 ): ExplicitContextBinding => {
   const directTargets = new Set(
@@ -346,7 +214,7 @@ const allowedRecallIds = (
 
 export const registerRuntimeHooks = (
   api: CognitiveRuntimePluginApi,
-  config: RuntimePluginConfig,
+  config: InstanceRuntimeConfig,
   options: RuntimeHookOptions = {},
 ): RuntimeHookController | null => {
   if (api.on === undefined) {
@@ -354,18 +222,31 @@ export const registerRuntimeHooks = (
   }
   const injectedPackets = new Map<string, string>();
   const promptBuilds = new Map<string, Promise<{ readonly prependContext: string } | undefined>>();
+  const invalidatedRuns = new Set<string>();
+  const cleanlyReleasingRuns = new Set<string>();
+  const invalidateRun = (runId: string): void => {
+    if (cleanlyReleasingRuns.delete(runId)) return;
+    invalidatedRuns.add(runId);
+    while (invalidatedRuns.size > config.limits.max_active_runs * 4) {
+      const oldest = invalidatedRuns.values().next().value as string | undefined;
+      if (oldest === undefined) break;
+      invalidatedRuns.delete(oldest);
+    }
+  };
   const scratch = new RunScratchMap<HookBinding>({
-    capacity: config.limits.scratchCapacity,
-    ttlMs: config.limits.scratchTtlMs,
+    capacity: config.limits.max_active_runs,
+    ttlMs: config.limits.drain_timeout_ms,
     onEvict: (runId) => {
       injectedPackets.delete(runId);
       promptBuilds.delete(runId);
+      invalidateRun(runId);
     },
   });
   let runsStarted = 0;
   let runsDegraded = 0;
   let remediationRevisions = 0;
   let lifecycleEpoch = 0;
+  const bindingCompiler = options.bindingCompiler ?? new FileBindingCompiler();
   const nonLlmDurationSamplesMs: number[] = [];
   const recordDuration = (startedAt: number): void => {
     nonLlmDurationSamplesMs.push(Math.max(0, performance.now() - startedAt));
@@ -397,7 +278,15 @@ export const registerRuntimeHooks = (
         ? { prependContext: packet }
         : undefined;
     }
-    if (scratch.size + promptBuilds.size >= config.limits.scratchCapacity) {
+    if (invalidatedRuns.has(runId)) {
+      runsDegraded += 1;
+      log("RUN_BINDING_INVALIDATED", runId);
+      if (config.mode === "enforce") {
+        throw new Error("COGNITIVE_BINDING_REJECTED:RUN_BINDING_INVALIDATED");
+      }
+      return;
+    }
+    if (scratch.size + promptBuilds.size >= config.limits.max_active_runs) {
       runsDegraded += 1;
       log("RUN_SCRATCH_CAPACITY", runId);
       return;
@@ -410,19 +299,37 @@ export const registerRuntimeHooks = (
       (total, item) => total + item.length,
       0,
     );
-    if (inputCharacters > config.limits.routerMaxInputCharacters) {
+    if (inputCharacters > ROUTER_MAX_INPUT_CHARACTERS) {
       log("ROUTER_INPUT_LIMIT_EXCEEDED", runId);
+      return;
+    }
+    let activeBinding: ActiveRunBinding;
+    try {
+      activeBinding = await bindingCompiler.compile({
+        config,
+        hostVersion: api.runtime.version,
+        nodeVersion: process.versions.node,
+      });
+    } catch (error: unknown) {
+      runsDegraded += 1;
+      const reason = error instanceof Error
+        ? (error.message.split(":", 1)[0] ?? "BINDING_COMPILATION_FAILED")
+        : "BINDING_COMPILATION_FAILED";
+      log(reason, runId);
+      if (config.mode === "enforce") {
+        throw new Error(`COGNITIVE_BINDING_REJECTED:${reason}`);
+      }
       return;
     }
     try {
       const router = new StrictRouter({
-        timeoutMs: config.limits.routerTimeoutMs,
-        maxInputCharacters: config.limits.routerMaxInputCharacters,
-        maxOutputCharacters: config.limits.routerMaxOutputCharacters,
+        timeoutMs: ROUTER_TIMEOUT_MS,
+        maxInputCharacters: ROUTER_MAX_INPUT_CHARACTERS,
+        maxOutputCharacters: ROUTER_MAX_OUTPUT_CHARACTERS,
         complete: async (routerPrompt) => completionText(
           await routerCompletionScope.run(true, () => api.runtime.llm.complete({
               messages: [{ role: "user", content: routerPrompt }],
-              maxTokens: config.limits.routerMaxTokens,
+              maxTokens: ROUTER_MAX_TOKENS,
               temperature: 0,
               purpose: "cognitive-runtime.router",
             })),
@@ -431,11 +338,11 @@ export const registerRuntimeHooks = (
       const routerResult = await router.route({
         currentMessage: prompt,
         recentContext,
-        stateViewVersion: config.binding.stateViewVersion,
-        activeGoverningSystem: config.binding.activeGoverningSystem,
-        syncGeneration: config.binding.syncGeneration,
-        expectedRegistryChecksum: config.binding.registry.checksum,
-        registry: config.binding.registry,
+        stateViewVersion: activeBinding.stateViewVersion,
+        activeGoverningSystem: activeBinding.activeGoverningSystem,
+        syncGeneration: activeBinding.syncGeneration,
+        expectedRegistryChecksum: activeBinding.registry.checksum,
+        registry: activeBinding.registry,
       });
       if (startedEpoch !== lifecycleEpoch) {
         runsDegraded += 1;
@@ -447,22 +354,23 @@ export const registerRuntimeHooks = (
         packet = buildExplicitContextPacket({
           binding: selectPacketBinding(
             prompt,
-            config.binding.context,
+            activeBinding.context,
             routerResult.result,
           ),
           memoryRoute: routerResult.result.memory_route,
-          maxCharacters: config.limits.packetMaxCharacters,
+          maxCharacters: PACKET_MAX_CHARACTERS,
         });
       } else {
         runsDegraded += 1;
         log(routerResult.reasonCode, runId);
       }
       await scratch.acquire(runId, {
-        syncGeneration: config.binding.syncGeneration,
-        authorityRevision: config.binding.authorityRevision,
-        stateViewVersion: config.binding.stateViewVersion,
-        registryChecksum: config.binding.registry.checksum,
-        stateView: config.binding.context.stateView,
+        syncGeneration: activeBinding.syncGeneration,
+        authorityRevision: activeBinding.authorityRevision,
+        stateViewVersion: activeBinding.stateViewVersion,
+        registryChecksum: activeBinding.registry.checksum,
+        stateView: activeBinding.context.stateView,
+        registry: activeBinding.registry,
         routerResult,
         packet,
       });
@@ -485,6 +393,9 @@ export const registerRuntimeHooks = (
       return;
     }
     if (config.mode === "off") {
+      return;
+    }
+    if (!isEligibleRun(event, context, config)) {
       return;
     }
     const runId = runIdFrom(event, context);
@@ -525,7 +436,7 @@ export const registerRuntimeHooks = (
     }
     const allowedRefs = allowedRecallIds(
       snapshot.binding.routerResult.result,
-      config.binding.registry,
+      snapshot.binding.registry,
     );
     const observation = new MemoryObservationAdapter().observe({
       toolCallId,
@@ -594,7 +505,7 @@ export const registerRuntimeHooks = (
           state_view_version: snapshot.binding.stateViewVersion,
           validated_router_result: null,
           cognitive_bindings: config.mode === "enforce" && snapshot.binding.packet !== null && routerResult.status === "ok"
-            ? config.binding.registry.entries
+            ? snapshot.binding.registry.entries
                 .filter((entry) => selectedInjectedIds(routerResult.result).has(entry.id))
                 .map((entry) => ({
                   id: entry.id,
@@ -619,7 +530,10 @@ export const registerRuntimeHooks = (
     } finally {
       injectedPackets.delete(runId);
       promptBuilds.delete(runId);
+      invalidatedRuns.delete(runId);
+      cleanlyReleasingRuns.add(runId);
       await scratch.release(runId);
+      cleanlyReleasingRuns.delete(runId);
       recordDuration(startedAt);
     }
   });

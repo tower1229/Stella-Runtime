@@ -10,6 +10,10 @@ Versioning; cognitive contract namespaces remain independently versioned.
   Generation/Projection identity, activation evidence, and instance cutover;
 - preserves Evidence media and explicit year/month/day/instant precision without
   retaining a v1 reader or package export.
+- compiles one immutable Active Run Binding from the active Pointer, Activation
+  Receipt, Generation, Host/config identity, and State View for each eligible
+  private Run; removes inline static Binding configuration and fails closed in
+  `enforce` when activation proof is missing, stale, or inconsistent.
 
 ## [0.1.0] - 2026-08-13
 

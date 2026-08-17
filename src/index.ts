@@ -187,6 +187,17 @@ export type {
   RouterRequest,
   StrictRouterOptions,
 } from "./router/index.js";
+export {
+  ACTIVATION_RECEIPTS_DIRECTORY,
+  ACTIVE_GENERATION_POINTER_FILE,
+  calculateRuntimeConfigIdentityChecksum,
+  FileBindingCompiler,
+} from "./runtime/binding.js";
+export type {
+  ActiveRunBinding,
+  BindingCompilerInput,
+  BindingCompilerPort,
+} from "./runtime/binding.js";
 export type {
   CorrectionInput,
   ReanswerAttempt,

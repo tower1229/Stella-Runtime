@@ -58,6 +58,12 @@ export interface PluginHookContext {
   readonly runId?: string;
   readonly sessionKey?: string;
   readonly toolCallId?: string;
+  readonly agentId?: string;
+  readonly scope?: string;
+  readonly runKind?: string;
+  readonly trigger?: string;
+  readonly messageProvider?: string;
+  readonly channelId?: string;
 }
 
 export type PluginHookHandler = (

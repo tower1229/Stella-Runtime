@@ -20,8 +20,8 @@ test("public documentation covers install, configuration, CLI, data, operations,
   assert.match(readme, /Configuration reference/);
   assert.match(readme, /Known limitations/);
   assert.match(configuration, /off.*observe.*enforce/is);
-  assert.match(configuration, /routerTimeoutMs/);
-  assert.match(configuration, /activeGoverningSystem/);
+  assert.match(configuration, /max_active_runs/);
+  assert.match(configuration, /active-generation\.json/);
   assert.match(configuration, /cognitive (?:self-check|metrics)/);
   assert.match(boundaries, /Authority Repository/);
   assert.match(boundaries, /Runtime Recovery Snapshot/);
