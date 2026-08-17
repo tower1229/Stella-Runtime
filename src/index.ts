@@ -142,6 +142,16 @@ export type {
   GenerationVerificationResult,
 } from "./generation/index.js";
 export { MemoryObservationAdapter } from "./openclaw/ports.js";
+export {
+  OpenClawCliRetrievalCommands,
+  OpenClawGenerationConsumptionAdapter,
+  RETRIEVAL_PATH_OWNERSHIP_FILE,
+} from "./openclaw/consumption.js";
+export type {
+  OpenClawCommandRunner,
+  OpenClawConsumptionApi,
+  OpenClawRetrievalCommands,
+} from "./openclaw/consumption.js";
 export type {
   HostCapabilityManifest,
   MemoryObservation,

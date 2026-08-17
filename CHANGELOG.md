@@ -17,6 +17,9 @@ Versioning; cognitive contract namespaces remain independently versioned.
 - adds the public `sync` Activation Barrier with a durable Maintenance Gate and
   Sync Journal, exact Host/Projection/config/retrieval proof, verified prior-state
   recovery, Activation Receipt creation, and final atomic Active Pointer switch.
+- connects `sync` to OpenClaw's supported per-Agent `memorySearch.extraPaths`,
+  forced indexing, deep status, memory search, and Gateway `memory_get`
+  interfaces, with durable path ownership and search/get sentinel validation.
 
 ## [0.1.0] - 2026-08-13
 

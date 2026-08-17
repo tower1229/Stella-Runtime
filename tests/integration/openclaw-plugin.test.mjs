@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import test from "node:test";
 
 import plugin from "../../dist/openclaw/index.js";
@@ -49,6 +49,16 @@ class FakeCommand {
     return this;
   }
 }
+
+const listMarkdown = async (directory) => {
+  const paths = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) paths.push(...await listMarkdown(path));
+    if (entry.isFile() && entry.name.endsWith(".md")) paths.push(path);
+  }
+  return paths;
+};
 
 test("OpenClaw discovers cognitive self-check through the plugin entry", async () => {
   const program = new FakeCommand();
@@ -126,28 +136,113 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
       host_retrieval: "openclaw-memory",
     },
   };
+  const state = createStateManagementPort({
+    stateRoot: runtimeStorage,
+    instanceId: runtimeConfig.instance_id,
+  });
+  await state.initialize();
+  state.close();
   const program = new FakeCommand();
+  const hooks = new Map();
+  const hostConfig = {
+    agents: { list: [{
+      id: "main",
+      memorySearch: { extraPaths: [join(root, "unrelated-memory")] },
+    }] },
+  };
+  let indexCalls = 0;
+  let lastSearchResult;
   const api = {
     version: "0.1.0-beta.0",
     pluginConfig: { runtime: runtimeConfig },
-    runtime: { version: "2026.6.34", llm: { complete: async () => ({}) } },
-    on() {},
-    cognitiveRuntimeHostTransition: {
-      async capture() { return { config_revision: "prior" }; },
-      async applyTarget() {},
-      async verifyTarget(target) {
+    runtime: {
+      version: "2026.6.34",
+      config: {
+        current: () => hostConfig,
+        async mutateConfigFile({ mutate }) {
+          await mutate(hostConfig);
+          return { result: undefined };
+        },
+      },
+      llm: { complete: async () => ({ text: JSON.stringify({
+        memory_route: "optional",
+        state_refs: [],
+        governing: null,
+        frameworks: { primary: null, secondary: null },
+        retrieval_plan: [{
+          layer: "semantic",
+          method: "direct_get",
+          target: "sem-synthetic-claim",
+          query: null,
+          purpose: "Inject the activated semantic sentinel",
+        }],
+        confidence: 1,
+        reason_codes: ["SYNTHETIC_ROUTE"],
+      }) }) },
+    },
+    on(name, handler) { hooks.set(name, handler); },
+    cognitiveRuntimeRetrievalCommands: {
+      async index(agentId) {
+        assert.equal(agentId, "main");
+        indexCalls += 1;
+      },
+      async status(agentId) {
+        const projectionDirectory = hostConfig.agents.list[0].memorySearch.extraPaths.at(-1);
+        const files = await listMarkdown(projectionDirectory);
+        return [{
+          agentId,
+          status: {
+            backend: "builtin",
+            provider: "synthetic",
+            workspaceDir: projectionDirectory,
+            files: files.length,
+            chunks: files.length,
+            dirty: false,
+            extraPaths: hostConfig.agents.list[0].memorySearch.extraPaths,
+            vector: {
+              enabled: true,
+              storeAvailable: true,
+              semanticAvailable: true,
+              available: true,
+            },
+          },
+          embeddingProbe: { ok: true },
+          scan: { totalFiles: files.length, issues: [] },
+        }];
+      },
+      async search(agentId, query) {
+        assert.equal(agentId, "main");
+        const projectionDirectory = hostConfig.agents.list[0].memorySearch.extraPaths.at(-1);
+        for (const path of await listMarkdown(projectionDirectory)) {
+          const text = await readFile(path, "utf8");
+          if (query.split(" ").every((term) => text.includes(term))) {
+            lastSearchResult = {
+              path: relative(projectionDirectory, path),
+              text,
+            };
+            return { results: [{
+              path: lastSearchResult.path,
+              startLine: 1,
+              endLine: text.split("\n").length,
+              score: 1,
+              snippet: text,
+              source: "memory",
+            }] };
+          }
+        }
+        return { results: [] };
+      },
+      async get(agentId, path) {
+        assert.equal(agentId, "main");
+        assert.equal(path, lastSearchResult.path);
         return {
-          deepStatus: "pass",
-          generationId: target.syncGeneration,
-          sourceRevision: target.sourceRevision,
-          projectionChecksum: target.projectionChecksum,
-          hostConfigChecksum: target.hostConfigChecksum,
-          searchSentinelChecksum: `sha256:${"3".repeat(64)}`,
-          getSentinelChecksum: `sha256:${"4".repeat(64)}`,
+          path,
+          text: lastSearchResult.text,
+          truncated: false,
+          from: 1,
+          lines: lastSearchResult.text.split("\n").length,
         };
       },
-      async restore() {},
-      async verifyPrior() { return true; },
     },
     registerCli(registrar) {
       return registrar({ program });
@@ -202,10 +297,35 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
   assert.equal(output[3].source_revision, sourceRevision);
   assert.equal(output[3].sync_generation, output[1].sync_generation);
   assert.equal(output[3].reused_generation, true);
+  assert.equal(indexCalls, 1);
+  assert.deepEqual(hostConfig.agents.list[0].memorySearch.extraPaths, [
+    join(root, "unrelated-memory"),
+    join(
+      stateDirectory,
+      "generations",
+      output[1].sync_generation,
+      "projections",
+      output[1].sync_generation,
+    ),
+  ]);
   assert.equal(
     JSON.parse(await readFile(join(runtimeStorage, "active-generation.json"), "utf8")).generation_id,
     output[1].sync_generation,
   );
+  const nextRun = await hooks.get("before_prompt_build")(
+    { prompt: "Use the activated Runtime", messages: [] },
+    {
+      runId: "run-after-sync",
+      sessionKey: "agent:main:telegram:direct:owner-synthetic",
+      agentId: "main",
+      trigger: "user",
+      messageProvider: "telegram",
+      senderId: "owner-synthetic",
+      chatId: "owner-synthetic",
+    },
+  );
+  assert.match(nextRun.prependContext, /\[semantic:sem-synthetic-claim\]/);
+  assert.match(nextRun.prependContext, /Synthetic claims can be tested\./);
   assert.equal(generation.children.has("activate"), false);
   assert.equal(generation.children.has("rebuild"), false);
 });

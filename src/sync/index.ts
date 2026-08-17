@@ -1,11 +1,9 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   chmod,
   mkdir,
-  open,
   readFile,
-  rename,
   rm,
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -17,6 +15,7 @@ import type {
   InstanceRuntimeConfig,
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
+import { atomicWriteFile } from "../core/persistence.js";
 import {
   buildGeneration,
   verifyGeneration,
@@ -154,30 +153,8 @@ const checksum = (value: string | Uint8Array): string =>
 const readJson = async (path: string): Promise<unknown> =>
   JSON.parse(await readFile(path, "utf8")) as unknown;
 
-const atomicWrite = async (path: string, value: unknown): Promise<void> => {
-  const directory = dirname(path);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  await chmod(directory, 0o700);
-  const temporary = join(directory, `.${randomUUID()}.tmp`);
-  const handle = await open(temporary, "wx", 0o600);
-  try {
-    await handle.writeFile(canonicalJson(value));
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  try {
-    await rename(temporary, path);
-    const directoryHandle = await open(directory, "r");
-    try {
-      await directoryHandle.sync();
-    } finally {
-      await directoryHandle.close();
-    }
-  } finally {
-    await rm(temporary, { force: true });
-  }
-};
+const atomicWrite = async (path: string, value: unknown): Promise<void> =>
+  atomicWriteFile(path, canonicalJson(value));
 
 const missingFile = (error: unknown): boolean =>
   isRecord(error) && error.code === "ENOENT";

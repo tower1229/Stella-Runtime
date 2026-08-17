@@ -1,5 +1,9 @@
 import type { TelegramConfirmationPluginApi } from "./confirmation.js";
 import type { HostTransitionPort } from "../sync/index.js";
+import type {
+  OpenClawConsumptionApi,
+  OpenClawRetrievalCommands,
+} from "./consumption.js";
 
 export interface CliCommand {
   command(name: string): CliCommand;
@@ -22,6 +26,7 @@ export interface CognitiveRuntimePluginApi {
   readonly pluginConfig?: Readonly<Record<string, unknown>>;
   readonly runtime: {
     readonly version: string;
+    readonly config?: OpenClawConsumptionApi["config"];
     readonly llm: {
       complete(params: unknown): Promise<unknown>;
     };
@@ -44,6 +49,7 @@ export interface CognitiveRuntimePluginApi {
   readonly on?: (event: PluginHookName, handler: PluginHookHandler) => void;
   readonly registerInteractiveHandler?: TelegramConfirmationPluginApi["registerInteractiveHandler"];
   readonly cognitiveRuntimeHostTransition?: HostTransitionPort;
+  readonly cognitiveRuntimeRetrievalCommands?: OpenClawRetrievalCommands;
   registerCli(
     registrar: (context: { program: CliCommand }) => void | Promise<void>,
     options: { readonly descriptors: readonly CliDescriptor[] },

@@ -53,6 +53,14 @@ The Plugin performs the same recovery check at startup. Concurrent `sync`
 invocations serialize on the Runtime-owned lease rather than interleaving Host
 transitions.
 
+Keep the configured OpenClaw Gateway reachable during sync: the adapter uses
+the supported runtime config mutation interface, forces the configured Agent's
+memory index, reads deep status and search through the memory CLI, and invokes
+`memory_get` through `gateway call tools.invoke`. It never writes OpenClaw's
+index database directly. Do not edit `retrieval-paths.json`; it is the durable
+ownership record that lets interrupted activation remove only this instance's
+half-applied retrieval path while preserving unrelated paths.
+
 ## Recovery
 
 Create a snapshot and verify it before transport:

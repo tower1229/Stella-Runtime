@@ -35,6 +35,10 @@ import {
 } from "../sync/index.js";
 import type { CognitiveRuntimePluginApi } from "./plugin-api.js";
 import {
+  OpenClawCliRetrievalCommands,
+  OpenClawGenerationConsumptionAdapter,
+} from "./consumption.js";
+import {
   openClawCandidateAdmissionService,
   registerTelegramConfirmationGateway,
 } from "./confirmation.js";
@@ -221,6 +225,18 @@ const plugin = {
       });
     }
     const runtimeConfig = readRuntimeConfig(api.pluginConfig);
+    const hostTransition = runtimeConfig === null
+      ? undefined
+      : api.cognitiveRuntimeHostTransition ?? (
+          api.runtime.config === undefined
+            ? undefined
+            : new OpenClawGenerationConsumptionAdapter(
+                runtimeConfig,
+                { config: api.runtime.config },
+                api.cognitiveRuntimeRetrievalCommands ??
+                  new OpenClawCliRetrievalCommands(),
+              )
+        );
     let runtimeController: RuntimeHookController | null = null;
     if (runtimeConfig !== null) {
       runtimeController = registerRuntimeHooks(api, runtimeConfig, {
@@ -253,13 +269,13 @@ const plugin = {
     if (
       runtimeConfig !== null &&
       runtimeController !== null &&
-      api.cognitiveRuntimeHostTransition !== undefined
+      hostTransition !== undefined
     ) {
       void recoverInterruptedSync({
           config: runtimeConfig,
           hostVersion: api.runtime.version,
           nodeVersion: process.versions.node,
-          host: api.cognitiveRuntimeHostTransition,
+          host: hostTransition,
           runs: runtimeController,
         }).catch((error: unknown) => {
         runtimeController.closeAdmission("startup-recovery-failed");
@@ -383,7 +399,7 @@ const plugin = {
             if (
               runtimeConfig === null ||
               runtimeController === null ||
-              api.cognitiveRuntimeHostTransition === undefined
+              hostTransition === undefined
             ) {
               throw new Error("SYNC_RUNTIME_PORTS_REQUIRED");
             }
@@ -393,7 +409,7 @@ const plugin = {
               packageVersion,
               hostVersion: api.runtime.version,
               nodeVersion: process.versions.node,
-              host: api.cognitiveRuntimeHostTransition,
+              host: hostTransition,
               runs: runtimeController,
             });
             console.log(JSON.stringify({

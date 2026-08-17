@@ -54,6 +54,17 @@ Plugin startup, an unfinished Journal is recovered before admission reopens;
 prior recovery must pass the same Pointer, Receipt, Generation, State, exact
 Host, configuration, index, and search/get proof required for serving.
 
+The OpenClaw Generation Consumption Adapter mutates only the configured Agent's
+`memorySearch.extraPaths` through the Host runtime config interface. It records
+this instance's owned entries in `<runtime_storage>/retrieval-paths.json`,
+replaces only those entries on the next sync, and preserves every unrelated
+path and every other Agent. The target is the immutable
+`<generation_storage>/<generation>/projections/<generation>/` directory.
+Activation requires `openclaw memory index --force`, deep memory status, an
+identity-bound `memory search` sentinel, and a `memory_get` sentinel invoked
+through the Gateway tool interface; an empty, dirty, stale, truncated-before-
+identity, or mismatched result fails the Barrier.
+
 Eligible scope is derived from OpenClaw's verified Agent hook fields: the
 configured main Agent, a main/direct session key, a user trigger, and matching
 provider, sender, and direct-chat identities for the configured Authority Owner.
