@@ -84,6 +84,32 @@ export type {
   RunScratchSnapshot,
 } from "./core/index.js";
 export {
+  calculatePublicationContentChecksum,
+  ChangeSetPublicationCoordinator,
+  createChangeSet,
+  FileApprovalPublicationStore,
+  FilePublicationJournal,
+} from "./publication/index.js";
+export type {
+  ApprovalPublicationFinalization,
+  ApprovalPublicationPort,
+  AuthorityCheckoutInspection,
+  AuthorityCommitMetadata,
+  AuthorityPublicationCommit,
+  AuthorityPublicationValidation,
+  AuthorityPublishingPort,
+  ChangeSetPublicationCoordinatorOptions,
+  ChangeSetArtifact,
+  FilePublicationJournalOptions,
+  FileApprovalPublicationStoreOptions,
+  PublicationFailpoint,
+  PublicationJournalRecord,
+  PublicationJournalPort,
+  PublicationOperation,
+  PublicationResult,
+  PreparedApprovalPublication,
+} from "./publication/index.js";
+export {
   calculateReleasePinChecksum,
   createReleaseProvenance,
   rehearseRecoveryTransport,
