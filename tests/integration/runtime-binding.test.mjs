@@ -182,12 +182,22 @@ test("scope filtering excludes callbacks, probes, index work, and other agents",
     { ...eligible("other"), agentId: "public-agent" },
     { ...eligible("wrong-owner"), senderId: "someone-else" },
     { ...eligible("unclassified"), messageProvider: undefined, senderId: undefined },
+    { ...eligible("missing-kind"), runKind: undefined },
+    { ...eligible("missing-scope"), scope: undefined },
   ];
   for (const context of excluded) {
     assert.equal(await runtime.hooks.get("before_prompt_build")(
       { prompt: "excluded", messages: [] }, context,
     ), undefined);
   }
+  assert.equal(await runtime.hooks.get("before_prompt_build")(
+    { prompt: "conflicting kind", messages: [], runKind: "confirmation_callback" },
+    eligible("conflicting-kind"),
+  ), undefined);
+  assert.equal(await runtime.hooks.get("before_prompt_build")(
+    { prompt: "conflicting scope", messages: [], scope: "shared_session" },
+    eligible("conflicting-scope"),
+  ), undefined);
   assert.equal(compileCalls, 0);
   assert.equal(runtime.calls.length, 0);
 });

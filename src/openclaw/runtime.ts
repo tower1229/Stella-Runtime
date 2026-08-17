@@ -97,10 +97,8 @@ const isEligibleRun = (
   context: PluginHookContext,
   config: InstanceRuntimeConfig,
 ): boolean => {
-  const runKind = typeof event.runKind === "string"
-    ? event.runKind
-    : context.runKind;
-  if (runKind !== undefined && runKind !== "agent") return false;
+  if (context.runKind !== "agent") return false;
+  if (event.runKind !== undefined && event.runKind !== context.runKind) return false;
   if (agentIdFrom(context) !== config.host.agent_id) return false;
   if (
     context.sessionKey === undefined ||
@@ -114,10 +112,9 @@ const isEligibleRun = (
   ) {
     return false;
   }
-  const scope = typeof event.scope === "string"
-    ? event.scope
-    : context.scope ?? "private_main_session";
-  return config.host.eligible_scope.includes(scope);
+  if (context.scope !== "private_main_session") return false;
+  if (event.scope !== undefined && event.scope !== context.scope) return false;
+  return config.host.eligible_scope.includes(context.scope);
 };
 
 const completionText = (value: unknown): string => {

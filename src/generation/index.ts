@@ -135,6 +135,7 @@ export interface GenerationVerificationResult {
   readonly valid: boolean;
   readonly issues: readonly string[];
   readonly manifest: GenerationManifest | null;
+  readonly manifestChecksum: string | null;
 }
 
 export interface GenerationStatus {
@@ -1136,6 +1137,7 @@ export async function verifyGeneration(
 ): Promise<GenerationVerificationResult> {
   const issues: string[] = [];
   let manifest: GenerationManifest | null = null;
+  let manifestChecksum: string | null = null;
   const artifacts = new Map<string, GenerationArtifact>();
   try {
     const generationStat = await lstat(generationDirectory);
@@ -1147,7 +1149,9 @@ export async function verifyGeneration(
     if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) {
       throw new Error("GENERATION_MANIFEST_INVALID");
     }
-    manifest = parseManifest(await readJson(manifestPath));
+    const manifestBytes = await readFile(manifestPath);
+    manifestChecksum = checksum(manifestBytes);
+    manifest = parseManifest(JSON.parse(manifestBytes.toString("utf8")) as unknown);
     const directoryGeneration = basename(resolve(generationDirectory));
     if (
       GENERATION_PATTERN.test(directoryGeneration) &&
@@ -1273,7 +1277,7 @@ export async function verifyGeneration(
         const activeGoverningSystem = governingPayloadValue.active_governing_system;
         if (activeGoverningSystem !== null && typeof activeGoverningSystem !== "string") {
           issues.push("GENERATION_IDENTITY_INPUT_INVALID");
-          return { valid: false, issues: [...new Set(issues)], manifest };
+          return { valid: false, issues: [...new Set(issues)], manifest, manifestChecksum };
         }
         validateReferences(authorityRecords, activeGoverningSystem);
         const expectedGeneration = `generation-${checksum(canonicalJson({
@@ -1375,7 +1379,12 @@ export async function verifyGeneration(
   } catch (error: unknown) {
     issues.push(error instanceof Error ? error.message : "GENERATION_VERIFY_FAILED");
   }
-  return { valid: issues.length === 0, issues: [...new Set(issues)], manifest };
+  return {
+    valid: issues.length === 0,
+    issues: [...new Set(issues)],
+    manifest,
+    manifestChecksum,
+  };
 }
 
 export async function activateGeneration(options: {

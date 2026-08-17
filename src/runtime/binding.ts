@@ -276,11 +276,13 @@ export class FileBindingCompiler implements BindingCompilerPort {
 
     const generationDirectory = join(generationStorage, pointer.generation_id);
     const verification = await verifyGeneration(generationDirectory);
-    if (!verification.valid || verification.manifest === null) {
+    if (
+      !verification.valid ||
+      verification.manifest === null ||
+      verification.manifestChecksum === null
+    ) {
       throw new Error(`ACTIVE_GENERATION_INVALID:${verification.issues.join(",")}`);
     }
-    const manifestPath = join(generationDirectory, "manifest.json");
-    const manifestChecksum = checksum(await readFile(manifestPath));
     const projectionManifest = verification.manifest.files.find(
       (file) => file.path === "projection-entries.json",
     );
@@ -288,7 +290,7 @@ export class FileBindingCompiler implements BindingCompilerPort {
     validateActivationChain({
       pointer,
       receipt,
-      manifestChecksum,
+      manifestChecksum: verification.manifestChecksum,
       projectionChecksum: projectionManifest.checksum,
       config: input.config,
       hostVersion: input.hostVersion,

@@ -105,7 +105,12 @@ test("build reuses one immutable full-hash Generation and renders bound projecti
   assert.deepEqual(second.bootstrapProjections, []);
   assert.equal(first.syncGeneration.length, "generation-".length + 64);
   await assert.rejects(access(join(stateDirectory, "active.json")));
-  assert.equal((await verifyGeneration(first.generationDirectory)).valid, true);
+  const verification = await verifyGeneration(first.generationDirectory);
+  assert.equal(verification.valid, true);
+  assert.equal(
+    verification.manifestChecksum,
+    checksum(await readFile(join(first.generationDirectory, "manifest.json"))),
+  );
   const projection = JSON.parse(await readFile(
     join(first.generationDirectory, "projection-entries.json"),
     "utf8",
