@@ -69,6 +69,23 @@ const checksum = (value: string | Uint8Array): string =>
 const readJson = async (path: string): Promise<unknown> =>
   JSON.parse(await readFile(path, "utf8")) as unknown;
 
+const readManifestedJson = async (
+  generationDirectory: string,
+  manifest: { readonly files: readonly { readonly path: string; readonly checksum: string }[] },
+  path: string,
+  reason: string,
+): Promise<unknown> => {
+  const entry = manifest.files.find((file) => file.path === path);
+  if (entry === undefined) throw new Error(reason);
+  const bytes = await readFile(join(generationDirectory, path));
+  if (checksum(bytes) !== entry.checksum) throw new Error(reason);
+  try {
+    return JSON.parse(bytes.toString("utf8")) as unknown;
+  } catch {
+    throw new Error(reason);
+  }
+};
+
 const assertContract = (
   name: "active-generation-pointer" | "activation-receipt" | "state-view",
   value: unknown,
@@ -180,10 +197,13 @@ const freeze = <T>(value: T): T => {
 export const calculateRuntimeConfigIdentityChecksum = (
   config: InstanceRuntimeConfig,
 ): string => checksum(canonicalJson({
+  schema_version: config.schema_version,
   instance_id: config.instance_id,
   runtime_storage: config.runtime_storage,
   generation_storage: config.generation_storage,
   host: config.host,
+  authority_owner: config.authority_owner,
+  limits: config.limits,
   adapters: config.adapters,
 }));
 
@@ -278,9 +298,24 @@ export class FileBindingCompiler implements BindingCompilerPort {
     });
 
     const [registryValue, projectionValue, governingValue] = await Promise.all([
-      readJson(join(generationDirectory, "registry.json")),
-      readJson(join(generationDirectory, "projection-entries.json")),
-      readJson(join(generationDirectory, "governing-digest.json")),
+      readManifestedJson(
+        generationDirectory,
+        verification.manifest,
+        "registry.json",
+        "ACTIVE_REGISTRY_CHECKSUM_MISMATCH",
+      ),
+      readManifestedJson(
+        generationDirectory,
+        verification.manifest,
+        "projection-entries.json",
+        "ACTIVE_PROJECTION_CHECKSUM_MISMATCH",
+      ),
+      readManifestedJson(
+        generationDirectory,
+        verification.manifest,
+        "governing-digest.json",
+        "ACTIVE_GOVERNING_CHECKSUM_MISMATCH",
+      ),
     ]);
     const generationId = pointer.generation_id;
     const revision = pointer.source_revision;

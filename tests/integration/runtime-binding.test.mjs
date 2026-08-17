@@ -9,6 +9,7 @@ import {
   readRuntimeConfig,
   registerRuntimeHooks,
 } from "../../dist/openclaw/runtime.js";
+import plugin from "../../dist/openclaw/index.js";
 import { calculateRegistryChecksum } from "../../dist/router/index.js";
 import {
   calculateRuntimeConfigIdentityChecksum,
@@ -16,12 +17,17 @@ import {
 import { buildGeneration } from "../../dist/generation/index.js";
 import { createStateManagementPort } from "../../dist/state/management.js";
 import {
+  provenanceDatabasePath,
+  SqliteProvenanceStore,
+} from "../../dist/provenance/index.js";
+import {
   cognitiveMarkdown,
   commitSyntheticAuthority,
   writeSyntheticAuthority,
 } from "../helpers/synthetic-authority.mjs";
 
 const generation = `generation-${"a".repeat(64)}`;
+const nextGeneration = `generation-${"b".repeat(64)}`;
 
 const config = (mode = "enforce", paths = {}) => readRuntimeConfig({
   runtime: {
@@ -57,25 +63,25 @@ const routerResult = {
   reason_codes: ["SYNTHETIC_ROUTE"],
 };
 
-const binding = (suffix = "one") => {
+const binding = (suffix = "one", generationId = generation) => {
   const entries = [
     {
       id: "state-synthetic",
       role: "current_state",
       version: `view-${suffix}`,
-      syncGeneration: generation,
+      syncGeneration: generationId,
       checksum: `sha256:${"1".repeat(64)}`,
     },
     {
       id: "cog-governing",
       role: "governing_system",
       version: "1",
-      syncGeneration: generation,
+      syncGeneration: generationId,
       checksum: `sha256:${"2".repeat(64)}`,
     },
   ];
   return {
-    syncGeneration: generation,
+    syncGeneration: generationId,
     authorityRevision: "a".repeat(40),
     stateViewVersion: `view-${suffix}`,
     activeGoverningSystem: "cog-governing",
@@ -121,20 +127,24 @@ const eligible = (runId) => ({
   agentId: "main",
   scope: "private_main_session",
   runKind: "agent",
+  messageProvider: "telegram",
+  senderId: "owner-synthetic",
 });
 
 test("eligible Run compiles once and pins Generation and State View until cleanup", async () => {
   let next = binding("one");
   let compileCalls = 0;
+  const compiledGenerations = [];
   const runtime = createRuntime({ compile: async () => {
     compileCalls += 1;
+    compiledGenerations.push(next.syncGeneration);
     return next;
   } });
 
   const first = await runtime.hooks.get("before_prompt_build")(
     { prompt: "first", messages: [] }, eligible("run-one"),
   );
-  next = binding("two");
+  next = binding("two", nextGeneration);
   const repeated = await runtime.hooks.get("before_prompt_build")(
     { prompt: "changed", messages: [] }, eligible("run-one"),
   );
@@ -143,6 +153,7 @@ test("eligible Run compiles once and pins Generation and State View until cleanu
   );
 
   assert.equal(compileCalls, 2);
+  assert.deepEqual(compiledGenerations, [generation, nextGeneration]);
   assert.equal(runtime.calls.length, 2);
   assert.match(first.prependContext, /state-one/);
   assert.deepEqual(repeated, first);
@@ -169,6 +180,8 @@ test("scope filtering excludes callbacks, probes, index work, and other agents",
     { ...eligible("shared"), scope: "shared_session" },
     { ...eligible("group"), sessionKey: "agent:main:telegram:group:synthetic" },
     { ...eligible("other"), agentId: "public-agent" },
+    { ...eligible("wrong-owner"), senderId: "someone-else" },
+    { ...eligible("unclassified"), messageProvider: undefined, senderId: undefined },
   ];
   for (const context of excluded) {
     assert.equal(await runtime.hooks.get("before_prompt_build")(
@@ -299,6 +312,36 @@ test("filesystem compiler validates Pointer, Receipt, Manifest, Host identity, a
     { prompt: "compile", messages: [] }, eligible("filesystem"),
   );
   assert.match(result.prependContext, /Pinned synthetic kernel/);
+
+  const observeHooks = new Map();
+  await plugin.register({
+    pluginConfig: { runtime: { ...runtimeConfig, mode: "observe" } },
+    runtime: {
+      version: "2026.6.34",
+      llm: { complete: async () => ({ text: JSON.stringify({
+        ...routerResult,
+        state_refs: [],
+        governing: {
+          system: "cog-synthetic-governing",
+          kernel_version: "1",
+          modules: [],
+        },
+      }) }) },
+    },
+    on(name, handler) { observeHooks.set(name, handler); },
+    registerCli() {},
+  });
+  assert.equal(await observeHooks.get("before_prompt_build")(
+    { prompt: "observe", messages: [] }, eligible("filesystem-observe"),
+  ), undefined);
+  await observeHooks.get("agent_end")(
+    { success: true, messages: [] }, eligible("filesystem-observe"),
+  );
+  const traces = new SqliteProvenanceStore({
+    databasePath: provenanceDatabasePath(runtimeStorage, "instance-synthetic"),
+  });
+  assert.equal((await traces.query({ runId: "filesystem-observe" })).length, 1);
+  traces.close();
 
   receipt.host_config_checksum = `sha256:${"f".repeat(64)}`;
   await writeFile(join(runtimeStorage, "activation-receipts", "activation-synthetic.json"), JSON.stringify(receipt));

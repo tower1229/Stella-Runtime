@@ -219,25 +219,20 @@ const plugin = {
     const runtimeConfig = readRuntimeConfig(api.pluginConfig);
     let runtimeController: RuntimeHookController | null = null;
     if (runtimeConfig !== null) {
-      const recoveryConfig = api.pluginConfig?.recovery === undefined
-        ? null
-        : readRecoveryConfig(api.pluginConfig);
       runtimeController = registerRuntimeHooks(api, runtimeConfig, {
-        ...(recoveryConfig === null ? {} : {
-          recordProvenance: async (overlay) => {
-            const store = new SqliteProvenanceStore({
-              databasePath: provenanceDatabasePath(
-                recoveryConfig.stateRoot,
-                recoveryConfig.activeInstanceId,
-              ),
-            });
-            try {
-              await store.record(overlay);
-            } finally {
-              store.close();
-            }
-          },
-        }),
+        recordProvenance: async (overlay) => {
+          const store = new SqliteProvenanceStore({
+            databasePath: provenanceDatabasePath(
+              runtimeConfig.runtime_storage,
+              runtimeConfig.instance_id,
+            ),
+          });
+          try {
+            await store.record(overlay);
+          } finally {
+            store.close();
+          }
+        },
       });
       if (runtimeController !== null) {
         api.lifecycle?.registerRuntimeLifecycle({

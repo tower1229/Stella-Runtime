@@ -93,6 +93,8 @@ const runContext = (runId, extra = {}) => ({
   agentId: "main",
   scope: "private_main_session",
   runKind: "agent",
+  messageProvider: "telegram",
+  senderId: "owner-synthetic",
   ...extra,
 });
 

@@ -43,11 +43,13 @@ At the start of each eligible Run, the Binding Compiler reads
 Generation, Manifest, Projection, Host, Node, instance, and configuration
 identities once and pins the resulting Active Run Binding until Run cleanup.
 
-Eligible scope is the configured private main Agent/session. Router completions,
-confirmation callbacks, operational probes, index operations, other Agents, and
-shared/public scopes are bypassed. `enforce` rejects an eligible Run when binding
-proof is missing, stale, or inconsistent; `observe` traces validation without
-injecting private content; `off` does not read binding storage.
+Eligible scope requires the configured main Agent, a direct non-operational
+session, and the exact configured Authority Owner provider/actor tuple. Router
+completions, confirmation callbacks, operational probes, index operations, other
+actors or Agents, and shared/public scopes are bypassed. Missing Host identity
+metadata is not treated as private. `enforce` rejects an eligible Run when
+binding proof is missing, stale, or inconsistent; `observe` persists validation
+trace without injecting private content; `off` does not read binding storage.
 
 ## Recovery configuration
 

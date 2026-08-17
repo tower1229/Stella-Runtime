@@ -64,6 +64,8 @@ export interface PluginHookContext {
   readonly trigger?: string;
   readonly messageProvider?: string;
   readonly channelId?: string;
+  readonly senderId?: string;
+  readonly chatId?: string;
 }
 
 export type PluginHookHandler = (

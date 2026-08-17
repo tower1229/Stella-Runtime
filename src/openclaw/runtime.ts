@@ -86,13 +86,6 @@ const runIdFrom = (
   return typeof value === "string" && value.length > 0 ? value : null;
 };
 
-const EXCLUDED_RUN_KINDS = new Set([
-  "router_completion",
-  "confirmation_callback",
-  "operational_probe",
-  "index_operation",
-]);
-
 const agentIdFrom = (context: PluginHookContext): string | null => {
   if (context.agentId !== undefined && context.agentId.length > 0) return context.agentId;
   const match = context.sessionKey?.match(/^agent:([^:]+):/);
@@ -106,12 +99,18 @@ const isEligibleRun = (
 ): boolean => {
   const runKind = typeof event.runKind === "string"
     ? event.runKind
-    : context.runKind ?? "agent";
-  if (EXCLUDED_RUN_KINDS.has(runKind)) return false;
+    : context.runKind;
+  if (runKind !== undefined && runKind !== "agent") return false;
   if (agentIdFrom(context) !== config.host.agent_id) return false;
   if (
     context.sessionKey === undefined ||
     /:(?:group|channel|cron|subagent):/i.test(context.sessionKey)
+  ) {
+    return false;
+  }
+  if (
+    context.messageProvider !== config.authority_owner.provider ||
+    context.senderId !== config.authority_owner.actor_id
   ) {
     return false;
   }

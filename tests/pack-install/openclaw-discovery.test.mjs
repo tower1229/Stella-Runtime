@@ -885,7 +885,6 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
   let runtimeInstalled = false;
   let probeInstalled = false;
   let gateway;
-  let gatewayDiagnostics = "";
 
   try {
     const { stdout: versionOutput } = await run("openclaw", ["--version"], {
@@ -1094,7 +1093,6 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       port,
       token,
     );
-    gatewayDiagnostics = gateway.diagnostics;
     await stopGateway(gateway);
     gateway = undefined;
     await verifyPackedAdapters(pluginRoot, successors);
@@ -1110,22 +1108,11 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
         JSON.stringify(request).includes("[synthetic_probe_injection]")),
       "synthetic probe prompt mutation was not applied",
     );
-    assert.ok(
+    assert.equal(
       modelServer.requests.some((request) =>
         JSON.stringify(request).includes("[current_input]")),
-      JSON.stringify({
-        gatewayDiagnostics: gatewayDiagnostics
-          ?.split("\n")
-          .filter((line) => /cognitive-runtime|router|packet/i.test(line)),
-        requests: modelServer.requests.map((request) => ({
-        stream: request.stream,
-        messageRoles: (request.messages ?? []).map((message) => message.role),
-        containsRouterInstruction: JSON.stringify(request).includes(
-          "Return exactly one Router Result JSON object.",
-        ),
-        containsPacket: JSON.stringify(request).includes("[current_input]"),
-        })),
-      }, null, 2),
+      false,
+      "the CLI operational probe must not receive a private cognitive packet",
     );
   } finally {
     try {
