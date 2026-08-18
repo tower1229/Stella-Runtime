@@ -97,6 +97,11 @@ export interface SyncGenerationOptions {
   readonly runs: EligibleRunDrainPort;
   readonly now?: () => Date;
   readonly cutover?: CutoverExecutionOptions;
+  readonly lifecycle?: {
+    recordLifecycle(
+      outcome: "pending_activation" | "activated" | "rollback_restored",
+    ): void;
+  };
 }
 
 export interface SyncGenerationResult {
@@ -113,6 +118,9 @@ export interface SyncRecoveryOptions {
   readonly nodeVersion: string;
   readonly host: HostTransitionPort;
   readonly runs?: EligibleRunDrainPort;
+  readonly lifecycle?: {
+    recordLifecycle(outcome: "rollback_restored"): void;
+  };
 }
 
 type SyncPhase =
@@ -435,6 +443,7 @@ const recoverPrior = async (
   await writeJournal(runtimeStorage, journalAt(interrupted, "prior_restored"));
   await openGate(runtimeStorage);
   options.runs?.openAdmission();
+  options.lifecycle?.recordLifecycle("rollback_restored");
 };
 
 const recoverInterruptedSyncLocked = async (
@@ -527,6 +536,7 @@ const syncGenerationLocked = async (
     (file) => file.path === "projection-entries.json",
   );
   if (projection === undefined) throw new Error("SYNC_PROJECTION_MISSING");
+  options.lifecycle?.recordLifecycle("pending_activation");
 
   const target: SyncTarget = {
     config: options.config,
@@ -651,6 +661,7 @@ const syncGenerationLocked = async (
     journal = journalAt(journal, "completed");
     await writeJournal(runtimeStorage, journal);
     targetCommitted = true;
+    options.lifecycle?.recordLifecycle("activated");
     await openGate(runtimeStorage);
     options.runs.openAdmission();
     return {

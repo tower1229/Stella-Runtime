@@ -125,18 +125,20 @@ All structured operational commands require `--json` where offered.
 
 | Command | Purpose |
 | --- | --- |
-| `openclaw cognitive self-check` | Verify Plugin discovery and host completion availability. |
-| `openclaw cognitive metrics --json` | Read bounded Runtime metrics. |
+| `openclaw cognitive self-check` | Read-only Authority-input validation plus Runtime storage, Plugin discovery, exact Host/Node, config identity, index/retrieval, and independent Public Corpus health. |
+| `openclaw cognitive metrics --json` | Read bounded Runtime and lifecycle outcome counters without private content. |
 | `openclaw cognitive validate --authority DIR --revision SHA --json` | Read-only validation of one exact clean committed Authority Source Revision. |
 | `openclaw cognitive build --authority DIR --state DIR --revision SHA [--bootstrap USER.md,MEMORY.md] --json` | Build or reuse one immutable Generation without activation, optionally deriving Bootstrap projections outside the Generation manifest. |
 | `openclaw cognitive sync --revision SHA [--cutover-plan FILE] --json` | Build or reuse the configured committed Authority target, optionally enforce one checksummed Instance Cutover Plan, drain Eligible Runs, prove the Host transition, write its Receipt, and switch the Active Pointer last. |
-| `openclaw cognitive generation show --state DIR --generation ID --json` | Read a built Generation and its Source Revision without implying that it is active. |
+| `openclaw cognitive generation show --json` | Read Active/latest Source Revisions, Synchronization Gap, Pending Activation, Generation/Receipt identity, and Receipt validity. |
+| `openclaw cognitive generation show --state DIR --generation ID --json` | Read one explicit built Generation without implying that it is active. |
 | `openclaw cognitive state initialize --instance ID --json` | Explicitly create a valid empty Current State Head. |
 | `openclaw cognitive state import --instance ID --manifest FILE --authorization FILE --json` | Validate fresh external authorization for each exact Event, then atomically import one checksummed baseline before the first real Run. |
 | `openclaw cognitive state view --instance ID [--revision N] --json` | Read an immutable, checksummed State View. |
 | `openclaw cognitive state correct plan --instance ID --preview ID --event FILE --expires INSTANT --json` | Render an exact Correction Preview and checksum. |
 | `openclaw cognitive state correct apply --instance ID --preview FILE --checksum SHA256 --correction ID --session SHA256 --prior-run ID --idempotency-key KEY --json` | Apply an unchanged Preview and atomically create its successor outbox. |
 | `openclaw cognitive trace get|query ... --json` | Read minimized cognitive provenance. |
+| `openclaw cognitive trace lifecycle --json` | Read the bounded accepted/published/pending/activated/rollback/gated outcome trace without private content. |
 | `openclaw cognitive backup --instance ID --output DIR --json` | Create a new Recovery Snapshot. |
 | `openclaw cognitive verify --snapshot DIR --json` | Verify a snapshot read-only. |
 | `openclaw cognitive restore --instance ID --snapshot DIR --json` | Restore with required rollback safety. |

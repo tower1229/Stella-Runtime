@@ -171,6 +171,7 @@ export interface CandidateAdmissionServiceOptions {
   ) => string;
   readonly createRoutingToken?: () => string;
   readonly authorityHead?: CandidateAuthorityHeadPort;
+  readonly lifecycle?: { recordLifecycle(outcome: "accepted"): void };
 }
 
 export interface DiscoveryAuthorizationInput {
@@ -415,6 +416,11 @@ export class CandidateAdmissionService {
   readonly #createId: NonNullable<CandidateAdmissionServiceOptions["createId"]>;
   readonly #createRoutingToken: () => string;
   readonly #authorityHead: CandidateAuthorityHeadPort;
+  readonly #lifecycle: CandidateAdmissionServiceOptions["lifecycle"];
+  readonly #instanceLifecycles = new Map<
+    string,
+    NonNullable<CandidateAdmissionServiceOptions["lifecycle"]>
+  >();
   readonly #authorizations = new Map<string, DiscoveryAuthorization>();
   readonly #candidates = new Map<string, readonly AuthorityCandidate[]>();
   readonly #candidateAuthorizations = new Map<string, string>();
@@ -431,6 +437,19 @@ export class CandidateAdmissionService {
       getCurrent: () => {
         throw new Error("CANDIDATE_AUTHORITY_HEAD_UNAVAILABLE");
       },
+    };
+    this.#lifecycle = options.lifecycle;
+  }
+
+  setInstanceLifecycleObserver(
+    instanceId: string,
+    lifecycle: NonNullable<CandidateAdmissionServiceOptions["lifecycle"]>,
+  ): () => void {
+    this.#instanceLifecycles.set(instanceId, lifecycle);
+    return () => {
+      if (this.#instanceLifecycles.get(instanceId) === lifecycle) {
+        this.#instanceLifecycles.delete(instanceId);
+      }
     };
   }
 
@@ -713,6 +732,10 @@ export class CandidateAdmissionService {
       consumed: false,
       invalidated: false,
     });
+    if (stored.decision !== "rejected") {
+      (this.#instanceLifecycles.get(authorization.instance_id) ?? this.#lifecycle)
+        ?.recordLifecycle("accepted");
+    }
     return immutableCopy({ status: "decided" as const, receipt: stored });
   }
 

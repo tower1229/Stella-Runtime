@@ -1,6 +1,29 @@
 export { runSelfCheck } from "./cli/index.js";
 export type { SelfCheckResult } from "./cli/index.js";
 export {
+  DRIFT_REASON_CODES,
+  inspectGenerationStatus,
+  inspectStoredGenerationStatus,
+  loadActiveGenerationHealth,
+  readLatestAuthorityRevision,
+  RUNTIME_HEALTH_FILE,
+  RuntimeHealthMonitor,
+  validateActiveReceipt,
+} from "./diagnostics/index.js";
+export type {
+  ActiveGenerationHealthSnapshot,
+  DriftReasonCode,
+  GenerationOperationalStatus,
+  LifecycleTrace,
+  LifecycleOutcome,
+  ReceiptValidity,
+  ReconciliationReceipt,
+  ReconciliationTrigger,
+  RuntimeHealthMetrics,
+  RuntimeHealthOptions,
+  RuntimeSelfCheckResult,
+} from "./diagnostics/index.js";
+export {
   admitFramework,
   calculateCandidateContentChecksum,
   calculateCandidateExactDiff,

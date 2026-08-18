@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { runSelfCheck } from "../cli/index.js";
 import type {
@@ -13,6 +14,13 @@ import {
   validateAuthoritySource,
 } from "../generation/index.js";
 import type { BootstrapTarget } from "../generation/index.js";
+import {
+  inspectStoredGenerationStatus,
+  loadActiveGenerationHealth,
+  readLatestAuthorityRevision,
+  RuntimeHealthMonitor,
+  validateActiveReceipt,
+} from "../diagnostics/index.js";
 import {
   createRuntimeVerifyOptions,
   createRuntimeRecoveryPort,
@@ -226,6 +234,7 @@ const plugin = {
       });
     }
     const runtimeConfig = readRuntimeConfig(api.pluginConfig);
+    let runtimeHooksRegistered = false;
     const hostTransition = runtimeConfig === null
       ? undefined
       : api.cognitiveRuntimeHostTransition ?? (
@@ -239,9 +248,94 @@ const plugin = {
                 api.cognitiveRuntimeInstanceCutover,
               )
         );
+    const healthMonitor = runtimeConfig === null || hostTransition === undefined
+      ? null
+      : new RuntimeHealthMonitor({
+          config: runtimeConfig,
+          hostVersion: api.runtime.version,
+          nodeVersion: process.versions.node,
+          expectedHostVersion: "2026.6.34",
+          expectedNodeVersions: /^(22\.(?:19|[2-9][0-9])\.|24\.)/.test(process.versions.node)
+            ? [process.versions.node]
+            : [],
+          pluginDiscovered: () => runtimeHooksRegistered,
+          hostCapabilities: async () => {
+            if (
+              typeof api.runtime.llm.complete !== "function" ||
+              api.runtime.config === undefined ||
+              hostTransition === undefined
+            ) return false;
+            return isRecord(api.runtime.config.current());
+          },
+          authority: {
+            validate: async () => {
+              const sourceRevision = await readLatestAuthorityRevision(
+                runtimeConfig.adapters.authority_checkout,
+              );
+              return validateAuthoritySource({
+                authorityDirectory: runtimeConfig.adapters.authority_checkout,
+                sourceRevision,
+              });
+            },
+          },
+          active: { load: () => loadActiveGenerationHealth(runtimeConfig) },
+          configIdentity: {
+            verify: async () => {
+              const active = await loadActiveGenerationHealth(runtimeConfig);
+              return validateActiveReceipt(
+                active,
+                runtimeConfig,
+                api.runtime.version,
+                process.versions.node,
+              );
+            },
+          },
+          retrieval: {
+            verify: async (active) => {
+              const projection = active.manifest.files.find((file) =>
+                file.path === "projection-entries.json");
+              if (projection === undefined) throw new Error("ACTIVE_PROJECTION_MISSING");
+              await hostTransition.verifyTarget({
+                config: runtimeConfig,
+                sourceRevision: active.pointer.source_revision,
+                syncGeneration: active.pointer.generation_id,
+                generationDirectory: join(
+                  runtimeConfig.generation_storage,
+                  active.pointer.generation_id,
+                ),
+                projectionDirectory: join(
+                  runtimeConfig.generation_storage,
+                  active.pointer.generation_id,
+                  "projections",
+                  active.pointer.generation_id,
+                ),
+                manifestChecksum: active.pointer.manifest_checksum,
+                projectionChecksum: projection.checksum,
+                hostConfigChecksum: active.receipt.host_config_checksum,
+                expectedIndexEvidence: {
+                  searchSentinelChecksum:
+                    active.receipt.index_evidence.search_sentinel_checksum,
+                  getSentinelChecksum:
+                    active.receipt.index_evidence.get_sentinel_checksum,
+                },
+              });
+            },
+          },
+          ...(api.cognitiveRuntimePublicCorpusHealth === undefined ? {} : {
+            publicCorpus: api.cognitiveRuntimePublicCorpusHealth,
+          }),
+        });
+    const stopPeriodicHealth = healthMonitor?.startPeriodic(5 * 60 * 1000);
+    const disposeCandidateLifecycle = healthMonitor === null || runtimeConfig === null
+      ? undefined
+      : openClawCandidateAdmissionService.setInstanceLifecycleObserver(
+          runtimeConfig.instance_id,
+          healthMonitor,
+        );
     let runtimeController: RuntimeHookController | null = null;
     if (runtimeConfig !== null) {
       runtimeController = registerRuntimeHooks(api, runtimeConfig, {
+        ...(healthMonitor === null ? {} : { healthGate: healthMonitor }),
         recordProvenance: async (overlay) => {
           const store = new SqliteProvenanceStore({
             databasePath: provenanceDatabasePath(
@@ -256,11 +350,14 @@ const plugin = {
           }
         },
       });
+      runtimeHooksRegistered = runtimeController !== null;
       if (runtimeController !== null) {
         api.lifecycle?.registerRuntimeLifecycle({
           id: "cognitive-runtime-run-scratch",
           description: "Clear bounded cognitive Runtime state.",
           cleanup: ({ reason }) => {
+            stopPeriodicHealth?.();
+            disposeCandidateLifecycle?.();
             runtimeController?.clearLifecycle(
               reason === "delete" ? "reset" : reason,
             );
@@ -279,6 +376,9 @@ const plugin = {
           nodeVersion: process.versions.node,
           host: hostTransition,
           runs: runtimeController,
+          ...(healthMonitor === null ? {} : { lifecycle: healthMonitor }),
+        }).then(async () => {
+          await healthMonitor?.reconcile("startup");
         }).catch((error: unknown) => {
         runtimeController.closeAdmission("startup-recovery-failed");
         api.logger?.warn(JSON.stringify({
@@ -319,7 +419,14 @@ const plugin = {
         cognitive
           .command("self-check")
           .description("Check whether the cognitive runtime is available")
-          .action(() => {
+          .action(async () => {
+            if (healthMonitor !== null) {
+              console.log(JSON.stringify({
+                operation: "self_check",
+                ...await healthMonitor.selfCheck(),
+              }));
+              return;
+            }
             console.log(JSON.stringify({
               ...runSelfCheck(),
               hostCapabilities: {
@@ -340,6 +447,7 @@ const plugin = {
             console.log(JSON.stringify({
               operation: "metrics",
               metrics: runtimeController?.metrics() ?? null,
+              health: healthMonitor?.metrics() ?? null,
             }));
           });
 
@@ -418,6 +526,7 @@ const plugin = {
               nodeVersion: process.versions.node,
               host: hostTransition,
               runs: runtimeController,
+              ...(healthMonitor === null ? {} : { lifecycle: healthMonitor }),
               ...(cutoverPlan === undefined ? {} : {
                 cutover: {
                   plan: cutoverPlan,
@@ -430,6 +539,7 @@ const plugin = {
                 },
               }),
             });
+            await healthMonitor?.reconcile("sync");
             console.log(JSON.stringify({
               operation: "sync",
               package_version: packageVersion,
@@ -450,15 +560,36 @@ const plugin = {
 
         generation
           .command("show")
-          .description("Show one built Generation without implying activation")
-          .requiredOption("--state <path>", "Generation state directory")
-          .requiredOption("--generation <id>", "Generation identity")
+          .description("Show operational Generation status or one explicit built Generation")
+          .option("--state <path>", "Generation state directory")
+          .option("--generation <id>", "Generation identity")
           .option("--json", "Emit a machine-readable result")
           .action(async (options) => {
             requireJson(options);
+            const stateDirectory = readOptionalString(options, "state");
+            const generationId = readOptionalString(options, "generation");
+            if (stateDirectory === undefined && generationId === undefined) {
+              if (runtimeConfig === null) throw new Error("RUNTIME_CONFIG_REQUIRED");
+              const latestSourceRevision = await readLatestAuthorityRevision(
+                runtimeConfig.adapters.authority_checkout,
+              );
+              console.log(JSON.stringify({
+                operation: "generation_show",
+                ...await inspectStoredGenerationStatus({
+                  config: runtimeConfig,
+                  latestSourceRevision,
+                  hostVersion: api.runtime.version,
+                  nodeVersion: process.versions.node,
+                }),
+              }));
+              return;
+            }
+            if (stateDirectory === undefined || generationId === undefined) {
+              throw new Error("CLI_OPTIONS_REQUIRED_TOGETHER:state,generation");
+            }
             const result = await showGeneration({
-              stateDirectory: readStringOption(options, "state"),
-              syncGeneration: readStringOption(options, "generation"),
+              stateDirectory,
+              syncGeneration: generationId,
             });
             console.log(JSON.stringify({
               operation: "generation_show",
@@ -624,6 +755,18 @@ const plugin = {
         const trace = cognitive
           .command("trace")
           .description("Read Cognitive Provenance Overlay records");
+
+        trace
+          .command("lifecycle")
+          .description("Read bounded privacy-safe Runtime lifecycle outcomes")
+          .option("--json", "Emit a machine-readable result")
+          .action((options) => {
+            requireJson(options);
+            console.log(JSON.stringify({
+              operation: "trace_lifecycle",
+              traces: healthMonitor?.lifecycleTraces() ?? [],
+            }));
+          });
 
         trace
           .command("get")

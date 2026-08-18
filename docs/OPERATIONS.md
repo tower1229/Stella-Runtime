@@ -53,6 +53,19 @@ The Plugin performs the same recovery check at startup. Concurrent `sync`
 invocations serialize on the Runtime-owned lease rather than interleaving Host
 transitions.
 
+Use `openclaw cognitive generation show --json` for the current Active/latest
+Source Revisions, Synchronization Gap, Pending Activation, Generation and
+Receipt identities, and Receipt validity. `self-check` is read-only and reports
+Authority input validation separately from Runtime storage, Plugin, exact
+Host/Node, config identity, retrieval, and Public Corpus environment health.
+Startup, successful sync, five-minute periodic reconciliation, and detected
+drift run complete retrieval verification and persist only bounded health
+reason codes. Ordinary Eligible Runs read that receipt plus their existing
+Pointer/Receipt/Manifest/Host/config proof; `enforce` rejects drift while
+`observe` records it without injecting cognitive content.
+`openclaw cognitive metrics --json` reports the corresponding bounded counters;
+`openclaw cognitive trace lifecycle --json` reports the recent outcome sequence.
+
 For an instance cutover, pass the exact plan owned by that consumer:
 
 ```sh

@@ -346,6 +346,10 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
       cutoverPlan: cutoverPlanPath,
       json: true,
     });
+    await generation.children.get("show").handler({ json: true });
+    await cognitive.children.get("self-check").handler({});
+    await cognitive.children.get("metrics").handler({ json: true });
+    await cognitive.children.get("trace").children.get("lifecycle").handler({ json: true });
   } finally {
     console.log = originalLog;
   }
@@ -363,6 +367,25 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
   assert.equal(output[2].sync_generation, output[1].sync_generation);
   assert.equal(output[2].source_revision, sourceRevision);
   assert.equal(output[2].active, false);
+  assert.equal(output[4].operation, "generation_show");
+  assert.equal(output[4].activeSourceRevision, sourceRevision);
+  assert.equal(output[4].latestSourceRevision, sourceRevision);
+  assert.equal(output[4].synchronizationGap, false);
+  assert.equal(output[4].pendingActivation, false);
+  assert.equal(output[4].receiptValid, true);
+  assert.deepEqual(output[4].reasonCodes, []);
+  assert.equal(output[5].operation, "self_check");
+  assert.equal(output[5].status, "pass");
+  assert.equal(output[5].authorityInput.status, "pass");
+  assert.equal(output[5].environment.status, "pass");
+  assert.equal(output[6].operation, "metrics");
+  assert.equal(output[6].health.lifecycle.pendingActivation, 1);
+  assert.equal(output[6].health.lifecycle.activated, 1);
+  assert.equal(output[7].operation, "trace_lifecycle");
+  assert.deepEqual(output[7].traces.map((trace) => trace.outcome), [
+    "pending_activation",
+    "activated",
+  ]);
   assert.equal(output[3].operation, "sync");
   assert.equal(output[3].source_revision, sourceRevision);
   assert.equal(output[3].sync_generation, output[1].sync_generation);
@@ -434,6 +457,59 @@ test("OpenClaw registration does not use rejected host paths", async () => {
   });
 
   await plugin.register(api);
+});
+
+test("self-check fails Plugin discovery when the Host cannot register hooks", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-openclaw-no-hooks-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const authorityDirectory = join(root, "authority");
+  await writeSyntheticAuthority(authorityDirectory);
+  await commitSyntheticAuthority(authorityDirectory);
+  const runtimeStorage = join(root, "runtime");
+  await mkdir(runtimeStorage, { recursive: true });
+  const program = new FakeCommand();
+  await plugin.register({
+    version: "0.2.0-test",
+    pluginConfig: { runtime: {
+      schema_version: "cognitive-runtime.instance-runtime-config/v2",
+      instance_id: "instance-no-hooks",
+      mode: "observe",
+      runtime_storage: runtimeStorage,
+      generation_storage: join(root, "generations"),
+      host: { agent_id: "main", eligible_scope: ["private_main_session"] },
+      authority_owner: { provider: "telegram", actor_id: "owner-synthetic" },
+      limits: { max_active_runs: 4, drain_timeout_ms: 30_000 },
+      adapters: { authority_checkout: authorityDirectory, host_retrieval: "synthetic" },
+    } },
+    runtime: {
+      version: "2026.6.34",
+      llm: { complete: async () => ({ text: "{}" }) },
+      config: { current: () => ({ agents: { list: [] } }) },
+    },
+    cognitiveRuntimeHostTransition: {
+      async capture() { return {}; },
+      async applyTarget() {},
+      async verifyTarget() { throw new Error("ACTIVE_GENERATION_UNAVAILABLE"); },
+      async restore() {},
+      async verifyPrior() { throw new Error("ACTIVE_GENERATION_UNAVAILABLE"); },
+    },
+    registerCli(registrar) { return registrar({ program }); },
+  });
+  const output = [];
+  const originalLog = console.log;
+  console.log = (value) => output.push(JSON.parse(value));
+  try {
+    await program.children.get("cognitive").children.get("self-check").handler({});
+  } finally {
+    console.log = originalLog;
+  }
+  const discovery = output[0].environment.checks.find((check) =>
+    check.id === "plugin_discovery");
+  assert.deepEqual(discovery, {
+    id: "plugin_discovery",
+    status: "fail",
+    reasonCodes: ["PLUGIN_DISCOVERY_FAILED"],
+  });
 });
 
 test("OpenClaw plugin rejects Telegram registration on an unsmoked Host", async () => {

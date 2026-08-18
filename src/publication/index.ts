@@ -687,6 +687,9 @@ export interface ChangeSetPublicationCoordinatorOptions {
   readonly authority: AuthorityPublishingPort;
   readonly approvals: ApprovalPublicationPort;
   readonly failpoint?: (point: PublicationFailpoint) => void | Promise<void>;
+  readonly lifecycle?: {
+    recordLifecycle(outcome: "published" | "pending_activation"): void;
+  };
 }
 
 export class ChangeSetPublicationCoordinator {
@@ -694,12 +697,14 @@ export class ChangeSetPublicationCoordinator {
   readonly #authority: AuthorityPublishingPort;
   readonly #approvals: ApprovalPublicationPort;
   readonly #failpoint: NonNullable<ChangeSetPublicationCoordinatorOptions["failpoint"]>;
+  readonly #lifecycle: ChangeSetPublicationCoordinatorOptions["lifecycle"];
 
   constructor(options: ChangeSetPublicationCoordinatorOptions) {
     this.#journal = options.journal;
     this.#authority = options.authority;
     this.#approvals = options.approvals;
     this.#failpoint = options.failpoint ?? (() => {});
+    this.#lifecycle = options.lifecycle;
   }
 
   async publish(input: {
@@ -831,11 +836,14 @@ export class ChangeSetPublicationCoordinator {
       record = immutableCopy({ ...record, status: "completed" as const, commit });
       await this.#journal.write(record);
     }
-    return immutableCopy({
+    const result = immutableCopy({
       changeSetId: record.changeSet.change_set_id,
       sourceRevision: commit.sourceRevision,
       publicationStatus: "Published" as const,
       activationStatus: "Pending Activation" as const,
     });
+    this.#lifecycle?.recordLifecycle("published");
+    this.#lifecycle?.recordLifecycle("pending_activation");
+    return result;
   }
 }

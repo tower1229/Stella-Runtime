@@ -57,6 +57,9 @@ export interface CognitiveRuntimePluginApi {
   readonly cognitiveRuntimeRetrievalCommands?: OpenClawRetrievalCommands;
   readonly cognitiveRuntimeCutoverPublication?: CutoverPublicationPrerequisitePort;
   readonly cognitiveRuntimePublicCorpus?: PublicCorpusAdapterPort;
+  readonly cognitiveRuntimePublicCorpusHealth?: {
+    verify(): Promise<{ readonly adapterId: string }>;
+  };
   readonly cognitiveRuntimeInstanceCutover?: OpenClawInstanceCutoverPort;
   registerCli(
     registrar: (context: { program: CliCommand }) => void | Promise<void>,

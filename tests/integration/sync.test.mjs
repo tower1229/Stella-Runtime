@@ -656,6 +656,7 @@ test("restart recovers an interrupted Journal before beginning another target", 
     phase: "host_applied",
   }));
   const events = [];
+  const lifecycle = [];
 
   await syncGeneration({
     config,
@@ -697,6 +698,7 @@ test("restart recovers an interrupted Journal before beginning another target", 
       openAdmission() { events.push("open-admission"); },
       async drain() { events.push("drain-new"); },
     },
+    lifecycle: { recordLifecycle(outcome) { lifecycle.push(outcome); } },
   });
 
   assert.deepEqual(events.slice(0, 5), [
@@ -705,6 +707,11 @@ test("restart recovers an interrupted Journal before beginning another target", 
     "verify-prior:interrupted-prior",
     "open-admission",
     "capture-new",
+  ]);
+  assert.deepEqual(lifecycle, [
+    "rollback_restored",
+    "pending_activation",
+    "activated",
   ]);
 });
 

@@ -100,7 +100,7 @@ const binding = (suffix = "one", generationId = generation) => {
   };
 };
 
-const createRuntime = ({ mode = "enforce", compile, paths = {} } = {}) => {
+const createRuntime = ({ mode = "enforce", compile, paths = {}, healthGate } = {}) => {
   const hooks = new Map();
   const logs = [];
   const calls = [];
@@ -117,6 +117,7 @@ const createRuntime = ({ mode = "enforce", compile, paths = {} } = {}) => {
     logger: { info() {}, warn(message) { logs.push(JSON.parse(message)); } },
   }, config(mode, paths), {
     bindingCompiler: { compile: compile ?? (async () => binding()) },
+    ...(healthGate === undefined ? {} : { healthGate }),
   });
   return { hooks, logs, calls, controller };
 };
@@ -225,6 +226,45 @@ test("off bypasses binding, observe validates without injection, and enforce fai
   assert.equal(missing.calls.length, 0);
   assert.ok(missing.logs.some((entry) =>
     entry.reasonCode === "ACTIVE_GENERATION_POINTER_MISSING"));
+});
+
+test("persisted drift gates enforce Runs while observe records without injection", async () => {
+  const lifecycle = [];
+  const gate = {
+    checkRunGate: async () => ({ allowed: false, reasonCodes: ["INDEX_DRIFT"] }),
+    recordLifecycle: (outcome) => lifecycle.push(outcome),
+  };
+  let enforceCompiles = 0;
+  const enforce = createRuntime({
+    healthGate: gate,
+    compile: async () => {
+      enforceCompiles += 1;
+      return binding();
+    },
+  });
+  await assert.rejects(
+    enforce.hooks.get("before_prompt_build")(
+      { prompt: "enforce", messages: [] }, eligible("run-drift-enforce"),
+    ),
+    /COGNITIVE_BINDING_REJECTED:INDEX_DRIFT/,
+  );
+  assert.equal(enforceCompiles, 0);
+  assert.deepEqual(lifecycle, ["gated"]);
+
+  let observeCompiles = 0;
+  const observe = createRuntime({
+    mode: "observe",
+    healthGate: gate,
+    compile: async () => {
+      observeCompiles += 1;
+      return binding();
+    },
+  });
+  assert.equal(await observe.hooks.get("before_prompt_build")(
+    { prompt: "observe", messages: [] }, eligible("run-drift-observe"),
+  ), undefined);
+  assert.equal(observeCompiles, 1);
+  assert.ok(observe.logs.some((entry) => entry.reasonCode === "INDEX_DRIFT"));
 });
 
 test("a durable Maintenance Gate rejects new eligible Runs before binding compilation", async (t) => {

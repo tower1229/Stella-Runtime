@@ -56,6 +56,14 @@ export interface RuntimeHookOptions {
     overlay: CognitiveProvenanceOverlay,
   ) => Promise<void>;
   readonly bindingCompiler?: BindingCompilerPort;
+  readonly healthGate?: {
+    checkRunGate(): Promise<{
+      readonly allowed: boolean;
+      readonly reasonCodes: readonly string[];
+    }>;
+    reconcile?(trigger: "detected_drift"): Promise<unknown>;
+    recordLifecycle?(outcome: "gated"): void;
+  };
 }
 
 export interface RuntimeHookController {
@@ -305,6 +313,17 @@ export const registerRuntimeHooks = (
       log("MAINTENANCE_GATE_CLOSED", runId);
       throw new Error("COGNITIVE_BINDING_REJECTED:MAINTENANCE_GATE_CLOSED");
     }
+    if (options.healthGate !== undefined) {
+      const health = await options.healthGate.checkRunGate();
+      for (const reasonCode of health.reasonCodes) log(reasonCode, runId);
+      if (!health.allowed && config.mode === "enforce") {
+        const reason = health.reasonCodes[0] ?? "RUNTIME_HEALTH_GATED";
+        runsDegraded += 1;
+        options.healthGate.recordLifecycle?.("gated");
+        await options.healthGate.reconcile?.("detected_drift").catch(() => undefined);
+        throw new Error(`COGNITIVE_BINDING_REJECTED:${reason}`);
+      }
+    }
     if (invalidatedRuns.has(runId)) {
       runsDegraded += 1;
       log("RUN_BINDING_INVALIDATED", runId);
@@ -343,7 +362,9 @@ export const registerRuntimeHooks = (
         ? (error.message.split(":", 1)[0] ?? "BINDING_COMPILATION_FAILED")
         : "BINDING_COMPILATION_FAILED";
       log(reason, runId);
+      await options.healthGate?.reconcile?.("detected_drift").catch(() => undefined);
       if (config.mode === "enforce") {
+        options.healthGate?.recordLifecycle?.("gated");
         throw new Error(`COGNITIVE_BINDING_REJECTED:${reason}`);
       }
       return;

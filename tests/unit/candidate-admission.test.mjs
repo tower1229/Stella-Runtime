@@ -9,13 +9,14 @@ import {
 
 const instant = "2026-08-14T01:00:00.000Z";
 
-const createService = () => {
+const createService = (options = {}) => {
   let sequence = 0;
   return new CandidateAdmissionService({
     now: () => new Date(instant),
     createId: (kind) => `${kind}-synthetic-${++sequence}`,
     createRoutingToken: () => `routing-token-${String(++sequence).padStart(64, "0")}`,
     authorityHead: { getCurrent: () => null },
+    ...options,
   });
 };
 
@@ -188,6 +189,35 @@ const openConfirmation = (service) => {
   });
   return { authorization, candidate, confirmation };
 };
+
+test("accepted lifecycle observers remain isolated by Private Instance", () => {
+  const service = createService();
+  const first = [];
+  const second = [];
+  const disposeFirst = service.setInstanceLifecycleObserver("instance-synthetic", {
+    recordLifecycle: (outcome) => first.push(outcome),
+  });
+  service.setInstanceLifecycleObserver("instance-other", {
+    recordLifecycle: (outcome) => second.push(outcome),
+  });
+  const replacement = [];
+  service.setInstanceLifecycleObserver("instance-synthetic", {
+    recordLifecycle: (outcome) => replacement.push(outcome),
+  });
+  disposeFirst();
+  const { confirmation } = openConfirmation(service);
+  service.decideConfirmation({
+    routingToken: confirmation.routingToken,
+    action: "accept",
+    authorized: true,
+    senderId: "owner-synthetic",
+    messageReference,
+  });
+
+  assert.deepEqual(first, []);
+  assert.deepEqual(replacement, ["accepted"]);
+  assert.deepEqual(second, []);
+});
 
 test("only an exact authorized Telegram callback can issue a single-use Approval Receipt", () => {
   const service = createService();
