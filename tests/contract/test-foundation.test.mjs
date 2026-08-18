@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import {
+  calculateInstanceCutoverPlanChecksum,
+  validateInstanceCutoverPlan,
+} from "../../dist/cutover/index.js";
+
 const readFixture = async (relativePath) => JSON.parse(
   await readFile(new URL(`../fixtures/${relativePath}`, import.meta.url), "utf8"),
 );
@@ -56,4 +61,27 @@ test("recovery fixtures reserve contract and integration failure paths", async (
     "interrupted_restore",
     "repeated_restore",
   ]);
+});
+
+test("public CangHai cutover fixture is de-identified and binds the complete transition", async () => {
+  const fixture = await readFixture("cutover/canghai-public.json");
+  const { checksum, ...payload } = fixture;
+
+  assert.equal(calculateInstanceCutoverPlanChecksum(payload), checksum);
+  assert.doesNotThrow(() => validateInstanceCutoverPlan(
+    fixture,
+    "instance-canghai-deidentified",
+    "a".repeat(40),
+  ));
+  assert.deepEqual(fixture.publication_prerequisites, {
+    remote_base_check: true,
+    push_before_sync: true,
+  });
+  assert.deepEqual(fixture.remove_retrieval_paths, ["/srv/canghai/private/30_RAG"]);
+  assert.deepEqual(fixture.disable_mechanisms, ["active-memory"]);
+  assert.deepEqual(fixture.preserve_independent_paths, [
+    "/srv/canghai/public-author-corpus",
+  ]);
+  assert.deepEqual(fixture.bootstrap_targets, ["USER.md", "MEMORY.md"]);
+  assert.doesNotMatch(JSON.stringify(fixture), /zangtao|telegram|\.openclaw|workspace-yu/i);
 });

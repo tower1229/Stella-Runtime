@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
   buildGeneration,
+  calculateInstanceCutoverPlanChecksum,
   calculateRuntimeConfigIdentityChecksum,
   createStateManagementPort,
   loadMaintenanceGate,
@@ -20,6 +21,25 @@ import {
 } from "../helpers/synthetic-authority.mjs";
 
 const checksum = (character) => `sha256:${character.repeat(64)}`;
+
+const canghaiCutoverPlan = (sourceRevision) => {
+  const plan = {
+    schema_version: "cognitive-runtime.instance-cutover-plan/v2",
+    plan_id: "cutover-canghai-public",
+    instance_id: "instance-synthetic",
+    target_source_revision: sourceRevision,
+    publication_prerequisites: {
+      remote_base_check: true,
+      push_before_sync: true,
+    },
+    remove_retrieval_paths: ["/srv/canghai/private/30_RAG"],
+    disable_mechanisms: ["active-memory"],
+    preserve_independent_paths: ["/srv/canghai/public-author-corpus"],
+    bootstrap_targets: ["USER.md", "MEMORY.md"],
+    public_corpus_adapter: "canghai-public-corpus",
+  };
+  return { ...plan, checksum: calculateInstanceCutoverPlanChecksum(plan) };
+};
 
 const runtimeConfig = (root) => ({
   schema_version: "cognitive-runtime.instance-runtime-config/v2",
@@ -168,6 +188,256 @@ test("sync builds a missing committed target and exposes its Pointer only after 
   assert.equal(receipt.source_revision, sourceRevision);
   assert.equal(pointer.generation_id, result.syncGeneration);
   assert.equal(pointer.activation_receipt_id, receipt.receipt_id);
+});
+
+test("sync enforces the CangHai cutover contract before and inside one Activation Barrier", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-sync-cutover-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = runtimeConfig(root);
+  await writeSyntheticAuthority(config.adapters.authority_checkout);
+  const sourceRevision = await commitSyntheticAuthority(config.adapters.authority_checkout);
+  const plan = canghaiCutoverPlan(sourceRevision);
+  const events = [];
+  let cutoverTarget;
+  const host = {
+    async capture(target) {
+      events.push("capture");
+      cutoverTarget = target.cutover;
+      return { config_revision: "prior", cutover_state: { active_memory: true } };
+    },
+    async applyTarget(target) {
+      events.push("apply-cutover");
+      assert.equal(target.cutover.plan.checksum, plan.checksum);
+      assert.deepEqual(
+        target.cutover.bootstrapProjections.map((projection) => projection.target),
+        ["MEMORY.md", "USER.md"],
+      );
+      for (const projection of target.cutover.bootstrapProjections) {
+        const content = await readFile(projection.path, "utf8");
+        assert.match(content, new RegExp(`generation_id: ${target.syncGeneration}`));
+        assert.match(content, /bootstrap_alias:/);
+        assert.match(content, /read_only: true/);
+        assert.equal((await stat(projection.path)).mode & 0o222, 0);
+      }
+    },
+    async verifyTarget(target) {
+      events.push("verify-host");
+      return {
+        deepStatus: "pass",
+        generationId: target.syncGeneration,
+        sourceRevision: target.sourceRevision,
+        projectionChecksum: target.projectionChecksum,
+        hostConfigChecksum: target.hostConfigChecksum,
+        searchSentinelChecksum: checksum("3"),
+        getSentinelChecksum: checksum("4"),
+      };
+    },
+    async restore() { throw new Error("UNEXPECTED_RESTORE"); },
+    async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
+  };
+
+  const result = await syncGeneration({
+    config,
+    sourceRevision,
+    packageVersion: "0.2.0-test",
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+    host,
+    runs: runPort(events),
+    cutover: {
+      plan,
+      publication: {
+        async verifyRemoteBase(input) {
+          events.push("remote-base");
+          assert.equal(input.sourceRevision, sourceRevision);
+        },
+        async verifyPushedRevision(input) {
+          events.push("pushed-revision");
+          assert.equal(input.sourceRevision, sourceRevision);
+        },
+      },
+      publicCorpus: {
+        async verifyBefore(input) {
+          events.push("public-corpus-before");
+          assert.equal(input.plan.public_corpus_adapter, "canghai-public-corpus");
+          return {
+            adapterId: "canghai-public-corpus",
+            health: "pass",
+            recallChecksum: checksum("5"),
+          };
+        },
+        async verifyAfter(input) {
+          events.push("public-corpus-after");
+          assert.equal(input.target.syncGeneration, cutoverTarget.bootstrapProjections[0]
+            .path.split("/").at(-2));
+          return {
+            publicCorpus: {
+              adapterId: "canghai-public-corpus",
+              health: "pass",
+              recallChecksum: checksum("6"),
+            },
+            legacyPrivateHits: 0,
+            privateRetrievalGenerations: [input.target.syncGeneration],
+          };
+        },
+        async indexTarget(input) {
+          events.push("public-corpus-index");
+          assert.equal(input.target.sourceRevision, sourceRevision);
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(events, [
+    "remote-base",
+    "pushed-revision",
+    "public-corpus-before",
+    "capture",
+    "close-admission",
+    "drain:30000",
+    "apply-cutover",
+    "public-corpus-index",
+    "verify-host",
+    "public-corpus-after",
+    "open-admission",
+  ]);
+  assert.equal(
+    JSON.parse(await readFile(result.receiptPath, "utf8")).cutover_plan_checksum,
+    plan.checksum,
+  );
+});
+
+test("sync rejects a tampered cutover plan before touching publication or Host state", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-sync-cutover-invalid-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = runtimeConfig(root);
+  await writeSyntheticAuthority(config.adapters.authority_checkout);
+  const sourceRevision = await commitSyntheticAuthority(config.adapters.authority_checkout);
+  const plan = { ...canghaiCutoverPlan(sourceRevision), checksum: checksum("0") };
+  let touched = false;
+
+  await assert.rejects(syncGeneration({
+    config,
+    sourceRevision,
+    packageVersion: "0.2.0-test",
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+    host: {
+      async capture() { touched = true; return {}; },
+      async applyTarget() {},
+      async verifyTarget() { throw new Error("UNEXPECTED_VERIFY"); },
+      async restore() {},
+      async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
+    },
+    runs: { closeAdmission() {}, openAdmission() {}, async drain() {} },
+    cutover: {
+      plan,
+      publication: {
+        async verifyRemoteBase() { touched = true; },
+        async verifyPushedRevision() { touched = true; },
+      },
+      publicCorpus: {
+        async verifyBefore() { touched = true; },
+        async indexTarget() { touched = true; },
+        async verifyAfter() { touched = true; },
+      },
+    },
+  }), /CUTOVER_PLAN_CHECKSUM_MISMATCH/);
+  assert.equal(touched, false);
+});
+
+test("sync restores the prior Generation when post-cutover evidence still finds legacy private hits", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-sync-cutover-legacy-hit-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = runtimeConfig(root);
+  await writeSyntheticAuthority(config.adapters.authority_checkout);
+  const priorRevision = await commitSyntheticAuthority(config.adapters.authority_checkout);
+  const prior = await installPriorActivation(config, priorRevision);
+  await writeFile(join(config.adapters.authority_checkout, "metadata.txt"), "target\n");
+  const sourceRevision = await commitAuthorityChanges(config.adapters.authority_checkout);
+  const plan = canghaiCutoverPlan(sourceRevision);
+  const events = [];
+
+  await assert.rejects(syncGeneration({
+    config,
+    sourceRevision,
+    packageVersion: "0.2.0-test",
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+    host: {
+      async capture() { return { config_revision: "prior" }; },
+      async applyTarget() { events.push("apply"); },
+      async verifyTarget(target) {
+        events.push("verify-target");
+        return {
+          deepStatus: "pass",
+          generationId: target.syncGeneration,
+          sourceRevision: target.sourceRevision,
+          projectionChecksum: target.projectionChecksum,
+          hostConfigChecksum: target.hostConfigChecksum,
+          searchSentinelChecksum: checksum("3"),
+          getSentinelChecksum: checksum("4"),
+        };
+      },
+      async restore() { events.push("restore"); },
+      async verifyPrior(_snapshot, target) {
+        events.push("verify-prior");
+        return {
+          deepStatus: "pass",
+          generationId: target.syncGeneration,
+          sourceRevision: target.sourceRevision,
+          projectionChecksum: target.projectionChecksum,
+          hostConfigChecksum: target.hostConfigChecksum,
+          searchSentinelChecksum: checksum("7"),
+          getSentinelChecksum: checksum("8"),
+        };
+      },
+    },
+    runs: runPort(events),
+    cutover: {
+      plan,
+      publication: {
+        async verifyRemoteBase() {},
+        async verifyPushedRevision() {},
+      },
+      publicCorpus: {
+        async verifyBefore() {
+          return {
+            adapterId: "canghai-public-corpus",
+            health: "pass",
+            recallChecksum: checksum("5"),
+          };
+        },
+        async verifyAfter(input) {
+          return {
+            publicCorpus: {
+              adapterId: "canghai-public-corpus",
+              health: "pass",
+              recallChecksum: checksum("6"),
+            },
+            legacyPrivateHits: 1,
+            privateRetrievalGenerations: [input.target.syncGeneration],
+          };
+        },
+        async indexTarget() { events.push("public-corpus-index"); },
+      },
+    },
+  }), /CUTOVER_LEGACY_PRIVATE_HITS_PRESENT/);
+
+  assert.deepEqual(events, [
+    "close-admission",
+    "drain:30000",
+    "apply",
+    "public-corpus-index",
+    "verify-target",
+    "restore",
+    "verify-prior",
+    "open-admission",
+  ]);
+  assert.deepEqual(
+    JSON.parse(await readFile(join(config.runtime_storage, "active-generation.json"), "utf8")),
+    prior.pointer,
+  );
 });
 
 test("sync restores verified prior Host state and preserves the old Pointer on failure", async (t) => {

@@ -112,6 +112,153 @@ test("OpenClaw adapter replaces only this instance managed path and forces index
   );
 });
 
+test("OpenClaw adapter applies and restores declared legacy, mechanism, and Bootstrap transitions", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-openclaw-cutover-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = runtimeConfig(root);
+  await mkdir(config.runtime_storage, { recursive: true });
+  const legacyPath = join(root, "private", "30_RAG");
+  const publicPath = join(root, "public-author-corpus");
+  const oldManagedPath = join(root, "old-managed");
+  const projectionDirectory = join(root, "new-managed");
+  await writeFile(join(config.runtime_storage, "retrieval-paths.json"), JSON.stringify({
+    schema_version: "cognitive-runtime.retrieval-path-ownership/v1",
+    instance_id: config.instance_id,
+    agent_id: config.host.agent_id,
+    paths: [oldManagedPath],
+  }));
+  const hostConfig = {
+    agents: { list: [{
+      id: "main",
+      memorySearch: { extraPaths: [legacyPath, publicPath, oldManagedPath] },
+    }] },
+  };
+  const cutoverEvents = [];
+  const plan = {
+    schema_version: "cognitive-runtime.instance-cutover-plan/v2",
+    plan_id: "cutover-canghai-public",
+    instance_id: config.instance_id,
+    target_source_revision: "a".repeat(40),
+    publication_prerequisites: { remote_base_check: true, push_before_sync: true },
+    remove_retrieval_paths: [legacyPath],
+    disable_mechanisms: ["active-memory"],
+    preserve_independent_paths: [publicPath],
+    bootstrap_targets: ["USER.md", "MEMORY.md"],
+    public_corpus_adapter: "canghai-public-corpus",
+    checksum: `sha256:${"4".repeat(64)}`,
+  };
+  const target = {
+    ...syncTarget(config, projectionDirectory),
+    cutover: {
+      plan,
+      bootstrapProjections: [
+        { target: "MEMORY.md", path: join(root, "bootstrap", "MEMORY.md"), checksum: checksum("m"), reused: false },
+        { target: "USER.md", path: join(root, "bootstrap", "USER.md"), checksum: checksum("u"), reused: false },
+      ],
+    },
+  };
+  const adapter = new OpenClawGenerationConsumptionAdapter(config, {
+    config: {
+      current: () => hostConfig,
+      async mutateConfigFile({ mutate }) {
+        await mutate(hostConfig);
+        return { result: undefined };
+      },
+    },
+  }, {
+    async index() { cutoverEvents.push("index"); },
+    async status() { throw new Error("UNEXPECTED_STATUS"); },
+    async search() { throw new Error("UNEXPECTED_SEARCH"); },
+    async get() { throw new Error("UNEXPECTED_GET"); },
+  }, {
+    async capture(input) {
+      cutoverEvents.push("capture-cutover");
+      assert.equal(input.plan.checksum, plan.checksum);
+      return { active_memory: true, bootstrap: [] };
+    },
+    async applyTarget(input) {
+      cutoverEvents.push("apply-cutover");
+      assert.equal(input.plan.disable_mechanisms[0], "active-memory");
+      assert.deepEqual(input.bootstrapProjections.map((item) => item.target), ["MEMORY.md", "USER.md"]);
+    },
+    async verifyTarget() { cutoverEvents.push("verify-cutover"); },
+    async restore() { cutoverEvents.push("restore-cutover"); },
+    async verifyPrior() { cutoverEvents.push("verify-prior-cutover"); },
+  });
+
+  const snapshot = await adapter.capture(target);
+  await adapter.applyTarget(target);
+
+  assert.deepEqual(hostConfig.agents.list[0].memorySearch.extraPaths, [
+    publicPath,
+    projectionDirectory,
+  ]);
+  assert.deepEqual(cutoverEvents, ["capture-cutover", "apply-cutover", "index"]);
+  assert.deepEqual(snapshot.cutover_state, { active_memory: true, bootstrap: [] });
+
+  await adapter.restore(snapshot);
+  assert.deepEqual(hostConfig.agents.list[0].memorySearch.extraPaths, [
+    legacyPath,
+    publicPath,
+    oldManagedPath,
+  ]);
+  assert.deepEqual(cutoverEvents, [
+    "capture-cutover",
+    "apply-cutover",
+    "index",
+    "restore-cutover",
+    "index",
+  ]);
+});
+
+test("OpenClaw adapter rejects a cutover without a recoverable consumer snapshot", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-openclaw-cutover-snapshot-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = runtimeConfig(root);
+  await mkdir(config.runtime_storage, { recursive: true });
+  const hostConfig = {
+    agents: { list: [{ id: "main", memorySearch: { extraPaths: [] } }] },
+  };
+  const adapter = new OpenClawGenerationConsumptionAdapter(config, {
+    config: {
+      current: () => hostConfig,
+      async mutateConfigFile() { throw new Error("UNEXPECTED_MUTATION"); },
+    },
+  }, {
+    async index() { throw new Error("UNEXPECTED_INDEX"); },
+    async status() { throw new Error("UNEXPECTED_STATUS"); },
+    async search() { throw new Error("UNEXPECTED_SEARCH"); },
+    async get() { throw new Error("UNEXPECTED_GET"); },
+  }, {
+    async capture() { return undefined; },
+    async applyTarget() { throw new Error("UNEXPECTED_APPLY"); },
+    async verifyTarget() { throw new Error("UNEXPECTED_VERIFY"); },
+    async restore() { throw new Error("UNEXPECTED_RESTORE"); },
+    async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
+  });
+  const target = {
+    ...syncTarget(config, join(root, "projection")),
+    cutover: {
+      plan: {
+        schema_version: "cognitive-runtime.instance-cutover-plan/v2",
+        plan_id: "cutover-synthetic",
+        instance_id: config.instance_id,
+        target_source_revision: "a".repeat(40),
+        publication_prerequisites: { remote_base_check: false, push_before_sync: false },
+        remove_retrieval_paths: [],
+        disable_mechanisms: ["active-memory"],
+        preserve_independent_paths: [],
+        bootstrap_targets: [],
+        checksum: `sha256:${"4".repeat(64)}`,
+      },
+      bootstrapProjections: [],
+    },
+  };
+
+  await assert.rejects(adapter.capture(target), /OPENCLAW_CUTOVER_SNAPSHOT_INVALID/);
+  assert.deepEqual(hostConfig.agents.list[0].memorySearch.extraPaths, []);
+});
+
 test("OpenClaw adapter proves deep status plus bound search and get sentinels", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-openclaw-sentinel-"));
   t.after(() => rm(root, { recursive: true, force: true }));

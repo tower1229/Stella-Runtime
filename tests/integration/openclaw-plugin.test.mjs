@@ -5,6 +5,7 @@ import { join, relative } from "node:path";
 import test from "node:test";
 
 import plugin from "../../dist/openclaw/index.js";
+import { calculateInstanceCutoverPlanChecksum } from "../../dist/cutover/index.js";
 import {
   provenanceDatabasePath,
   SqliteProvenanceStore,
@@ -121,6 +122,26 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
   const stateDirectory = join(root, "state");
   await writeSyntheticAuthority(authorityDirectory);
   const sourceRevision = await commitSyntheticAuthority(authorityDirectory);
+  const legacyPath = join(root, "private", "30_RAG");
+  const publicCorpusPath = join(root, "public-author-corpus");
+  const cutoverPlanPayload = {
+    schema_version: "cognitive-runtime.instance-cutover-plan/v2",
+    plan_id: "cutover-canghai-public",
+    instance_id: "instance-synthetic",
+    target_source_revision: sourceRevision,
+    publication_prerequisites: { remote_base_check: true, push_before_sync: true },
+    remove_retrieval_paths: [legacyPath],
+    disable_mechanisms: ["active-memory"],
+    preserve_independent_paths: [publicCorpusPath],
+    bootstrap_targets: ["USER.md", "MEMORY.md"],
+    public_corpus_adapter: "canghai-public-corpus",
+  };
+  const cutoverPlan = {
+    ...cutoverPlanPayload,
+    checksum: calculateInstanceCutoverPlanChecksum(cutoverPlanPayload),
+  };
+  const cutoverPlanPath = join(root, "canghai-cutover.json");
+  await writeFile(cutoverPlanPath, JSON.stringify(cutoverPlan));
   const runtimeStorage = join(root, "runtime");
   const runtimeConfig = {
     schema_version: "cognitive-runtime.instance-runtime-config/v2",
@@ -147,11 +168,16 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
   const hostConfig = {
     agents: { list: [{
       id: "main",
-      memorySearch: { extraPaths: [join(root, "unrelated-memory")] },
+      memorySearch: { extraPaths: [
+        join(root, "unrelated-memory"),
+        legacyPath,
+        publicCorpusPath,
+      ] },
     }] },
   };
   let indexCalls = 0;
   let lastSearchResult;
+  const cutoverEvents = [];
   const api = {
     version: "0.1.0-beta.0",
     pluginConfig: { runtime: runtimeConfig },
@@ -244,6 +270,49 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
         };
       },
     },
+    cognitiveRuntimeCutoverPublication: {
+      async verifyRemoteBase() { cutoverEvents.push("remote-base"); },
+      async verifyPushedRevision() { cutoverEvents.push("pushed-revision"); },
+    },
+    cognitiveRuntimePublicCorpus: {
+      async verifyBefore() {
+        cutoverEvents.push("public-before");
+        return {
+          adapterId: "canghai-public-corpus",
+          health: "pass",
+          recallChecksum: `sha256:${"5".repeat(64)}`,
+        };
+      },
+      async verifyAfter(input) {
+        cutoverEvents.push("public-after");
+        return {
+          publicCorpus: {
+            adapterId: "canghai-public-corpus",
+            health: "pass",
+            recallChecksum: `sha256:${"6".repeat(64)}`,
+          },
+          legacyPrivateHits: 0,
+          privateRetrievalGenerations: [input.target.syncGeneration],
+        };
+      },
+      async indexTarget() { cutoverEvents.push("public-index"); },
+    },
+    cognitiveRuntimeInstanceCutover: {
+      async capture() {
+        cutoverEvents.push("capture-cutover");
+        return { active_memory: true, bootstrap_targets: [] };
+      },
+      async applyTarget(target) {
+        cutoverEvents.push("apply-cutover");
+        assert.deepEqual(target.bootstrapProjections.map((item) => item.target), [
+          "MEMORY.md",
+          "USER.md",
+        ]);
+      },
+      async verifyTarget() { cutoverEvents.push("verify-cutover"); },
+      async restore() { cutoverEvents.push("restore-cutover"); },
+      async verifyPrior() { cutoverEvents.push("verify-prior-cutover"); },
+    },
     registerCli(registrar) {
       return registrar({ program });
     },
@@ -274,6 +343,7 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
     });
     await cognitive.children.get("sync").handler({
       revision: sourceRevision,
+      cutoverPlan: cutoverPlanPath,
       json: true,
     });
   } finally {
@@ -297,9 +367,11 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
   assert.equal(output[3].source_revision, sourceRevision);
   assert.equal(output[3].sync_generation, output[1].sync_generation);
   assert.equal(output[3].reused_generation, true);
+  assert.equal(output[3].cutover_plan_checksum, cutoverPlan.checksum);
   assert.equal(indexCalls, 1);
   assert.deepEqual(hostConfig.agents.list[0].memorySearch.extraPaths, [
     join(root, "unrelated-memory"),
+    publicCorpusPath,
     join(
       stateDirectory,
       "generations",
@@ -307,6 +379,16 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
       "projections",
       output[1].sync_generation,
     ),
+  ]);
+  assert.deepEqual(cutoverEvents, [
+    "remote-base",
+    "pushed-revision",
+    "public-before",
+    "capture-cutover",
+    "apply-cutover",
+    "public-index",
+    "verify-cutover",
+    "public-after",
   ]);
   assert.equal(
     JSON.parse(await readFile(join(runtimeStorage, "active-generation.json"), "utf8")).generation_id,
@@ -380,7 +462,10 @@ test("OpenClaw startup attempts interrupted sync recovery and keeps admission cl
   await writeFile(join(runtimeStorage, "sync-journal.json"), JSON.stringify({
     target_source_revision: "b".repeat(40),
     sync_generation: `generation-${"b".repeat(64)}`,
-    prior: { config_revision: "prior" },
+    prior: {
+      config_revision: "prior",
+      cutover_state: { active_memory: true, bootstrap_targets: ["USER.md"] },
+    },
     prior_pointer: { invalid: "pointer" },
     started_at: "2026-08-17T00:00:00.000Z",
     phase: "host_applied",
@@ -408,7 +493,13 @@ test("OpenClaw startup attempts interrupted sync recovery and keeps admission cl
       async capture() { return {}; },
       async applyTarget() {},
       async verifyTarget() { throw new Error("UNEXPECTED_TARGET_VERIFY"); },
-      async restore() { restoreCalls += 1; },
+      async restore(snapshot) {
+        restoreCalls += 1;
+        assert.deepEqual(snapshot.cutover_state, {
+          active_memory: true,
+          bootstrap_targets: ["USER.md"],
+        });
+      },
       async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
     },
     registerCli() {},

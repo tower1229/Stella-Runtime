@@ -84,6 +84,23 @@ export type {
   RunScratchSnapshot,
 } from "./core/index.js";
 export {
+  calculateInstanceCutoverPlanChecksum,
+  validateInstanceCutoverPlan,
+} from "./cutover/index.js";
+export type {
+  CutoverAcceptanceAfterInput,
+  CutoverAcceptanceBeforeInput,
+  CutoverAcceptanceEvidence,
+  CutoverExecutionOptions,
+  CutoverPublicationInput,
+  CutoverPublicationPrerequisitePort,
+  CutoverTarget,
+  CutoverTargetIdentity,
+  InstanceCutoverPlanPayload,
+  PublicCorpusAdapterPort,
+  PublicCorpusVerificationEvidence,
+} from "./cutover/index.js";
+export {
   calculatePublicationContentChecksum,
   ChangeSetPublicationCoordinator,
   createChangeSet,
@@ -150,6 +167,7 @@ export {
 export type {
   OpenClawCommandRunner,
   OpenClawConsumptionApi,
+  OpenClawInstanceCutoverPort,
   OpenClawRetrievalCommands,
 } from "./openclaw/consumption.js";
 export type {

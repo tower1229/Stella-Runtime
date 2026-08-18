@@ -53,6 +53,27 @@ The Plugin performs the same recovery check at startup. Concurrent `sync`
 invocations serialize on the Runtime-owned lease rather than interleaving Host
 transitions.
 
+For an instance cutover, pass the exact plan owned by that consumer:
+
+```sh
+openclaw cognitive sync \
+  --revision COMMITTED_AND_PUSHED_AUTHORITY_SHA \
+  --cutover-plan INSTANCE_CUTOVER_PLAN.json \
+  --json
+```
+
+Do not use this option unless the Plugin integration supplies the declared
+publication, instance-cutover, and independent Public Corpus indexing/acceptance
+ports. The public
+de-identified CangHai fixture requires remote-base verification, successful
+push of the target Source Revision, removal of private `30_RAG`, disablement of
+`active-memory`, deployment of both target-Generation Bootstrap files, and
+preservation of the independent Public Author Corpus. All Host changes occur
+while the Maintenance Gate is closed. Public Corpus health/recall must pass
+before and after the transition; post-cutover evidence must report no legacy
+private hits and no old/new private retrieval coexistence. A failure restores
+and verifies the captured prior Host state or leaves the Gate closed.
+
 Keep the configured OpenClaw Gateway reachable during sync: the adapter uses
 the supported runtime config mutation interface, forces the configured Agent's
 memory index, reads deep status and search through the memory CLI, and invokes

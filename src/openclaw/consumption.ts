@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import type { InstanceRuntimeConfig } from "../contracts/index.js";
+import type { CutoverTarget } from "../cutover/index.js";
 import { atomicWriteFile } from "../core/persistence.js";
 import type {
   HostIndexEvidence,
@@ -51,6 +52,15 @@ interface OpenClawConsumptionSnapshot extends Record<string, unknown> {
   readonly agent_id: string;
   readonly extra_paths: readonly string[];
   readonly managed_paths: readonly string[];
+  readonly cutover_state?: HostSnapshot;
+}
+
+export interface OpenClawInstanceCutoverPort {
+  capture(target: CutoverTarget): Promise<HostSnapshot>;
+  applyTarget(target: CutoverTarget): Promise<void>;
+  verifyTarget(target: CutoverTarget): Promise<void>;
+  restore(snapshot: HostSnapshot): Promise<void>;
+  verifyPrior(snapshot: HostSnapshot): Promise<void>;
 }
 
 interface ProjectionSentinel {
@@ -389,6 +399,10 @@ const parseSnapshot = (
   ) {
     throw new Error("OPENCLAW_RETRIEVAL_SNAPSHOT_MISMATCH");
   }
+  const cutoverState = value.cutover_state;
+  if (cutoverState !== undefined && !isRecord(cutoverState)) {
+    throw new Error("OPENCLAW_RETRIEVAL_SNAPSHOT_INVALID");
+  }
   return {
     instance_id: config.instance_id,
     agent_id: config.host.agent_id,
@@ -400,6 +414,7 @@ const parseSnapshot = (
       value.managed_paths,
       "OPENCLAW_RETRIEVAL_SNAPSHOT_INVALID",
     ),
+    ...(cutoverState === undefined ? {} : { cutover_state: cutoverState }),
   };
 };
 
@@ -407,15 +422,18 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
   readonly #config: InstanceRuntimeConfig;
   readonly #api: OpenClawConsumptionApi;
   readonly #commands: OpenClawRetrievalCommands;
+  readonly #cutover: OpenClawInstanceCutoverPort | undefined;
 
   constructor(
     config: InstanceRuntimeConfig,
     api: OpenClawConsumptionApi,
     commands: OpenClawRetrievalCommands,
+    cutover?: OpenClawInstanceCutoverPort,
   ) {
     this.#config = config;
     this.#api = api;
     this.#commands = commands;
+    this.#cutover = cutover;
   }
 
   async #loadOwnership(): Promise<RetrievalPathOwnership> {
@@ -464,8 +482,20 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
     } satisfies RetrievalPathOwnership));
   }
 
-  async capture(): Promise<HostSnapshot> {
+  async capture(target?: SyncTarget): Promise<HostSnapshot> {
     const ownership = await this.#loadOwnership();
+    const cutoverState = target?.cutover === undefined
+      ? undefined
+      : await this.#cutover?.capture(target.cutover);
+    if (target?.cutover !== undefined && this.#cutover === undefined &&
+      (target.cutover.plan.disable_mechanisms.length > 0 ||
+        target.cutover.bootstrapProjections.length > 0)) {
+      throw new Error("OPENCLAW_CUTOVER_PORT_REQUIRED");
+    }
+    if (target?.cutover !== undefined && this.#cutover !== undefined &&
+      !isRecord(cutoverState)) {
+      throw new Error("OPENCLAW_CUTOVER_SNAPSHOT_INVALID");
+    }
     return {
       instance_id: this.#config.instance_id,
       agent_id: this.#config.host.agent_id,
@@ -474,6 +504,7 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
         this.#config.host.agent_id,
       )],
       managed_paths: [...ownership.paths],
+      ...(cutoverState === undefined ? {} : { cutover_state: cutoverState }),
     } satisfies OpenClawConsumptionSnapshot;
   }
 
@@ -487,6 +518,12 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
     const ownership = await this.#loadOwnership();
     const priorManaged = new Set(ownership.paths.map((path) => resolve(path)));
     const projectionDirectory = resolve(target.projectionDirectory);
+    const removePaths = new Set(
+      (target.cutover?.plan.remove_retrieval_paths ?? []).map((path) => resolve(path)),
+    );
+    const preservePaths = new Set(
+      (target.cutover?.plan.preserve_independent_paths ?? []).map((path) => resolve(path)),
+    );
     // Persist ownership first so restart recovery can identify a target path even
     // when the Host commits its config write immediately before interruption.
     await this.#writeOwnership([projectionDirectory]);
@@ -494,17 +531,42 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
       afterWrite: { mode: "auto" },
       mutate: (draft) => {
         const existing = readExtraPaths(draft, this.#config.host.agent_id);
-        const preserved = existing.filter((path) => !priorManaged.has(resolve(path)));
+        const existingResolved = new Set(existing.map((path) => resolve(path)));
+        for (const path of preservePaths) {
+          if (!existingResolved.has(path)) {
+            throw new Error(`OPENCLAW_PRESERVED_PATH_MISSING:${path}`);
+          }
+        }
+        const preserved = existing.filter((path) =>
+          !priorManaged.has(resolve(path)) && !removePaths.has(resolve(path)));
         writeExtraPaths(draft, this.#config.host.agent_id, [
           ...preserved,
           projectionDirectory,
         ]);
       },
     });
+    if (target.cutover !== undefined) {
+      await this.#cutover?.applyTarget(target.cutover);
+    }
     await this.#commands.index(this.#config.host.agent_id);
   }
 
   async verifyTarget(target: SyncTarget): Promise<HostIndexEvidence> {
+    if (target.cutover !== undefined) {
+      const configuredPaths = new Set(readExtraPaths(
+        this.#api.config.current(),
+        this.#config.host.agent_id,
+      ).map((path) => resolve(path)));
+      if (target.cutover.plan.remove_retrieval_paths.some((path) =>
+        configuredPaths.has(resolve(path)))) {
+        throw new Error("OPENCLAW_LEGACY_RETRIEVAL_PATH_PRESENT");
+      }
+      if (target.cutover.plan.preserve_independent_paths.some((path) =>
+        !configuredPaths.has(resolve(path)))) {
+        throw new Error("OPENCLAW_INDEPENDENT_RETRIEVAL_PATH_MISSING");
+      }
+      await this.#cutover?.verifyTarget(target.cutover);
+    }
     const sentinel = await loadProjectionSentinel(target);
     const artifact = JSON.parse(await readFile(
       join(target.generationDirectory, "projection-entries.json"),
@@ -565,6 +627,12 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
       },
     });
     await this.#writeOwnership(snapshot.managed_paths);
+    if (snapshot.cutover_state !== undefined) {
+      if (this.#cutover === undefined) {
+        throw new Error("OPENCLAW_CUTOVER_PORT_REQUIRED");
+      }
+      await this.#cutover?.restore(snapshot.cutover_state);
+    }
     await this.#commands.index(this.#config.host.agent_id);
   }
 
@@ -572,7 +640,13 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
     snapshot: HostSnapshot,
     target: SyncTarget,
   ): Promise<HostIndexEvidence> {
-    parseSnapshot(snapshot, this.#config);
+    const parsed = parseSnapshot(snapshot, this.#config);
+    if (parsed.cutover_state !== undefined) {
+      if (this.#cutover === undefined) {
+        throw new Error("OPENCLAW_CUTOVER_PORT_REQUIRED");
+      }
+      await this.#cutover?.verifyPrior(parsed.cutover_state);
+    }
     return this.verifyTarget(target);
   }
 }

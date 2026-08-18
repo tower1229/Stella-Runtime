@@ -65,6 +65,27 @@ identity-bound `memory search` sentinel, and a `memory_get` sentinel invoked
 through the Gateway tool interface; an empty, dirty, stale, truncated-before-
 identity, or mismatched result fails the Barrier.
 
+An optional `Instance Cutover Plan` turns instance-specific migration policy
+into the same `sync` Barrier. Runtime validates the plan schema, canonical
+checksum, instance, and target Source Revision before using it. A consumer that
+sets `remote_base_check` or `push_before_sync` must provide the corresponding
+publication-prerequisite port; these checks are not generic Runtime defaults.
+Plans that declare a Public Corpus Adapter must also provide its independent
+target-indexing operation and before/after acceptance evidence with a passing
+health result, recall checksum, zero legacy private hits, and exactly one private
+retrieval Generation: the target. Runtime invokes this consumer-owned indexing
+seam inside the Barrier; it is not folded into private Generation indexing.
+
+The OpenClaw instance-cutover port owns consumer-specific mechanism disablement
+and deployment destinations for deterministic Bootstrap Projections. During the
+closed Barrier, the OpenClaw adapter removes the plan's declared legacy paths,
+preserves every declared independent path, invokes that port for mechanisms and
+Bootstrap deployment, indexes once, and verifies the complete target before the
+Pointer commit. Its captured state participates in ordinary sync rollback and
+restart recovery. Bootstrap files identify their Generation, are marked
+read-only/non-authoritative, and carry `bootstrap_alias` references to the same
+Projection Entries rather than duplicating Evidence.
+
 Eligible scope is derived from OpenClaw's verified Agent hook fields: the
 configured main Agent, a main/direct session key, a user trigger, and matching
 provider, sender, and direct-chat identities for the configured Authority Owner.
@@ -108,7 +129,7 @@ All structured operational commands require `--json` where offered.
 | `openclaw cognitive metrics --json` | Read bounded Runtime metrics. |
 | `openclaw cognitive validate --authority DIR --revision SHA --json` | Read-only validation of one exact clean committed Authority Source Revision. |
 | `openclaw cognitive build --authority DIR --state DIR --revision SHA [--bootstrap USER.md,MEMORY.md] --json` | Build or reuse one immutable Generation without activation, optionally deriving Bootstrap projections outside the Generation manifest. |
-| `openclaw cognitive sync --revision SHA --json` | Build or reuse the configured committed Authority target, drain Eligible Runs, prove the Host transition, write its Receipt, and switch the Active Pointer last. |
+| `openclaw cognitive sync --revision SHA [--cutover-plan FILE] --json` | Build or reuse the configured committed Authority target, optionally enforce one checksummed Instance Cutover Plan, drain Eligible Runs, prove the Host transition, write its Receipt, and switch the Active Pointer last. |
 | `openclaw cognitive generation show --state DIR --generation ID --json` | Read a built Generation and its Source Revision without implying that it is active. |
 | `openclaw cognitive state initialize --instance ID --json` | Explicitly create a valid empty Current State Head. |
 | `openclaw cognitive state import --instance ID --manifest FILE --authorization FILE --json` | Validate fresh external authorization for each exact Event, then atomically import one checksummed baseline before the first real Run. |

@@ -20,6 +20,10 @@ Versioning; cognitive contract namespaces remain independently versioned.
 - connects `sync` to OpenClaw's supported per-Agent `memorySearch.extraPaths`,
   forced indexing, deep status, memory search, and Gateway `memory_get`
   interfaces, with durable path ownership and search/get sentinel validation.
+- enforces checksummed Instance Cutover Plans through `sync`, including optional
+  consumer-owned remote publication prerequisites, same-Barrier legacy path and
+  mechanism removal, target-Generation Bootstrap deployment, independent Public
+  Corpus continuity evidence, and a public de-identified CangHai fixture.
 
 ## [0.1.0] - 2026-08-13
 

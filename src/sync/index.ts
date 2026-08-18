@@ -15,6 +15,16 @@ import type {
   InstanceRuntimeConfig,
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
+import type {
+  CutoverExecutionOptions,
+  CutoverTarget,
+} from "../cutover/index.js";
+import {
+  indexCutoverPublicCorpus,
+  validateInstanceCutoverPlan,
+  verifyCutoverAcceptance,
+  verifyCutoverPrerequisites,
+} from "../cutover/index.js";
 import { atomicWriteFile } from "../core/persistence.js";
 import {
   buildGeneration,
@@ -48,6 +58,7 @@ export interface SyncTarget {
     readonly searchSentinelChecksum: string;
     readonly getSentinelChecksum: string;
   };
+  readonly cutover?: CutoverTarget;
 }
 
 export interface HostIndexEvidence {
@@ -63,7 +74,7 @@ export interface HostIndexEvidence {
 export type HostSnapshot = Readonly<Record<string, unknown>>;
 
 export interface HostTransitionPort {
-  capture(): Promise<HostSnapshot>;
+  capture(target: SyncTarget): Promise<HostSnapshot>;
   applyTarget(target: SyncTarget): Promise<void>;
   verifyTarget(target: SyncTarget): Promise<HostIndexEvidence>;
   restore(snapshot: HostSnapshot): Promise<void>;
@@ -85,7 +96,7 @@ export interface SyncGenerationOptions {
   readonly host: HostTransitionPort;
   readonly runs: EligibleRunDrainPort;
   readonly now?: () => Date;
-  readonly cutoverPlanChecksum?: string;
+  readonly cutover?: CutoverExecutionOptions;
 }
 
 export interface SyncGenerationResult {
@@ -483,13 +494,26 @@ const syncGenerationLocked = async (
 ): Promise<SyncGenerationResult> => {
   const runtimeStorage = resolve(options.config.runtime_storage);
   const now = options.now ?? (() => new Date());
+  if (options.cutover !== undefined) {
+    validateInstanceCutoverPlan(
+      options.cutover.plan,
+      options.config.instance_id,
+      options.sourceRevision,
+    );
+  }
   await recoverInterruptedSyncLocked(options);
+  if (options.cutover !== undefined) {
+    await verifyCutoverPrerequisites(options.cutover, options.sourceRevision);
+  }
   const built = await buildGeneration({
     authorityDirectory: options.config.adapters.authority_checkout,
     stateDirectory: generationStateDirectory(options.config),
     generationsDirectory: options.config.generation_storage,
     sourceRevision: options.sourceRevision,
     packageVersion: options.packageVersion,
+    ...(options.cutover === undefined ? {} : {
+      bootstrapTargets: options.cutover.plan.bootstrap_targets,
+    }),
   });
   const verification = await verifyGeneration(built.generationDirectory);
   if (
@@ -517,8 +541,14 @@ const syncGenerationLocked = async (
     manifestChecksum: verification.manifestChecksum,
     projectionChecksum: projection.checksum,
     hostConfigChecksum: calculateRuntimeConfigIdentityChecksum(options.config),
+    ...(options.cutover === undefined ? {} : {
+      cutover: {
+        plan: options.cutover.plan,
+        bootstrapProjections: built.bootstrapProjections,
+      },
+    }),
   };
-  const prior = await options.host.capture();
+  const prior = await options.host.capture(target);
   canonicalJson(prior);
   const priorPointer = await loadOptionalPointer(runtimeStorage);
   const startedAt = now().toISOString();
@@ -549,8 +579,21 @@ const syncGenerationLocked = async (
     journal = journalAt(journal, "host_applied");
     await writeJournal(runtimeStorage, journal);
 
+    if (options.cutover !== undefined) {
+      await indexCutoverPublicCorpus(options.cutover, {
+        sourceRevision: target.sourceRevision,
+        syncGeneration: target.syncGeneration,
+      });
+    }
+
     const evidence = await options.host.verifyTarget(target);
     assertHostEvidence(evidence, target);
+    if (options.cutover !== undefined) {
+      await verifyCutoverAcceptance(options.cutover, {
+        sourceRevision: target.sourceRevision,
+        syncGeneration: target.syncGeneration,
+      });
+    }
     journal = journalAt(journal, "host_verified");
     await writeJournal(runtimeStorage, journal);
 
@@ -569,8 +612,8 @@ const syncGenerationLocked = async (
         search_sentinel_checksum: evidence.searchSentinelChecksum,
         get_sentinel_checksum: evidence.getSentinelChecksum,
       },
-      ...(options.cutoverPlanChecksum === undefined ? {} : {
-        cutover_plan_checksum: options.cutoverPlanChecksum,
+      ...(options.cutover === undefined ? {} : {
+        cutover_plan_checksum: options.cutover.plan.checksum,
       }),
       openclaw_version: options.hostVersion,
       node_version: options.nodeVersion,

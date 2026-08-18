@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { runSelfCheck } from "../cli/index.js";
 import type {
   CurrentStateEvent,
+  InstanceCutoverPlan,
   StateCorrectionPreview,
   StateImportManifest,
 } from "../contracts/index.js";
@@ -235,6 +236,7 @@ const plugin = {
                 { config: api.runtime.config },
                 api.cognitiveRuntimeRetrievalCommands ??
                   new OpenClawCliRetrievalCommands(),
+                api.cognitiveRuntimeInstanceCutover,
               )
         );
     let runtimeController: RuntimeHookController | null = null;
@@ -393,6 +395,7 @@ const plugin = {
           .command("sync")
           .description("Synchronize one committed Authority target through the full Activation Barrier")
           .requiredOption("--revision <revision>", "Authority source revision")
+          .option("--cutover-plan <path>", "Optional Instance Cutover Plan contract")
           .option("--json", "Emit a machine-readable result")
           .action(async (options) => {
             requireJson(options);
@@ -403,6 +406,10 @@ const plugin = {
             ) {
               throw new Error("SYNC_RUNTIME_PORTS_REQUIRED");
             }
+            const cutoverPlanPath = readOptionalString(options, "cutoverPlan");
+            const cutoverPlan = cutoverPlanPath === undefined
+              ? undefined
+              : await readJsonFile<InstanceCutoverPlan>(cutoverPlanPath);
             const result = await syncGeneration({
               config: runtimeConfig,
               sourceRevision: readStringOption(options, "revision"),
@@ -411,6 +418,17 @@ const plugin = {
               nodeVersion: process.versions.node,
               host: hostTransition,
               runs: runtimeController,
+              ...(cutoverPlan === undefined ? {} : {
+                cutover: {
+                  plan: cutoverPlan,
+                  ...(api.cognitiveRuntimeCutoverPublication === undefined ? {} : {
+                    publication: api.cognitiveRuntimeCutoverPublication,
+                  }),
+                  ...(api.cognitiveRuntimePublicCorpus === undefined ? {} : {
+                    publicCorpus: api.cognitiveRuntimePublicCorpus,
+                  }),
+                },
+              }),
             });
             console.log(JSON.stringify({
               operation: "sync",
@@ -420,6 +438,9 @@ const plugin = {
               reused_generation: result.reusedGeneration,
               receipt_path: result.receiptPath,
               pointer_path: result.pointerPath,
+              ...(cutoverPlan === undefined ? {} : {
+                cutover_plan_checksum: cutoverPlan.checksum,
+              }),
             }));
           });
 

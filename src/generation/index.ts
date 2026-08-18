@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -742,14 +743,22 @@ const projectionDocument = (entry: ProjectionEntry): string => {
 
 const bootstrapProjection = (
   target: BootstrapTarget,
+  syncGeneration: string,
   entries: readonly ProjectionEntry[],
 ): string => [
+  "---",
+  `generation_id: ${syncGeneration}`,
+  `target: ${target}`,
+  "read_only: true",
+  "authority: false",
+  "---",
   `# ${target === "USER.md" ? "User Bootstrap Projection" : "Memory Bootstrap Projection"}`,
   "",
   "Generated from an immutable Stella Runtime Generation. Do not edit as Authority.",
   "",
   ...entries.flatMap((entry) => [
     `- ${entry.stable_id} (${entry.layer}, ${entry.role}, ${entry.authority_version})`,
+    `  - bootstrap_alias: ${entry.stable_id}`,
     `  - projection: generations/${entry.generation_id}/${projectionDocumentPath(entry)}`,
     `  - checksum: ${entry.checksum}`,
   ]),
@@ -768,7 +777,7 @@ const writeBootstrapProjections = async (
     if (!BOOTSTRAP_TARGETS.includes(target)) {
       throw new Error(`BOOTSTRAP_TARGET_INVALID:${target}`);
     }
-    const content = bootstrapProjection(target, entries);
+    const content = bootstrapProjection(target, syncGeneration, entries);
     const path = join(stateDirectory, "bootstrap", syncGeneration, target);
     await mkdir(dirname(path), { recursive: true });
     let reused = false;
@@ -783,6 +792,7 @@ const writeBootstrapProjections = async (
       }
       reused = true;
     }
+    await chmod(path, 0o444);
     results.push({ target, path, checksum: checksum(content), reused });
   }
   return results;

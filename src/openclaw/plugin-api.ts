@@ -1,7 +1,12 @@
 import type { TelegramConfirmationPluginApi } from "./confirmation.js";
 import type { HostTransitionPort } from "../sync/index.js";
 import type {
+  CutoverPublicationPrerequisitePort,
+  PublicCorpusAdapterPort,
+} from "../cutover/index.js";
+import type {
   OpenClawConsumptionApi,
+  OpenClawInstanceCutoverPort,
   OpenClawRetrievalCommands,
 } from "./consumption.js";
 
@@ -50,6 +55,9 @@ export interface CognitiveRuntimePluginApi {
   readonly registerInteractiveHandler?: TelegramConfirmationPluginApi["registerInteractiveHandler"];
   readonly cognitiveRuntimeHostTransition?: HostTransitionPort;
   readonly cognitiveRuntimeRetrievalCommands?: OpenClawRetrievalCommands;
+  readonly cognitiveRuntimeCutoverPublication?: CutoverPublicationPrerequisitePort;
+  readonly cognitiveRuntimePublicCorpus?: PublicCorpusAdapterPort;
+  readonly cognitiveRuntimeInstanceCutover?: OpenClawInstanceCutoverPort;
   registerCli(
     registrar: (context: { program: CliCommand }) => void | Promise<void>,
     options: { readonly descriptors: readonly CliDescriptor[] },
