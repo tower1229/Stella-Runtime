@@ -379,7 +379,10 @@ async function waitForRuntimeHealth(runtimeStorage) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     content = await readFile(join(runtimeStorage, "runtime-health.json"), "utf8")
       .catch(() => "");
-    if (content.length > 0 && JSON.parse(content).status === "pass") return;
+    if (content.length > 0) {
+      const health = JSON.parse(content);
+      if (health.status === "pass") return health;
+    }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`RUNTIME_HEALTH_PASS_TIMEOUT\n${content}`);
@@ -1086,6 +1089,7 @@ async function verifyPackedHostNegativeMatrices(environment, port, token, modelR
 }
 
 async function verifyPackedUnsmokedHostGates({
+  runtime,
   pluginRoot,
   runtimeConfig,
   authorityDirectory,
@@ -1110,11 +1114,17 @@ async function verifyPackedUnsmokedHostGates({
     })),
   );
   const originalReceipts = await readReceipts();
+  const originalBinding = await new runtime.FileBindingCompiler().compile({
+    config: runtimeConfig,
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+  });
   await writeFile(join(authorityDirectory, "unsmoked-host-probe.txt"), "unsmoked\n");
   const targetRevision = await commitAuthorityChanges(
     authorityDirectory,
     "acceptance: unsmoked host gate",
   );
+  let recoveredReconciliation;
 
   try {
     await writeFile(matrixPath, JSON.stringify({ ...matrix, hosts: [] }));
@@ -1135,7 +1145,11 @@ async function verifyPackedUnsmokedHostGates({
       ],
       { env: environment },
     );
-    await waitForRuntimeHealthFailure(runtimeConfig.runtime_storage, /INCOMPATIBLE_HOST/);
+    const incompatibleHealth = await waitForRuntimeHealthFailure(
+      runtimeConfig.runtime_storage,
+      /INCOMPATIBLE_HOST/,
+    );
+    assert.deepEqual(incompatibleHealth.reasonCodes, ["INCOMPATIBLE_HOST"]);
 
     const requestStart = modelRequests.length;
     await run(
@@ -1181,8 +1195,69 @@ async function verifyPackedUnsmokedHostGates({
   } finally {
     await writeFile(matrixPath, originalMatrix);
     await restartGateway();
-    await waitForRuntimeHealth(runtimeConfig.runtime_storage);
+    await waitForDeepGatewayProbe(environment);
+    const { stdout } = await run(
+      "openclaw",
+      [
+        "gateway",
+        "call",
+        "cognitive-runtime.reconcile",
+        "--url",
+        `ws://127.0.0.1:${port}`,
+        "--token",
+        token,
+        "--json",
+        "--timeout",
+        "120000",
+      ],
+      { env: environment, timeout: 180_000 },
+    );
+    const response = parseJsonOutput(stdout);
+    recoveredReconciliation = response.result ?? response;
   }
+
+  assert.equal(recoveredReconciliation.status, "pass");
+  assert.deepEqual(recoveredReconciliation.reasonCodes, []);
+  const recoveredHealth = await waitForRuntimeHealth(runtimeConfig.runtime_storage);
+  assert.deepEqual(recoveredHealth.reasonCodes, []);
+  assert.equal(await readFile(matrixPath, "utf8"), originalMatrix);
+  assert.equal(await readFile(configPath, "utf8"), originalConfig);
+  assert.equal(await readFile(pointerPath, "utf8"), originalPointer);
+  assert.deepEqual(await readReceipts(), originalReceipts);
+
+  const recoveredBinding = await new runtime.FileBindingCompiler().compile({
+    config: runtimeConfig,
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+  });
+  assert.deepEqual(recoveredBinding, originalBinding);
+  const requestStart = modelRequests.length;
+  const recoveredRun = await run(
+    "openclaw",
+    [
+      "agent",
+      "--agent",
+      "main",
+      "--channel",
+      "telegram",
+      "--to",
+      "+15555550123",
+      "--message",
+      "ELIGIBLE_GENERATION_RUN",
+      "--json",
+      "--timeout",
+      "15",
+    ],
+    { env: environment },
+  );
+  assert.match(recoveredRun.stdout, /Synthetic host response/);
+  const recoveredRequests = modelRequests.slice(requestStart);
+  assert.ok(recoveredRequests.some((request) =>
+    JSON.stringify(request).includes("[semantic:sem-synthetic-claim]")),
+  "the recovered Host could not retrieve the prior Generation");
+  assert.ok(recoveredRequests.some((request) =>
+    JSON.stringify(request).includes("[semantic:sem-packed-accepted]")),
+  "the recovered Host could not retrieve the active published Generation");
 }
 
 async function verifyExactHostFailureRecovery({
@@ -1749,6 +1824,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       modelServer.requests,
     );
     await verifyPackedUnsmokedHostGates({
+      runtime: installedRuntime,
       pluginRoot,
       runtimeConfig,
       authorityDirectory,

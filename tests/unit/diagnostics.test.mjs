@@ -274,6 +274,51 @@ test("reconciliation persists stable drift codes and enforce gates while observe
   assert.deepEqual(await enforce.checkRunGate(), { allowed: true, reasonCodes: [] });
 });
 
+test("reconciliation replaces duplicate Host failures after compatibility recovers", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-host-recovery-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(config(root).runtime_storage, { recursive: true });
+  let compatible = false;
+  const monitor = new RuntimeHealthMonitor({
+    config: config(root),
+    hostVersion: "2026.6.34",
+    nodeVersion: "24.18.0",
+    pluginDiscovered: () => true,
+    hostCapabilities: () => compatible,
+    authority: { validate: async () => ({ sourceRevision: "a".repeat(40) }) },
+    configIdentity: { verify: async () => compatible ? true : {
+      valid: false,
+      reasonCodes: ["INCOMPATIBLE_HOST"],
+    } },
+    retrieval: { verify: async () => undefined },
+    publicCorpus: { verify: async () => ({ adapterId: "public-synthetic" }) },
+    active: { load: async () => active },
+    now: () => "2026-08-19T00:00:00.000Z",
+  });
+
+  assert.deepEqual(await monitor.reconcile("startup"), {
+    schemaVersion: "cognitive-runtime.runtime-health/v1",
+    instanceId: "instance-synthetic",
+    trigger: "startup",
+    status: "fail",
+    reasonCodes: ["INCOMPATIBLE_HOST"],
+    checkedAt: "2026-08-19T00:00:00.000Z",
+  });
+  assert.deepEqual(await monitor.checkRunGate(), {
+    allowed: false,
+    reasonCodes: ["INCOMPATIBLE_HOST"],
+  });
+
+  compatible = true;
+  const recovered = await monitor.reconcile("startup");
+  assert.equal(recovered.status, "pass");
+  assert.deepEqual(recovered.reasonCodes, []);
+  assert.deepEqual(await monitor.checkRunGate(), {
+    allowed: true,
+    reasonCodes: [],
+  });
+});
+
 test("lifecycle metrics contain bounded outcomes and reject private trace fields", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-metrics-"));
   t.after(() => rm(root, { recursive: true, force: true }));

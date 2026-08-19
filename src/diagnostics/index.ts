@@ -492,12 +492,15 @@ export class RuntimeHealthMonitor {
     trigger: ReconciliationTrigger,
   ): Promise<ReconciliationReceipt> {
     const check = await this.selfCheck();
+    const reasonCodes = [...new Set(
+      check.environment.checks.flatMap((item) => item.reasonCodes),
+    )].sort();
     const receipt: ReconciliationReceipt = {
       schemaVersion: "cognitive-runtime.runtime-health/v1",
       instanceId: this.#options.config.instance_id,
       trigger,
       status: check.environment.status,
-      reasonCodes: check.environment.checks.flatMap((item) => item.reasonCodes),
+      reasonCodes,
       checkedAt: this.#options.now?.() ?? new Date().toISOString(),
     };
     await atomicWriteFile(
