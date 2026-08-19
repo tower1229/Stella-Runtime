@@ -48,6 +48,355 @@ async function loadRuntime() {
   return import(pathToFileURL(join(runtimeRoot, "dist", "index.js")).href);
 }
 
+const eligibleContext = (runId) => ({
+  runId,
+  sessionKey: "agent:main:telegram:direct:+15555550123",
+  agentId: "main",
+  trigger: "user",
+  messageProvider: "telegram",
+  senderId: "+15555550123",
+  chatId: "+15555550123",
+});
+
+function acceptedRouterResult(binding) {
+  const governing = binding.context.governing?.system;
+  return {
+    memory_route: "none",
+    state_refs: binding.context.stateView.map((entry) => entry.id),
+    governing: governing === null || governing === undefined ? null : {
+      system: governing.id,
+      kernel_version: governing.version,
+      modules: (binding.context.governing?.modules ?? []).map((entry) => ({
+        id: entry.id,
+        version: entry.version,
+      })),
+    },
+    frameworks: { primary: null, secondary: null },
+    retrieval_plan: [],
+    confidence: 1,
+    reason_codes: ["PACKED_HOST_ACCEPTANCE"],
+  };
+}
+
+async function runPackedFailClosedMatrix(config, hostApi) {
+  const runtime = await loadRuntime();
+  const hookRuntime = await import(
+    pathToFileURL(join(runtimeRoot, "dist", "openclaw", "runtime.js")).href
+  );
+  const binding = await new runtime.FileBindingCompiler().compile({
+    config,
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+  });
+  const accepted = acceptedRouterResult(binding);
+
+  const register = ({ complete, bindingCompiler, maxActiveRuns = 2 } = {}) => {
+    const hooks = new Map();
+    const controller = hookRuntime.registerRuntimeHooks({
+      runtime: {
+        version: "2026.6.34",
+        llm: {
+          complete: complete ?? (async () => ({ text: JSON.stringify(accepted) })),
+        },
+      },
+      on(name, handler) { hooks.set(name, handler); },
+      registerCli() {},
+      logger: { info() {}, warn() {} },
+    }, hookRuntime.readRuntimeConfig({
+      runtime: {
+        ...config,
+        limits: { ...config.limits, max_active_runs: maxActiveRuns },
+      },
+    }), {
+      bindingCompiler: bindingCompiler ?? { compile: async () => binding },
+    });
+    return { hooks, controller };
+  };
+  const executeHost = async (hooks, event, context) => {
+    const gate = await hooks.get("before_agent_run")(event, context);
+    if (gate?.outcome !== "block") {
+      await hostApi.runtime.llm.complete({
+        messages: [{ role: "user", content: "FINAL_HOST_MODEL" }],
+        maxTokens: 8,
+        temperature: 0,
+        purpose: "cognitive-runtime.fail-closed-negative-control",
+      });
+    }
+    return gate?.metadata?.reasonCode ?? "NOT_BLOCKED";
+  };
+
+  const missing = register();
+  const missingRunId = await executeHost(
+    missing.hooks,
+    { prompt: "missing", messages: [] },
+    eligibleContext(undefined),
+  );
+
+  const overflow = register();
+  const inputLimit = await executeHost(
+    overflow.hooks,
+    { prompt: "x".repeat(16_001), messages: [] },
+    eligibleContext("run-packed-input-limit"),
+  );
+
+  const invalid = register({ complete: async () => ({ text: "not-json" }) });
+  const routerInvalid = await executeHost(
+    invalid.hooks,
+    { prompt: "invalid", messages: [] },
+    eligibleContext("run-packed-router-invalid"),
+  );
+
+  const timedOut = register({ complete: async () => new Promise(() => {}) });
+  const routerTimeout = await executeHost(
+    timedOut.hooks,
+    { prompt: "timeout", messages: [] },
+    eligibleContext("run-packed-router-timeout"),
+  );
+
+  const capacity = register();
+  await capacity.hooks.get("before_prompt_build")(
+    { prompt: "first", messages: [] },
+    eligibleContext("run-packed-capacity-first"),
+  );
+  const scratchCapacity = await executeHost(
+    capacity.hooks,
+    { prompt: "second", messages: [] },
+    eligibleContext("run-packed-capacity-second"),
+  );
+
+  let releaseLifecycle;
+  const lifecycle = register({
+    complete: async () => {
+      await new Promise((resolve) => { releaseLifecycle = resolve; });
+      return { text: JSON.stringify(accepted) };
+    },
+  });
+  const lifecyclePending = executeHost(
+    lifecycle.hooks,
+    { prompt: "lifecycle", messages: [] },
+    eligibleContext("run-packed-lifecycle"),
+  );
+  while (releaseLifecycle === undefined) await new Promise((resolve) => setTimeout(resolve, 1));
+  lifecycle.controller.clearLifecycle("restart");
+  releaseLifecycle();
+  const lifecycleInvalid = await lifecyclePending;
+
+  const exception = register({
+    bindingCompiler: { compile: async () => ({ ...binding, context: null }) },
+  });
+  const runtimeException = await executeHost(
+    exception.hooks,
+    { prompt: "exception", messages: [] },
+    eligibleContext("run-packed-runtime-exception"),
+  );
+
+  return {
+    missingRunId,
+    inputLimit,
+    routerInvalid,
+    routerTimeout,
+    scratchCapacity,
+    lifecycleInvalid,
+    runtimeException,
+  };
+}
+
+async function runPackedAdmissionNegativeMatrix(config) {
+  const runtime = await loadRuntime();
+  const service = runtime.openClawCandidateAdmissionService;
+  const { dispatchPluginInteractiveHandler } = await import(
+    "openclaw/plugin-sdk/plugin-runtime"
+  );
+  const store = new runtime.FileCandidateAdmissionStore({
+    directory: config.runtime_storage,
+  });
+  const headBefore = (await execFileAsync("git", ["rev-parse", "HEAD"], {
+    cwd: config.adapters.authority_checkout,
+  })).stdout.trim();
+  let sequence = 0;
+  const candidateInput = (stableId) => ({
+    candidateType: "semantic",
+    stableId,
+    baseAuthorityVersion: null,
+    baseChecksum: null,
+    baseContent: null,
+    content: { claim: `Rejected packed admission ${stableId}.` },
+    sourceMap: [{ sourceRef: "source-host-negative", contentPath: "body" }],
+  });
+  const createPresented = async (kind) => {
+    sequence += 1;
+    const instanceId = `instance-host-negative-${kind}-${sequence}`;
+    const authorization = service.authorizeDiscovery({
+      instanceId,
+      scope: { candidateTypes: ["semantic"], sourceRefs: ["source-host-negative"] },
+      grantedBy: "owner-host-negative",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const candidate = service.createCandidate({
+      authorizationId: authorization.authorization_id,
+      ...candidateInput(`sem-host-negative-${kind}-${sequence}`),
+    });
+    const presented = await runtime.presentTelegramConfirmation({
+      service,
+      input: {
+        authorizationId: authorization.authorization_id,
+        candidateId: candidate.candidate_id,
+        revision: candidate.revision,
+        channel: "telegram",
+      },
+      presentation: {
+        async present() {
+          return {
+            schema_version: "cognitive-runtime.approval-message-reference/v2",
+            provider: "telegram",
+            instance_id: instanceId,
+            account_id: "account-host-negative",
+            conversation_id: "conversation-host-negative",
+            message_id: String(100 + sequence),
+          };
+        },
+      },
+    });
+    return { instanceId, authorization, candidate, presented };
+  };
+  const dispatch = async (callbackData, messageId) => dispatchPluginInteractiveHandler({
+    channel: "telegram",
+    data: callbackData,
+    dedupeId: `host-negative-${sequence}-${messageId}`,
+    invoke: (match) => match.registration.handler({
+      channel: "telegram",
+      accountId: "account-host-negative",
+      conversationId: "conversation-host-negative",
+      senderId: "owner-host-negative",
+      auth: { isAuthorizedSender: true },
+      callback: {
+        namespace: match.namespace,
+        payload: match.payload,
+        messageId,
+      },
+      respond: { async clearButtons() {}, async reply() {} },
+    }),
+  });
+  const rejectedReason = async (operation) => {
+    try {
+      await operation();
+      return "NOT_REJECTED";
+    } catch (error) {
+      return error instanceof Error ? error.message.split(":", 1)[0] : String(error);
+    }
+  };
+
+  const ordinary = await rejectedReason(() => service.createCandidate({
+    authorizationId: "ordinary-conversation",
+    ...candidateInput("sem-host-negative-ordinary"),
+  }));
+
+  const unsupported = service.authorizeDiscovery({
+    instanceId: "instance-host-negative-unsupported",
+    scope: { candidateTypes: ["semantic"], sourceRefs: ["source-host-negative"] },
+    grantedBy: "owner-host-negative",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  const unsupportedCandidate = service.createCandidate({
+    authorizationId: unsupported.authorization_id,
+    ...candidateInput("sem-host-negative-unsupported"),
+  });
+  const unsupportedResult = await runtime.presentTelegramConfirmation({
+    service,
+    input: {
+      authorizationId: unsupported.authorization_id,
+      candidateId: unsupportedCandidate.candidate_id,
+      revision: unsupportedCandidate.revision,
+      channel: "webchat",
+    },
+    presentation: { async present() { throw new Error("UNEXPECTED_PRESENTATION"); } },
+  });
+
+  const ended = await createPresented("ended");
+  service.endDiscovery(ended.authorization.authorization_id);
+  const endedReason = await rejectedReason(() => dispatch(
+    ended.presented.actions?.[0]?.callbackData
+      ?? `crad:a:${ended.presented.routingToken}`,
+    100 + sequence,
+  ));
+
+  const llm = await createPresented("llm-text");
+  const llmReason = await rejectedReason(() => dispatch(
+    `crad:I approve:${llm.presented.routingToken}`,
+    100 + sequence,
+  ));
+
+  let authorityCommits = 0;
+  let changeSetPublications = 0;
+  let mismatchedReceiptsUnconsumed = true;
+  const mismatchReasons = {};
+  for (const kind of ["checksum", "base", "revision"]) {
+    const accepted = await createPresented(kind);
+    await dispatch(`crad:a:${accepted.presented.routingToken}`, 100 + sequence);
+    const [approved] = await store.listApprovedCandidateRevisions(accepted.instanceId);
+    if (approved === undefined) throw new Error("NEGATIVE_APPROVAL_REQUIRED");
+    const changedCandidate = kind === "checksum"
+      ? { ...approved.candidate, checksum: contractChecksum("f") }
+      : kind === "base"
+        ? { ...approved.candidate, base_authority_version: "authority-version-drift" }
+        : { ...approved.candidate, revision: approved.candidate.revision + 1 };
+    const coordinator = new runtime.ChangeSetPublicationCoordinator({
+      journal: new runtime.FilePublicationJournal({
+        directory: join(config.runtime_storage, `negative-journal-${kind}-${sequence}`),
+      }),
+      authority: {
+        async inspectCheckout() { return { kind: "dedicated", clean: true }; },
+        async validatePublication() { throw new Error("UNEXPECTED_VALIDATION"); },
+        async findCommit() { return null; },
+        async commitPublication() { authorityCommits += 1; throw new Error("UNEXPECTED_COMMIT"); },
+      },
+      approvals: store,
+    });
+    const mismatchReason = await rejectedReason(async () => {
+      await coordinator.publish({
+      candidate: changedCandidate,
+      approvalReceipt: approved.receipt,
+      operations: [{
+        operation: "write",
+        path: `semantic/${changedCandidate.stable_id}/claim.md`,
+        content: "must not publish\n",
+        contentChecksum: runtime.calculatePublicationContentChecksum("must not publish\n"),
+      }],
+      });
+      changeSetPublications += 1;
+    });
+    if (mismatchReason !== "PUBLICATION_APPROVAL_MISMATCH") {
+      throw new Error(`NEGATIVE_PUBLICATION_REASON_INVALID:${kind}:${mismatchReason}`);
+    }
+    mismatchReasons[kind] = mismatchReason;
+    mismatchedReceiptsUnconsumed &&= (
+      await store.listApprovedCandidateRevisions(accepted.instanceId)
+    ).length === 1;
+  }
+  const headAfter = (await execFileAsync("git", ["rev-parse", "HEAD"], {
+    cwd: config.adapters.authority_checkout,
+  })).stdout.trim();
+  const nonAcceptedReceiptCount = (
+    await Promise.all([
+      store.listApprovedCandidateRevisions("instance-host-negative-ended-1"),
+      store.listApprovedCandidateRevisions("instance-host-negative-unsupported"),
+      store.listApprovedCandidateRevisions("instance-host-negative-llm-text-2"),
+    ])
+  ).reduce((total, entries) => total + entries.length, 0);
+  return {
+    ordinary,
+    ended: endedReason,
+    unsupported: unsupportedResult.status,
+    llmText: llmReason,
+    nonAcceptedReceiptCount,
+    authorityRevisionUnchanged: headAfter === headBefore,
+    authorityCommits,
+    changeSetPublications,
+    mismatchReasons,
+    mismatchedReceiptsUnconsumed,
+  };
+}
+
 function readConfiguredRuntime(api) {
   const config = api.runtime.config.current();
   const runtimeConfig = config.plugins?.entries?.["cognitive-runtime"]?.config?.runtime;
@@ -276,6 +625,34 @@ const plugin = {
         } catch (error) {
           respond(false, undefined, {
             code: "CANDIDATE_PUBLICATION_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+      { scope: "operator.admin" },
+    );
+    api.registerGatewayMethod(
+      "cognitive-probe.fail-closed-matrix",
+      async ({ respond }) => {
+        try {
+          respond(true, await runPackedFailClosedMatrix(readConfiguredRuntime(api), api));
+        } catch (error) {
+          respond(false, undefined, {
+            code: "FAIL_CLOSED_MATRIX_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+      { scope: "operator.admin" },
+    );
+    api.registerGatewayMethod(
+      "cognitive-probe.admission-negative-matrix",
+      async ({ respond }) => {
+        try {
+          respond(true, await runPackedAdmissionNegativeMatrix(readConfiguredRuntime(api)));
+        } catch (error) {
+          respond(false, undefined, {
+            code: "ADMISSION_NEGATIVE_MATRIX_FAILED",
             message: error instanceof Error ? error.message : String(error),
           });
         }

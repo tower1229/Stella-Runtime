@@ -1029,6 +1029,162 @@ async function verifyExactHostGenerationConsumption({
   assert.equal(binding.authorityRevision, publication.sourceRevision);
 }
 
+async function verifyPackedHostNegativeMatrices(environment, port, token, modelRequests) {
+  const callProbe = async (method) => {
+    const { stdout } = await run(
+      "openclaw",
+      [
+        "gateway",
+        "call",
+        method,
+        "--url",
+        `ws://127.0.0.1:${port}`,
+        "--token",
+        token,
+        "--json",
+        "--timeout",
+        "30000",
+      ],
+      { env: environment, timeout: 40_000 },
+    );
+    const response = parseJsonOutput(stdout);
+    return response.result ?? response;
+  };
+
+  const requestStart = modelRequests.length;
+  assert.deepEqual(await callProbe("cognitive-probe.fail-closed-matrix"), {
+    missingRunId: "RUN_ID_REQUIRED",
+    inputLimit: "ROUTER_INPUT_LIMIT_EXCEEDED",
+    routerInvalid: "ROUTER_NON_JSON_OUTPUT",
+    routerTimeout: "ROUTER_TIMEOUT",
+    scratchCapacity: "RUN_SCRATCH_CAPACITY",
+    lifecycleInvalid: "RUN_LIFECYCLE_INVALIDATED",
+    runtimeException: "RUNTIME_FAILURE",
+  });
+  assert.equal(
+    modelRequests.slice(requestStart).some((request) =>
+      JSON.stringify(request).includes("FINAL_HOST_MODEL")),
+    false,
+    "a blocked packed Host matrix case reached its final model request",
+  );
+  assert.deepEqual(await callProbe("cognitive-probe.admission-negative-matrix"), {
+    ordinary: "DISCOVERY_AUTHORIZATION_NOT_ACTIVE",
+    ended: "CONFIRMATION_ROUTING_TOKEN_INVALID",
+    unsupported: "redirect_required",
+    llmText: "CONFIRMATION_CALLBACK_INVALID",
+    nonAcceptedReceiptCount: 0,
+    authorityRevisionUnchanged: true,
+    authorityCommits: 0,
+    changeSetPublications: 0,
+    mismatchReasons: {
+      checksum: "PUBLICATION_APPROVAL_MISMATCH",
+      base: "PUBLICATION_APPROVAL_MISMATCH",
+      revision: "PUBLICATION_APPROVAL_MISMATCH",
+    },
+    mismatchedReceiptsUnconsumed: true,
+  });
+}
+
+async function verifyPackedUnsmokedHostGates({
+  pluginRoot,
+  runtimeConfig,
+  authorityDirectory,
+  environment,
+  configPath,
+  port,
+  token,
+  modelRequests,
+  restartGateway,
+}) {
+  const matrixPath = join(pluginRoot, "compatibility", "openclaw.json");
+  const originalMatrix = await readFile(matrixPath, "utf8");
+  const matrix = JSON.parse(originalMatrix);
+  const originalConfig = await readFile(configPath, "utf8");
+  const pointerPath = join(runtimeConfig.runtime_storage, "active-generation.json");
+  const originalPointer = await readFile(pointerPath, "utf8");
+  const receiptsDirectory = join(runtimeConfig.runtime_storage, "activation-receipts");
+  const readReceipts = async () => Promise.all(
+    (await readdir(receiptsDirectory)).sort().map(async (name) => ({
+      name,
+      content: await readFile(join(receiptsDirectory, name), "utf8"),
+    })),
+  );
+  const originalReceipts = await readReceipts();
+  await writeFile(join(authorityDirectory, "unsmoked-host-probe.txt"), "unsmoked\n");
+  const targetRevision = await commitAuthorityChanges(
+    authorityDirectory,
+    "acceptance: unsmoked host gate",
+  );
+
+  try {
+    await writeFile(matrixPath, JSON.stringify({ ...matrix, hosts: [] }));
+    await restartGateway();
+    await run(
+      "openclaw",
+      [
+        "gateway",
+        "call",
+        "cognitive-runtime.reconcile",
+        "--url",
+        `ws://127.0.0.1:${port}`,
+        "--token",
+        token,
+        "--json",
+        "--timeout",
+        "120000",
+      ],
+      { env: environment },
+    );
+    await waitForRuntimeHealthFailure(runtimeConfig.runtime_storage, /INCOMPATIBLE_HOST/);
+
+    const requestStart = modelRequests.length;
+    await run(
+      "openclaw",
+      [
+        "agent",
+        "--agent",
+        "main",
+        "--channel",
+        "telegram",
+        "--to",
+        "+15555550123",
+        "--message",
+        "ELIGIBLE_GENERATION_RUN",
+        "--json",
+        "--timeout",
+        "15",
+      ],
+      { env: environment },
+    );
+    assert.deepEqual(
+      modelRequests.slice(requestStart),
+      [],
+      "an engine-compatible Host absent from the packed matrix reached the model",
+    );
+
+    try {
+      await run(
+        "openclaw",
+        ["cognitive", "sync", "--revision", targetRevision, "--json"],
+        { env: environment, timeout: 180_000 },
+      );
+      assert.fail("unsmoked packed Host unexpectedly entered sync");
+    } catch (error) {
+      assert.match(
+        [error?.message, error?.stdout, error?.stderr].filter(Boolean).join("\n"),
+        /INCOMPATIBLE_HOST/,
+      );
+    }
+    assert.equal(await readFile(configPath, "utf8"), originalConfig);
+    assert.equal(await readFile(pointerPath, "utf8"), originalPointer);
+    assert.deepEqual(await readReceipts(), originalReceipts);
+  } finally {
+    await writeFile(matrixPath, originalMatrix);
+    await restartGateway();
+    await waitForRuntimeHealth(runtimeConfig.runtime_storage);
+  }
+}
+
 async function verifyExactHostFailureRecovery({
   runtime,
   runtimeConfig,
@@ -1584,6 +1740,23 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       modelRequests: modelServer.requests,
       port,
       token,
+      restartGateway,
+    });
+    await verifyPackedHostNegativeMatrices(
+      environment,
+      port,
+      token,
+      modelServer.requests,
+    );
+    await verifyPackedUnsmokedHostGates({
+      pluginRoot,
+      runtimeConfig,
+      authorityDirectory,
+      environment,
+      configPath,
+      port,
+      token,
+      modelRequests: modelServer.requests,
       restartGateway,
     });
     await verifyExactHostFailureRecovery({

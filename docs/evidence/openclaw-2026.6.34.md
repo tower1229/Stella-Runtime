@@ -26,13 +26,17 @@ Test Pack verifies push-before-sync, legacy retrieval removal, `active-memory`
 disablement, matching `USER.md`/`MEMORY.md` Bootstrap targets, and independent
 Public Corpus continuity through the public Runner.
 
-Reproduce the repository evidence with:
+Reproduce the complete source-bound repository evidence with:
 
 ```bash
-npm test
-npm run test:pack-install
-npm run test:runner -- --instance-test-pack tests/fixtures/instance-packs/canghai-public
+npm run verify:env -- release --json
 ```
+
+The `generation-consumption-public-runner` step uses the packaged public Runner
+to execute the packed repository scenario and the public de-identified CangHai
+Instance Test Pack in one acceptance process. The preceding exact-host step is
+restricted to OpenClaw `2026.6.34 (5c38f99)` and Node.js `24.18.0`; a different
+OpenClaw or Node build requires its own Compatibility Matrix row and evidence.
 
 This acceptance does not claim that `0.2.0` is published. Registry, tag, Release,
 and production-instance gates remain separate delivery evidence.

@@ -7,12 +7,18 @@ const npmRun = (name, requirements = []) => ({
   requirements,
 });
 
-const nodeTest = (name, paths, requirements = []) => ({
+const nodeCommand = (name, args, requirements = []) => ({
   name,
   command: process.execPath,
-  args: ["--test", "--test-concurrency=1", ...paths],
+  args,
   requirements,
 });
+
+const nodeTest = (name, paths, requirements = []) => nodeCommand(
+  name,
+  ["--test", "--test-concurrency=1", ...paths],
+  requirements,
+);
 
 const testFiles = (...directories) => directories.flatMap((directory) =>
   readdirSync(directory)
@@ -43,6 +49,13 @@ const exactHostSteps = [
   npmRun("build"),
   nodeTest("openclaw-exact-host", [
     "tests/pack-install/openclaw-discovery.test.mjs",
+  ], ["network-install", "loopback", "exact-host"]),
+  nodeCommand("generation-consumption-public-runner", [
+    "dist/testing/runner.js",
+    "--repository-test-root",
+    "tests/fixtures/repository-packs/generation-consumption",
+    "--instance-test-pack",
+    "tests/fixtures/instance-packs/canghai-public",
   ], ["network-install", "loopback", "exact-host"]),
 ];
 

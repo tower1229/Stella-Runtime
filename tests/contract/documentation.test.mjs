@@ -50,3 +50,12 @@ test("exact-host evidence records the stable package acceptance command", async 
   assert.match(evidence, /OpenClaw 2026\.6\.34 \(5c38f99\)/);
   assert.match(evidence, /synthetic/i);
 });
+
+test("Generation Consumption evidence names the unified release profile and exact scope", async () => {
+  const evidence = await read("docs/evidence/openclaw-2026.6.34.md");
+
+  assert.match(evidence, /npm run verify:env -- release --json/);
+  assert.match(evidence, /generation-consumption-public-runner/);
+  assert.match(evidence, /OpenClaw `2026\.6\.34 \(5c38f99\)` and Node\.js `24\.18\.0`/);
+  assert.match(evidence, /does not claim that `0\.2\.0` is published/);
+});

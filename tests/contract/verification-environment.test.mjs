@@ -38,6 +38,32 @@ test("verification profiles keep pure work separate from environment capabilitie
   }
 });
 
+test("exact-host verification closes repository and public Instance Pack acceptance in one Runner", () => {
+  const exactHostSteps = verificationProfiles["exact-host"].steps;
+  const acceptance = exactHostSteps.find(
+    (step) => step.name === "generation-consumption-public-runner",
+  );
+
+  assert.ok(acceptance);
+  assert.equal(acceptance.command, process.execPath);
+  assert.deepEqual(acceptance.requirements, [
+    "network-install",
+    "loopback",
+    "exact-host",
+  ]);
+  assert.deepEqual(acceptance.args, [
+    "dist/testing/runner.js",
+    "--repository-test-root",
+    "tests/fixtures/repository-packs/generation-consumption",
+    "--instance-test-pack",
+    "tests/fixtures/instance-packs/canghai-public",
+  ]);
+  assert.equal(
+    verificationProfiles.release.steps.includes(acceptance),
+    true,
+  );
+});
+
 test("verification cache ignores npm injected caches unless explicitly overridden", () => {
   assert.equal(resolveVerificationCache({
     temporaryRoot: "/private/tmp/stella-runtime-verification",
