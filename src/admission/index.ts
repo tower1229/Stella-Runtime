@@ -13,6 +13,10 @@ import {
   type DiscoveryAuthorization,
   validateContract,
 } from "../contracts/index.js";
+import type {
+  ApprovalPublicationFinalization,
+  ChangeSetArtifact,
+} from "../publication/index.js";
 
 export type FrameworkAdmissionDecision = "accepted" | "rejected" | "rewritten";
 
@@ -172,6 +176,44 @@ export interface CandidateAdmissionServiceOptions {
   readonly createRoutingToken?: () => string;
   readonly authorityHead?: CandidateAuthorityHeadPort;
   readonly lifecycle?: { recordLifecycle(outcome: "accepted"): void };
+  readonly persistence?: CandidateAdmissionPersistencePort;
+}
+
+export interface CandidateAdmissionSnapshot {
+  readonly schemaVersion: "cognitive-runtime.candidate-admission-store/v1";
+  readonly authorizations: readonly DiscoveryAuthorization[];
+  readonly candidates: readonly {
+    readonly candidateId: string;
+    readonly authorizationId: string;
+    readonly revisions: readonly AuthorityCandidate[];
+  }[];
+  readonly candidateTargets: readonly {
+    readonly targetKey: string;
+    readonly candidateId: string;
+  }[];
+  readonly confirmations: readonly {
+    readonly authorizationId: string;
+    readonly requestId: string;
+    readonly candidate: AuthorityCandidate;
+    readonly reviewArtifact: CandidateReviewArtifact;
+    readonly routingToken: string;
+    readonly messageReference: ApprovalMessageReference | null;
+  }[];
+  readonly receipts: readonly {
+    readonly authorizationId: string;
+    readonly receipt: DecisionReceipt;
+    readonly consumed: boolean;
+    readonly invalidated: boolean;
+    readonly artifact: ChangeSetArtifact | null;
+    readonly finalization: ApprovalPublicationFinalization | null;
+  }[];
+}
+
+export interface CandidateAdmissionPersistencePort {
+  transact<T>(operation: (snapshot: unknown) => {
+    readonly snapshot: CandidateAdmissionSnapshot;
+    readonly result: T;
+  }): T;
 }
 
 export interface DiscoveryAuthorizationInput {
@@ -270,6 +312,7 @@ interface ConfirmationRecord {
   readonly authorizationId: string;
   readonly requestId: string;
   readonly candidate: AuthorityCandidate;
+  readonly reviewArtifact: CandidateReviewArtifact;
   readonly routingToken: string;
   messageReference: ApprovalMessageReference | null;
 }
@@ -279,6 +322,8 @@ interface ReceiptRecord {
   readonly receipt: DecisionReceipt;
   consumed: boolean;
   invalidated: boolean;
+  artifact: ChangeSetArtifact | null;
+  finalization: ApprovalPublicationFinalization | null;
 }
 
 const defaultId = (
@@ -346,6 +391,86 @@ const assertContract = (
     throw new Error(`ADMISSION_CONTRACT_INVALID:${name}`);
   }
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+export const emptyCandidateAdmissionSnapshot = (): CandidateAdmissionSnapshot => ({
+  schemaVersion: "cognitive-runtime.candidate-admission-store/v1",
+  authorizations: [],
+  candidates: [],
+  candidateTargets: [],
+  confirmations: [],
+  receipts: [],
+});
+
+export function parseCandidateAdmissionSnapshot(
+  value: unknown,
+): CandidateAdmissionSnapshot {
+  if (value === null) return emptyCandidateAdmissionSnapshot();
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== "cognitive-runtime.candidate-admission-store/v1" ||
+    !Array.isArray(value.authorizations) ||
+    !Array.isArray(value.candidates) ||
+    !Array.isArray(value.candidateTargets) ||
+    !Array.isArray(value.confirmations) ||
+    !Array.isArray(value.receipts)
+  ) {
+    throw new Error("CANDIDATE_ADMISSION_STORE_INVALID");
+  }
+  for (const authorization of value.authorizations) {
+    assertContract("discovery-authorization", authorization);
+  }
+  for (const record of value.candidates) {
+    if (
+      !isRecord(record) ||
+      typeof record.candidateId !== "string" ||
+      typeof record.authorizationId !== "string" ||
+      !Array.isArray(record.revisions) ||
+      record.revisions.length === 0
+    ) throw new Error("CANDIDATE_ADMISSION_STORE_INVALID");
+    for (const candidate of record.revisions) {
+      assertContract("authority-candidate", candidate);
+      if (!isRecord(candidate) || candidate.candidate_id !== record.candidateId) {
+        throw new Error("CANDIDATE_ADMISSION_STORE_INVALID");
+      }
+    }
+  }
+  for (const target of value.candidateTargets) {
+    if (
+      !isRecord(target) ||
+      typeof target.targetKey !== "string" ||
+      typeof target.candidateId !== "string"
+    ) throw new Error("CANDIDATE_ADMISSION_STORE_INVALID");
+  }
+  for (const confirmation of value.confirmations) {
+    if (
+      !isRecord(confirmation) ||
+      typeof confirmation.authorizationId !== "string" ||
+      typeof confirmation.requestId !== "string" ||
+      typeof confirmation.routingToken !== "string" ||
+      !(confirmation.messageReference === null || isRecord(confirmation.messageReference))
+    ) throw new Error("CANDIDATE_ADMISSION_STORE_INVALID");
+    assertContract("authority-candidate", confirmation.candidate);
+    assertContract("candidate-review-artifact", confirmation.reviewArtifact);
+    if (confirmation.messageReference !== null) {
+      assertContract("approval-message-reference", confirmation.messageReference);
+    }
+  }
+  for (const receipt of value.receipts) {
+    if (
+      !isRecord(receipt) ||
+      typeof receipt.authorizationId !== "string" ||
+      typeof receipt.consumed !== "boolean" ||
+      typeof receipt.invalidated !== "boolean" ||
+      !(receipt.artifact === null || isRecord(receipt.artifact)) ||
+      !(receipt.finalization === null || isRecord(receipt.finalization))
+    ) throw new Error("CANDIDATE_ADMISSION_STORE_INVALID");
+    assertContract("decision-receipt", receipt.receipt);
+  }
+  return immutableCopy(value as unknown as CandidateAdmissionSnapshot);
+}
 
 const normalizeCandidateSourceMap = (
   authorization: DiscoveryAuthorization,
@@ -417,6 +542,8 @@ export class CandidateAdmissionService {
   readonly #createRoutingToken: () => string;
   readonly #authorityHead: CandidateAuthorityHeadPort;
   readonly #lifecycle: CandidateAdmissionServiceOptions["lifecycle"];
+  #persistence: CandidateAdmissionPersistencePort | undefined;
+  #persistentTransactionActive = false;
   readonly #instanceLifecycles = new Map<
     string,
     NonNullable<CandidateAdmissionServiceOptions["lifecycle"]>
@@ -439,6 +566,14 @@ export class CandidateAdmissionService {
       },
     };
     this.#lifecycle = options.lifecycle;
+    this.#persistence = options.persistence;
+  }
+
+  configurePersistence(persistence: CandidateAdmissionPersistencePort): void {
+    if (this.#persistentTransactionActive) {
+      throw new Error("CANDIDATE_ADMISSION_STORE_BUSY");
+    }
+    this.#persistence = persistence;
   }
 
   setInstanceLifecycleObserver(
@@ -454,6 +589,9 @@ export class CandidateAdmissionService {
   }
 
   authorizeDiscovery(input: DiscoveryAuthorizationInput): DiscoveryAuthorization {
+    if (!this.#persistentTransactionActive && this.#persistence !== undefined) {
+      return this.#withPersistentState(() => this.authorizeDiscovery(input));
+    }
     const grantedAt = this.#now().toISOString();
     if (Date.parse(input.expiresAt) <= Date.parse(grantedAt)) {
       throw new Error("DISCOVERY_AUTHORIZATION_NOT_FINITE");
@@ -483,6 +621,9 @@ export class CandidateAdmissionService {
   }
 
   endDiscovery(authorizationId: string): DiscoveryAuthorization {
+    if (!this.#persistentTransactionActive && this.#persistence !== undefined) {
+      return this.#withPersistentState(() => this.endDiscovery(authorizationId));
+    }
     const authorization = this.#authorizations.get(authorizationId);
     if (authorization === undefined || authorization.status !== "active") {
       throw new Error("DISCOVERY_AUTHORIZATION_NOT_ACTIVE");
@@ -503,6 +644,9 @@ export class CandidateAdmissionService {
   }
 
   createCandidate(input: CandidateRevisionInput): AuthorityCandidate {
+    if (!this.#persistentTransactionActive && this.#persistence !== undefined) {
+      return this.#withPersistentState(() => this.createCandidate(input));
+    }
     const authorization = this.#requireActiveAuthorization(input.authorizationId);
     this.#assertAuthorityBase({ ...input, instanceId: authorization.instance_id });
     if (!authorization.scope.candidate_types.includes(input.candidateType)) {
@@ -552,6 +696,9 @@ export class CandidateAdmissionService {
   }
 
   reviseCandidate(input: CandidateRewriteInput): AuthorityCandidate {
+    if (!this.#persistentTransactionActive && this.#persistence !== undefined) {
+      return this.#withPersistentState(() => this.reviseCandidate(input));
+    }
     const authorization = this.#requireActiveAuthorization(input.authorizationId);
     const revisions = this.#candidates.get(input.candidateId);
     const current = revisions?.at(-1);
@@ -587,6 +734,9 @@ export class CandidateAdmissionService {
   }
 
   prepareConfirmation(input: ConfirmationPreparationInput): ConfirmationPreparation {
+    if (!this.#persistentTransactionActive && this.#persistence !== undefined) {
+      return this.#withPersistentState(() => this.prepareConfirmation(input));
+    }
     if (input.channel !== "telegram") {
       return { status: "redirect_required", confirmedChannel: "telegram" };
     }
@@ -632,6 +782,7 @@ export class CandidateAdmissionService {
       authorizationId: input.authorizationId,
       requestId,
       candidate,
+      reviewArtifact: immutableCopy(reviewArtifact),
       routingToken,
       messageReference: null,
     });
@@ -644,6 +795,9 @@ export class CandidateAdmissionService {
   }
 
   bindConfirmationMessage(input: BindConfirmationMessageInput): void {
+    if (!this.#persistentTransactionActive && this.#persistence !== undefined) {
+      return this.#withPersistentState(() => this.bindConfirmationMessage(input));
+    }
     const request = this.#confirmationsByToken.get(input.routingToken);
     if (request === undefined) {
       throw new Error("CONFIRMATION_ROUTING_TOKEN_INVALID");
@@ -663,6 +817,9 @@ export class CandidateAdmissionService {
   }
 
   confirmationInstanceId(routingToken: string): string {
+    if (!this.#persistentTransactionActive && this.#persistence !== undefined) {
+      return this.#withPersistentState(() => this.confirmationInstanceId(routingToken));
+    }
     const request = this.#confirmationsByToken.get(routingToken);
     if (request === undefined) {
       throw new Error("CONFIRMATION_ROUTING_TOKEN_INVALID");
@@ -671,12 +828,18 @@ export class CandidateAdmissionService {
   }
 
   withdrawConfirmation(routingToken: string): void {
+    if (!this.#persistentTransactionActive && this.#persistence !== undefined) {
+      return this.#withPersistentState(() => this.withdrawConfirmation(routingToken));
+    }
     if (!this.#confirmationsByToken.delete(routingToken)) {
       throw new Error("CONFIRMATION_ROUTING_TOKEN_INVALID");
     }
   }
 
   decideConfirmation(input: ConfirmationDecisionInput): ConfirmationDecision {
+    if (!this.#persistentTransactionActive && this.#persistence !== undefined) {
+      return this.#withPersistentState(() => this.decideConfirmation(input));
+    }
     if (!isConfirmationAction(input.action)) {
       throw new Error("CONFIRMATION_ACTION_UNSUPPORTED");
     }
@@ -731,6 +894,8 @@ export class CandidateAdmissionService {
       receipt: stored,
       consumed: false,
       invalidated: false,
+      artifact: null,
+      finalization: null,
     });
     if (stored.decision !== "rejected") {
       (this.#instanceLifecycles.get(authorization.instance_id) ?? this.#lifecycle)
@@ -743,6 +908,10 @@ export class CandidateAdmissionService {
     candidateId: string,
     candidateRevision: number,
   ): DecisionReceipt {
+    if (!this.#persistentTransactionActive && this.#persistence !== undefined) {
+      return this.#withPersistentState(() =>
+        this.consumeApprovalReceiptForCandidate(candidateId, candidateRevision));
+    }
     for (const record of this.#receipts.values()) {
       if (
         !record.invalidated &&
@@ -764,6 +933,9 @@ export class CandidateAdmissionService {
   }
 
   consumeApprovalReceipt(input: ApprovalReceiptConsumptionInput): DecisionReceipt {
+    if (!this.#persistentTransactionActive && this.#persistence !== undefined) {
+      return this.#withPersistentState(() => this.consumeApprovalReceipt(input));
+    }
     const record = this.#receipts.get(input.receiptId);
     if (record === undefined || record.invalidated) {
       throw new Error("APPROVAL_RECEIPT_INVALID");
@@ -803,6 +975,82 @@ export class CandidateAdmissionService {
     }
     record.consumed = true;
     return record.receipt;
+  }
+
+  #withPersistentState<T>(operation: () => T): T {
+    const persistence = this.#persistence;
+    if (persistence === undefined) return operation();
+    return persistence.transact((stored) => {
+      this.#restoreSnapshot(parseCandidateAdmissionSnapshot(stored));
+      this.#persistentTransactionActive = true;
+      try {
+        const result = operation();
+        return { snapshot: this.#createSnapshot(), result };
+      } finally {
+        this.#persistentTransactionActive = false;
+      }
+    });
+  }
+
+  #createSnapshot(): CandidateAdmissionSnapshot {
+    return immutableCopy({
+      schemaVersion: "cognitive-runtime.candidate-admission-store/v1" as const,
+      authorizations: [...this.#authorizations.values()],
+      candidates: [...this.#candidates.entries()].map(([candidateId, revisions]) => ({
+        candidateId,
+        authorizationId: this.#candidateAuthorizations.get(candidateId) ?? "",
+        revisions,
+      })),
+      candidateTargets: [...this.#candidateIdsByTarget.entries()].map(
+        ([targetKey, candidateId]) => ({ targetKey, candidateId }),
+      ),
+      confirmations: [...this.#confirmationsByToken.values()],
+      receipts: [...this.#receipts.values()],
+    });
+  }
+
+  #restoreSnapshot(snapshot: CandidateAdmissionSnapshot): void {
+    this.#authorizations.clear();
+    this.#candidates.clear();
+    this.#candidateAuthorizations.clear();
+    this.#candidateIdsByTarget.clear();
+    this.#confirmationsByToken.clear();
+    this.#receipts.clear();
+    for (const authorization of snapshot.authorizations) {
+      this.#authorizations.set(authorization.authorization_id, immutableCopy(authorization));
+    }
+    for (const record of snapshot.candidates) {
+      if (
+        record.authorizationId.length === 0 ||
+        !this.#authorizations.has(record.authorizationId)
+      ) throw new Error("CANDIDATE_ADMISSION_STORE_INVALID");
+      this.#candidates.set(record.candidateId, immutableCopy(record.revisions));
+      this.#candidateAuthorizations.set(record.candidateId, record.authorizationId);
+    }
+    for (const target of snapshot.candidateTargets) {
+      if (!this.#candidates.has(target.candidateId)) {
+        throw new Error("CANDIDATE_ADMISSION_STORE_INVALID");
+      }
+      this.#candidateIdsByTarget.set(target.targetKey, target.candidateId);
+    }
+    for (const confirmation of snapshot.confirmations) {
+      if (
+        !this.#authorizations.has(confirmation.authorizationId) ||
+        this.#confirmationsByToken.has(confirmation.routingToken)
+      ) throw new Error("CANDIDATE_ADMISSION_STORE_INVALID");
+      this.#confirmationsByToken.set(confirmation.routingToken, {
+        ...immutableCopy(confirmation),
+      });
+    }
+    for (const receipt of snapshot.receipts) {
+      if (
+        !this.#authorizations.has(receipt.authorizationId) ||
+        this.#receipts.has(receipt.receipt.receipt_id)
+      ) throw new Error("CANDIDATE_ADMISSION_STORE_INVALID");
+      this.#receipts.set(receipt.receipt.receipt_id, {
+        ...immutableCopy(receipt),
+      });
+    }
   }
 
   #invalidateCandidateApprovals(candidateId: string): void {

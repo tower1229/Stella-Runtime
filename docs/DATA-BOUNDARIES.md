@@ -7,12 +7,20 @@ state. Crossing these boundaries changes authority semantics and is unsupported.
 | --- | --- | --- |
 | Runtime repository and npm package | Generic source, contracts, adapter, CLI, Skill, synthetic fixtures, compatibility evidence | Private identity, knowledge, conversations, credentials, live databases, real experience records |
 | Authority Repository | Private knowledge, identity, configuration, package pin, migration intent | Copied Runtime source or live Runtime databases |
-| Git-external Runtime State | Current State ledger/head, unfinished correction and outbox state, rebuildable projections, minimized overlays | Source-code authority or credentials |
+| Git-external Runtime State | Current State ledger/head, unfinished correction and outbox state, protected Candidate admission/Receipt records, rebuildable projections, minimized overlays | Source-code authority or credentials |
 
 The Authority Repository is the durable knowledge authority. A generation,
 registry, index, cache, or embedding is a disposable checksummed projection.
 Model output never promotes itself into Evidence, Semantic, Cognitive, or Current
 State authority.
+
+Discovery Authorization, Candidate revisions, Confirmation Requests, Telegram
+message bindings, decisions, and Approval Receipt consumption remain in the
+configured Runtime storage under `candidate-admission/`. The directory is mode
+`0700`, its SQLite database is mode `0600`, and publication serializes Receipt
+preparation/finalization with `BEGIN IMMEDIATE`. Telegram actor, account, chat,
+and message metadata may exist there, but must not enter Authority Git, public
+trace output, commit metadata, or the Runtime package.
 
 ## Recovery boundary
 

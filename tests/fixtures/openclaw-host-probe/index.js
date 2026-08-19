@@ -137,25 +137,23 @@ async function runConfirmationProbe() {
       },
     }),
   });
-  const receipt = service.consumeApprovalReceiptForCandidate(
-    candidate.candidate_id,
-    candidate.revision,
-  );
-  acceptedPublication = { candidate, receipt };
   record({ hook: "gateway_start_confirmation", dispatch, replies });
 }
 
 async function publishAcceptedCandidate(runtime, config) {
   const candidate = acceptedPublication?.candidate;
-  const receipt = acceptedPublication?.receipt;
-  if (candidate === undefined || receipt === undefined) {
+  if (candidate === undefined) {
     throw new Error("ACCEPTED_CANDIDATE_REQUIRED");
   }
   const authorityDirectory = config.adapters.authority_checkout;
-  const approvals = new runtime.FileApprovalPublicationStore({
-    directory: join(config.runtime_storage, "approval-publication"),
+  const approvals = new runtime.FileCandidateAdmissionStore({
+    directory: config.runtime_storage,
   });
-  await approvals.recordApproval({ receipt, candidate });
+  const approved = await approvals.loadApprovedCandidateRevision(
+    candidate.candidate_id,
+    candidate.revision,
+  );
+  const receipt = approved.receipt;
   const journal = new runtime.FilePublicationJournal({
     directory: join(config.runtime_storage, "publication-journal"),
   });

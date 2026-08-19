@@ -70,8 +70,8 @@ Read [Configuration reference](docs/CONFIGURATION.md).
 This repository and npm package contain generic Runtime code and synthetic data
 only. A separate private Authority Repository owns durable knowledge, identity,
 configuration, and migration intent. Git-external Runtime State owns Current
-State, unfinished corrections/outbox, minimized overlays, and rebuildable
-projections.
+State, unfinished corrections/outbox, protected Candidate admission and
+Approval Receipt records, minimized overlays, and rebuildable projections.
 
 Private data, credentials, live databases, Recovery Snapshots, conversations,
 real experience records, and Instance Test Packs must not enter this repository,
