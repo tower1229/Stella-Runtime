@@ -297,10 +297,6 @@ const plugin = {
           config: runtimeConfig,
           hostVersion: api.runtime.version,
           nodeVersion: process.versions.node,
-          expectedHostVersion: "2026.6.34",
-          expectedNodeVersions: /^(22\.(?:19|[2-9][0-9])\.|24\.)/.test(process.versions.node)
-            ? [process.versions.node]
-            : [],
           pluginDiscovered: () => runtimeHooksRegistered,
           hostCapabilities: async () => {
             if (

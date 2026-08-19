@@ -12,6 +12,7 @@ import type {
 import { atomicWriteFile } from "../core/persistence.js";
 import { validateContract } from "../contracts/index.js";
 import { verifyGeneration } from "../generation/index.js";
+import { resolveCompatibleHost } from "../compatibility/index.js";
 import {
   ACTIVATION_RECEIPTS_DIRECTORY,
   ACTIVE_GENERATION_POINTER_FILE,
@@ -149,12 +150,24 @@ export const loadActiveGenerationHealth = async (
   };
 };
 
-export const validateActiveReceipt = (
+export const validateActiveReceipt = async (
   active: ActiveGenerationHealthSnapshot,
   config: InstanceRuntimeConfig,
   hostVersion: string,
   nodeVersion: string,
-): ReceiptValidity => {
+): Promise<ReceiptValidity> => {
+  let compatibleHost;
+  try {
+    compatibleHost = await resolveCompatibleHost({
+      openclawVersion: hostVersion,
+      nodeVersion,
+    });
+  } catch {
+    return {
+      valid: false,
+      reasonCodes: [DRIFT_REASON_CODES.incompatibleHost],
+    };
+  }
   const projection = active.manifest.files.find((file) =>
     file.path === "projection-entries.json");
   const receipt = active.receipt;
@@ -171,13 +184,15 @@ export const validateActiveReceipt = (
     projection !== undefined &&
     receipt.projection_checksum === projection.checksum &&
     receipt.host_config_checksum === calculateRuntimeConfigIdentityChecksum(config) &&
+    receipt.release_channel === compatibleHost.releaseChannel &&
     receipt.openclaw_version === hostVersion &&
     receipt.node_version === nodeVersion;
   if (valid) return { valid: true, reasonCodes: [] };
   const configDrift = receipt.host_config_checksum !==
     calculateRuntimeConfigIdentityChecksum(config);
   const hostDrift = receipt.openclaw_version !== hostVersion ||
-    receipt.node_version !== nodeVersion;
+    receipt.node_version !== nodeVersion ||
+    receipt.release_channel !== compatibleHost.releaseChannel;
   return {
     valid: false,
     reasonCodes: [
@@ -229,7 +244,7 @@ export const inspectStoredGenerationStatus = async (input: {
   };
   try {
     const active = await loadActiveGenerationHealth(input.config);
-    const validity = validateActiveReceipt(
+    const validity = await validateActiveReceipt(
       active,
       input.config,
       input.hostVersion,
@@ -280,8 +295,6 @@ export interface RuntimeHealthOptions {
   readonly config: InstanceRuntimeConfig;
   readonly hostVersion: string;
   readonly nodeVersion: string;
-  readonly expectedHostVersion: string;
-  readonly expectedNodeVersions: readonly string[];
   readonly pluginDiscovered: () => boolean | Promise<boolean>;
   readonly hostCapabilities?: () => boolean | Promise<boolean>;
   readonly authority: {
@@ -430,11 +443,13 @@ export class RuntimeHealthMonitor {
         if (!await this.#options.pluginDiscovered()) throw new Error("PLUGIN_NOT_DISCOVERED");
       }, DRIFT_REASON_CODES.pluginDiscoveryFailed),
       this.#check("host_capabilities", async () => {
+        await resolveCompatibleHost({
+          openclawVersion: this.#options.hostVersion,
+          nodeVersion: this.#options.nodeVersion,
+        });
         if (
-          this.#options.hostVersion !== this.#options.expectedHostVersion ||
-          !this.#options.expectedNodeVersions.includes(this.#options.nodeVersion) ||
-          (this.#options.hostCapabilities !== undefined &&
-            !await this.#options.hostCapabilities())
+          this.#options.hostCapabilities !== undefined &&
+          !await this.#options.hostCapabilities()
         ) throw new Error("HOST_CAPABILITIES_INCOMPATIBLE");
       }, DRIFT_REASON_CODES.incompatibleHost),
       this.#check("config_identity", async () => {

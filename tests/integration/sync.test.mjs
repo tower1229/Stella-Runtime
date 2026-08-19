@@ -96,6 +96,7 @@ const installPriorActivation = async (config, sourceRevision) => {
       search_sentinel_checksum: checksum("7"),
       get_sentinel_checksum: checksum("8"),
     },
+    release_channel: "extended-stable",
     openclaw_version: "2026.6.34",
     node_version: process.versions.node,
     verified_at: "2026-08-17T00:00:00.000Z",
@@ -120,6 +121,39 @@ const installPriorActivation = async (config, sourceRevision) => {
   );
   return { built, pointer };
 };
+
+test("sync rejects an unsmoked Host before Host config, Receipt, or Pointer mutation", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-sync-incompatible-host-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = runtimeConfig(root);
+  await writeSyntheticAuthority(config.adapters.authority_checkout);
+  const sourceRevision = await commitSyntheticAuthority(config.adapters.authority_checkout);
+  const events = [];
+
+  await assert.rejects(syncGeneration({
+    config,
+    sourceRevision,
+    packageVersion: "0.2.0-test",
+    hostVersion: "2026.6.34",
+    nodeVersion: "24.17.0",
+    host: {
+      async capture() { events.push("capture"); return {}; },
+      async applyTarget() { events.push("apply"); },
+      async verifyTarget() { throw new Error("UNEXPECTED_VERIFY"); },
+      async restore() { events.push("restore"); },
+      async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
+    },
+    runs: runPort(events),
+  }), { message: "INCOMPATIBLE_HOST" });
+
+  assert.deepEqual(events, []);
+  await assert.rejects(stat(join(config.runtime_storage, "active-generation.json")), {
+    code: "ENOENT",
+  });
+  await assert.rejects(stat(join(config.runtime_storage, "activation-receipts")), {
+    code: "ENOENT",
+  });
+});
 
 test("sync builds a missing committed target and exposes its Pointer only after Host proof", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-sync-"));
@@ -186,6 +220,7 @@ test("sync builds a missing committed target and exposes its Pointer only after 
   ));
   assert.equal(receipt.generation_id, result.syncGeneration);
   assert.equal(receipt.source_revision, sourceRevision);
+  assert.equal(receipt.release_channel, "extended-stable");
   assert.equal(pointer.generation_id, result.syncGeneration);
   assert.equal(pointer.activation_receipt_id, receipt.receipt_id);
 });

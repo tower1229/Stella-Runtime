@@ -1,5 +1,10 @@
 export { runSelfCheck } from "./cli/index.js";
 export type { SelfCheckResult } from "./cli/index.js";
+export { resolveCompatibleHost } from "./compatibility/index.js";
+export type {
+  CompatibleHostIdentity,
+  HostCompatibilityInput,
+} from "./compatibility/index.js";
 export {
   DRIFT_REASON_CODES,
   inspectGenerationStatus,

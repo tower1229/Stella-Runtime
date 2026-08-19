@@ -1440,6 +1440,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
         search_sentinel_checksum: contractChecksum("3"),
         get_sentinel_checksum: contractChecksum("4"),
       },
+      release_channel: "extended-stable",
       openclaw_version: "2026.6.34",
       node_version: process.versions.node,
       verified_at: "2026-08-17T00:00:00.000Z",

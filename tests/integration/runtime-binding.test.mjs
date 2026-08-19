@@ -13,6 +13,7 @@ import plugin from "../../dist/openclaw/index.js";
 import { calculateRegistryChecksum } from "../../dist/router/index.js";
 import {
   calculateRuntimeConfigIdentityChecksum,
+  FileBindingCompiler,
 } from "../../dist/runtime/binding.js";
 import { buildGeneration } from "../../dist/generation/index.js";
 import { createStateManagementPort } from "../../dist/state/management.js";
@@ -130,6 +131,14 @@ const eligible = (runId) => ({
   messageProvider: "telegram",
   senderId: "owner-synthetic",
   chatId: "owner-synthetic",
+});
+
+test("Eligible Run binding rejects an engine-compatible Host absent from the matrix", async () => {
+  await assert.rejects(new FileBindingCompiler().compile({
+    config: config("enforce"),
+    hostVersion: "2026.6.34",
+    nodeVersion: "24.17.0",
+  }), { message: "INCOMPATIBLE_HOST" });
 });
 
 test("eligible Run compiles once and pins Generation and State View until cleanup", async () => {
@@ -379,6 +388,7 @@ test("filesystem compiler validates Pointer, Receipt, Manifest, Host identity, a
       search_sentinel_checksum: `sha256:${"3".repeat(64)}`,
       get_sentinel_checksum: `sha256:${"4".repeat(64)}`,
     },
+    release_channel: "extended-stable",
     openclaw_version: "2026.6.34",
     node_version: process.versions.node,
     verified_at: "2026-08-17T00:00:00.000Z",

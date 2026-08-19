@@ -42,10 +42,14 @@ Run synchronization only with the exact Host transition adapter available:
 openclaw cognitive sync --revision COMMITTED_AUTHORITY_SHA --json
 ```
 
-The command may build a missing deterministic Generation or reuse an existing
+The command first requires one exact release-channel/OpenClaw/Node row from the
+committed Compatibility Matrix; an engine-compatible but unlisted Node version
+fails with `INCOMPATIBLE_HOST` before any Host, Receipt, or Pointer mutation.
+It may then build a missing deterministic Generation or reuse an existing
 verified one. It closes the durable Maintenance Gate before draining Eligible
 Runs, applies and verifies the Host configuration, Projection, index, and
-search/get sentinels, then writes the Activation Receipt and switches the Active
+search/get sentinels, then writes the Activation Receipt bound to that exact
+matrix row and switches the Active
 Pointer last. Do not delete `maintenance-gate.json` or `sync-journal.json`
 manually after interruption; the next `sync` must first restore and verify the
 recorded prior Host state, or keep the Gate closed.

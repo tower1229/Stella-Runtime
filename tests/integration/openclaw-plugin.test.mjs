@@ -654,6 +654,67 @@ test("OpenClaw startup attempts interrupted sync recovery and keeps admission cl
   );
 });
 
+test("OpenClaw startup rejects an unlisted exact Host without Host mutation", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-openclaw-incompatible-startup-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const hooks = new Map();
+  const logs = [];
+  const hostMutations = [];
+
+  await plugin.register({
+    version: "0.2.0-test",
+    pluginConfig: { runtime: {
+      schema_version: "cognitive-runtime.instance-runtime-config/v2",
+      instance_id: "instance-synthetic",
+      mode: "enforce",
+      runtime_storage: join(root, "runtime"),
+      generation_storage: join(root, "generations"),
+      host: { agent_id: "main", eligible_scope: ["private_main_session"] },
+      authority_owner: { provider: "telegram", actor_id: "owner-synthetic" },
+      limits: { max_active_runs: 4, drain_timeout_ms: 30_000 },
+      adapters: {
+        authority_checkout: join(root, "authority"),
+        host_retrieval: "openclaw-memory",
+      },
+    } },
+    runtime: {
+      version: "2026.6.35",
+      llm: { complete: async () => ({}) },
+    },
+    on(name, handler) { hooks.set(name, handler); },
+    logger: { info() {}, warn(message) { logs.push(JSON.parse(message)); } },
+    cognitiveRuntimeHostTransition: {
+      async capture() { hostMutations.push("capture"); return {}; },
+      async applyTarget() { hostMutations.push("apply"); },
+      async verifyTarget() { hostMutations.push("verify"); throw new Error("UNEXPECTED_VERIFY"); },
+      async restore() { hostMutations.push("restore"); },
+      async verifyPrior() { hostMutations.push("verify-prior"); throw new Error("UNEXPECTED_VERIFY"); },
+    },
+    registerCli() {},
+  });
+
+  for (let attempt = 0; logs.length === 0 && attempt < 100; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  assert.deepEqual(hostMutations, []);
+  assert.ok(logs.some((entry) => entry.reasonCode === "INCOMPATIBLE_HOST"));
+  await assert.rejects(
+    hooks.get("before_prompt_build")(
+      { prompt: "blocked", messages: [] },
+      {
+        runId: "run-incompatible-startup",
+        sessionKey: "agent:main:telegram:direct:owner-synthetic",
+        agentId: "main",
+        trigger: "user",
+        messageProvider: "telegram",
+        senderId: "owner-synthetic",
+        chatId: "owner-synthetic",
+      },
+    ),
+    /COGNITIVE_BINDING_REJECTED:MAINTENANCE_GATE_CLOSED/,
+  );
+});
+
 test("OpenClaw recovery commands expose backup, read-only verify, and restore JSON", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-openclaw-recovery-"));
   t.after(() => rm(root, { recursive: true, force: true }));
