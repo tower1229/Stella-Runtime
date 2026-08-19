@@ -21,6 +21,10 @@ configured Runtime storage under `candidate-admission/`. The directory is mode
 preparation/finalization with `BEGIN IMMEDIATE`. Telegram actor, account, chat,
 and message metadata may exist there, but must not enter Authority Git, public
 trace output, commit metadata, or the Runtime package.
+Before publication claims a Receipt, workflow end, rewrite, or authorization
+expiry invalidates it. A successful prepare CAS durably claims one exact Change
+Set; later recovery may only finish that same publication and consume the
+Receipt, never rebind or invalidate it halfway through an Authority commit.
 
 ## Recovery boundary
 

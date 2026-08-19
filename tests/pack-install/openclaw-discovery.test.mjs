@@ -920,6 +920,8 @@ async function verifyExactHostGenerationConsumption({
   token,
   restartGateway,
 }) {
+  await restartGateway();
+  await waitForDeepGatewayProbe(environment);
   const priorBinding = await new runtime.FileBindingCompiler().compile({
     config: runtimeConfig,
     hostVersion: "2026.6.34",

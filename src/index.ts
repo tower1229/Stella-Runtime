@@ -30,15 +30,12 @@ export {
   calculateCognitiveAuthorityChecksum,
   CandidateAdmissionService,
   CONFIRMATION_ACTIONS,
-  emptyCandidateAdmissionSnapshot,
-  parseCandidateAdmissionSnapshot,
 } from "./admission/index.js";
 export type {
   ApprovalReceiptConsumptionInput,
   BindConfirmationMessageInput,
   CandidateAdmissionServiceOptions,
   CandidateAdmissionPersistencePort,
-  CandidateAdmissionSnapshot,
   CandidateAuthorityHead,
   CandidateAuthorityHeadPort,
   CandidateRewriteInput,

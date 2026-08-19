@@ -198,13 +198,14 @@ test("Telegram acceptance survives restart and the same Receipt publishes once a
     () => crashing.publish(input),
     /PROCESS_EXIT_BEFORE_AUTHORITY_WRITE/,
   );
+  createService(publicationStore).endDiscovery(opened.authorization.authorization_id);
 
   const recovered = await new ChangeSetPublicationCoordinator({
     journal: new FilePublicationJournal({ directory }),
     authority: authority.port,
     approvals: new FileCandidateAdmissionStore({
       directory,
-      now: () => new Date(instant),
+      now: () => new Date("2026-08-19T04:00:00.000Z"),
     }),
   }).recover(artifact.changeSet.change_set_id);
   assert.equal(recovered.sourceRevision, "a".repeat(40));
@@ -228,6 +229,61 @@ test("Telegram acceptance survives restart and the same Receipt publishes once a
     /APPROVAL_RECEIPT_ALREADY_CONSUMED/,
   );
 });
+
+for (const crashPoint of ["after_git_commit", "before_receipt_finalization"]) {
+  test(`persistent admission recovers exact publication from ${crashPoint}`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), `stella-persistent-${crashPoint}-`));
+    const store = new FileCandidateAdmissionStore({
+      directory,
+      now: () => new Date(instant),
+    });
+    const opened = openConfirmation(createService(store));
+    const decision = createService(store).decideConfirmation({
+      routingToken: opened.confirmation.routingToken,
+      action: "accept",
+      authorized: true,
+      senderId: "owner-private",
+      messageReference,
+    });
+    assert.equal(decision.status, "decided");
+    const approved = await store.loadApprovedCandidateRevision(
+      opened.candidate.candidate_id,
+      opened.candidate.revision,
+    );
+    const input = {
+      candidate: approved.candidate,
+      approvalReceipt: approved.receipt,
+      operations: operations(),
+    };
+    const artifact = createChangeSet(input);
+    const authority = createAuthority();
+    let crash = true;
+    await assert.rejects(
+      () => new ChangeSetPublicationCoordinator({
+        journal: new FilePublicationJournal({ directory }),
+        authority: authority.port,
+        approvals: store,
+        failpoint(point) {
+          if (crash && point === crashPoint) {
+            crash = false;
+            throw new Error(`PROCESS_EXIT:${crashPoint}`);
+          }
+        },
+      }).publish(input),
+      new RegExp(`PROCESS_EXIT:${crashPoint}`),
+    );
+    const recovered = await new ChangeSetPublicationCoordinator({
+      journal: new FilePublicationJournal({ directory }),
+      authority: authority.port,
+      approvals: new FileCandidateAdmissionStore({
+        directory,
+        now: () => new Date("2026-08-19T04:00:00.000Z"),
+      }),
+    }).recover(artifact.changeSet.change_set_id);
+    assert.equal(recovered.publicationStatus, "Published");
+    assert.equal(authority.state.commits, 1);
+  });
+}
 
 test("ended, rewritten, expired, and replayed confirmations remain invalid after restart", async () => {
   const endedDirectory = await mkdtemp(join(tmpdir(), "stella-persistent-ended-"));

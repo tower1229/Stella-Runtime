@@ -146,13 +146,6 @@ implements CandidateAdmissionPersistencePort, ApprovalPublicationPort {
       if (record === undefined || record.invalidated) {
         throw new Error("APPROVAL_RECEIPT_INVALID");
       }
-      const authorization = snapshot.authorizations.find((entry) =>
-        entry.authorization_id === record.authorizationId);
-      if (
-        authorization === undefined ||
-        authorization.status !== "active" ||
-        Date.parse(authorization.expires_at) <= this.#now().getTime()
-      ) throw new Error("APPROVAL_RECEIPT_INVALID");
       const candidate = snapshot.candidates
         .find((entry) => entry.candidateId === input.candidate.candidate_id)
         ?.revisions.find((entry) => entry.revision === input.candidate.revision);
@@ -167,6 +160,16 @@ implements CandidateAdmissionPersistencePort, ApprovalPublicationPort {
           ? "APPROVAL_RECEIPT_ALREADY_CONSUMED"
           : "APPROVAL_RECEIPT_ALREADY_PREPARED");
       }
+      if (record.artifact !== null) {
+        return { snapshot, result: undefined };
+      }
+      const authorization = snapshot.authorizations.find((entry) =>
+        entry.authorization_id === record.authorizationId);
+      if (
+        authorization === undefined ||
+        authorization.status !== "active" ||
+        Date.parse(authorization.expires_at) <= this.#now().getTime()
+      ) throw new Error("APPROVAL_RECEIPT_INVALID");
       return {
         snapshot: replaceReceipt(snapshot, input.receipt.receipt_id, {
           ...record,
@@ -190,13 +193,15 @@ implements CandidateAdmissionPersistencePort, ApprovalPublicationPort {
         !entry.invalidated &&
         !entry.consumed);
       if (record === undefined) throw new Error("APPROVAL_RECEIPT_INVALID");
-      const authorization = snapshot.authorizations.find((entry) =>
-        entry.authorization_id === record.authorizationId);
-      if (
-        authorization === undefined ||
-        authorization.status !== "active" ||
-        Date.parse(authorization.expires_at) <= this.#now().getTime()
-      ) throw new Error("APPROVAL_RECEIPT_INVALID");
+      if (record.artifact === null) {
+        const authorization = snapshot.authorizations.find((entry) =>
+          entry.authorization_id === record.authorizationId);
+        if (
+          authorization === undefined ||
+          authorization.status !== "active" ||
+          Date.parse(authorization.expires_at) <= this.#now().getTime()
+        ) throw new Error("APPROVAL_RECEIPT_INVALID");
+      }
       const candidate = snapshot.candidates
         .find((entry) => entry.candidateId === candidateId)
         ?.revisions.find((entry) => entry.revision === candidateRevision);
@@ -209,6 +214,41 @@ implements CandidateAdmissionPersistencePort, ApprovalPublicationPort {
         snapshot,
         result: { candidate, receipt: record.receipt },
       };
+    });
+  }
+
+  async listApprovedCandidateRevisions(
+    instanceId: string,
+  ): Promise<readonly ApprovedCandidateRevision[]> {
+    return this.transact((stored) => {
+      const snapshot = parseCandidateAdmissionSnapshot(stored);
+      const results: ApprovedCandidateRevision[] = [];
+      for (const record of snapshot.receipts) {
+        const authorization = snapshot.authorizations.find((entry) =>
+          entry.authorization_id === record.authorizationId);
+        if (
+          authorization?.instance_id !== instanceId ||
+          record.receipt.decision === "rejected" ||
+          record.invalidated ||
+          record.consumed ||
+          (record.artifact === null && (
+            authorization.status !== "active" ||
+            Date.parse(authorization.expires_at) <= this.#now().getTime()
+          ))
+        ) continue;
+        const candidate = snapshot.candidates
+          .find((entry) => entry.candidateId === record.receipt.candidate_id)
+          ?.revisions.find((entry) => entry.revision === record.receipt.candidate_revision);
+        if (
+          candidate === undefined ||
+          candidate.checksum !== record.receipt.candidate_checksum ||
+          candidate.base_authority_version !== record.receipt.base_authority_version
+        ) throw new Error("APPROVAL_RECORD_MISMATCH");
+        results.push({ candidate, receipt: record.receipt });
+      }
+      results.sort((left, right) =>
+        left.receipt.receipt_id.localeCompare(right.receipt.receipt_id));
+      return { snapshot, result: results };
     });
   }
 

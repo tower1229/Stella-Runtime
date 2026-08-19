@@ -180,7 +180,7 @@ export interface CandidateAdmissionServiceOptions {
 }
 
 export interface CandidateAdmissionSnapshot {
-  readonly schemaVersion: "cognitive-runtime.candidate-admission-store/v1";
+  readonly schemaVersion: "stella-runtime.candidate-admission-store/v1";
   readonly authorizations: readonly DiscoveryAuthorization[];
   readonly candidates: readonly {
     readonly candidateId: string;
@@ -211,7 +211,7 @@ export interface CandidateAdmissionSnapshot {
 
 export interface CandidateAdmissionPersistencePort {
   transact<T>(operation: (snapshot: unknown) => {
-    readonly snapshot: CandidateAdmissionSnapshot;
+    readonly snapshot: unknown;
     readonly result: T;
   }): T;
 }
@@ -396,7 +396,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 export const emptyCandidateAdmissionSnapshot = (): CandidateAdmissionSnapshot => ({
-  schemaVersion: "cognitive-runtime.candidate-admission-store/v1",
+  schemaVersion: "stella-runtime.candidate-admission-store/v1",
   authorizations: [],
   candidates: [],
   candidateTargets: [],
@@ -410,7 +410,7 @@ export function parseCandidateAdmissionSnapshot(
   if (value === null) return emptyCandidateAdmissionSnapshot();
   if (
     !isRecord(value) ||
-    value.schemaVersion !== "cognitive-runtime.candidate-admission-store/v1" ||
+    value.schemaVersion !== "stella-runtime.candidate-admission-store/v1" ||
     !Array.isArray(value.authorizations) ||
     !Array.isArray(value.candidates) ||
     !Array.isArray(value.candidateTargets) ||
@@ -636,7 +636,11 @@ export class CandidateAdmissionService {
       }
     }
     for (const receipt of this.#receipts.values()) {
-      if (receipt.authorizationId === authorizationId && !receipt.consumed) {
+      if (
+        receipt.authorizationId === authorizationId &&
+        !receipt.consumed &&
+        receipt.artifact === null
+      ) {
         receipt.invalidated = true;
       }
     }
@@ -943,6 +947,9 @@ export class CandidateAdmissionService {
     if (record.consumed) {
       throw new Error("APPROVAL_RECEIPT_ALREADY_CONSUMED");
     }
+    if (record.artifact !== null) {
+      throw new Error("APPROVAL_RECEIPT_ALREADY_PREPARED");
+    }
     let authorization: DiscoveryAuthorization;
     try {
       authorization = this.#requireActiveAuthorization(record.authorizationId);
@@ -994,7 +1001,7 @@ export class CandidateAdmissionService {
 
   #createSnapshot(): CandidateAdmissionSnapshot {
     return immutableCopy({
-      schemaVersion: "cognitive-runtime.candidate-admission-store/v1" as const,
+      schemaVersion: "stella-runtime.candidate-admission-store/v1" as const,
       authorizations: [...this.#authorizations.values()],
       candidates: [...this.#candidates.entries()].map(([candidateId, revisions]) => ({
         candidateId,
@@ -1060,7 +1067,11 @@ export class CandidateAdmissionService {
       }
     }
     for (const receipt of this.#receipts.values()) {
-      if (receipt.receipt.candidate_id === candidateId && !receipt.consumed) {
+      if (
+        receipt.receipt.candidate_id === candidateId &&
+        !receipt.consumed &&
+        receipt.artifact === null
+      ) {
         receipt.invalidated = true;
       }
     }
