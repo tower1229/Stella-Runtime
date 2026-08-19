@@ -1099,6 +1099,7 @@ async function verifyPackedUnsmokedHostGates({
   token,
   modelRequests,
   restartGateway,
+  readGatewayDiagnostics,
 }) {
   const matrixPath = join(pluginRoot, "compatibility", "openclaw.json");
   const originalMatrix = await readFile(matrixPath, "utf8");
@@ -1150,6 +1151,17 @@ async function verifyPackedUnsmokedHostGates({
       /INCOMPATIBLE_HOST/,
     );
     assert.deepEqual(incompatibleHealth.reasonCodes, ["INCOMPATIBLE_HOST"]);
+    let startupDiagnostics = "";
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      startupDiagnostics = readGatewayDiagnostics();
+      if (/"reasonCode":"INCOMPATIBLE_HOST"/.test(startupDiagnostics)) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.match(
+      startupDiagnostics,
+      /"reasonCode":"INCOMPATIBLE_HOST"/,
+      "the unsmoked Host did not reject startup recovery before admission",
+    );
 
     const requestStart = modelRequests.length;
     await run(
@@ -1834,6 +1846,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       token,
       modelRequests: modelServer.requests,
       restartGateway,
+      readGatewayDiagnostics: () => gateway?.diagnostics ?? "",
     });
     await verifyExactHostFailureRecovery({
       runtime: installedRuntime,
