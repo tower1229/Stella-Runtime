@@ -61,6 +61,18 @@ export interface CognitiveRuntimePluginApi {
     verify(): Promise<{ readonly adapterId: string }>;
   };
   readonly cognitiveRuntimeInstanceCutover?: OpenClawInstanceCutoverPort;
+  readonly registerGatewayMethod?: (
+    method: string,
+    handler: (context: {
+      readonly params: Readonly<Record<string, unknown>>;
+      respond(
+        ok: boolean,
+        result?: unknown,
+        error?: { readonly code: string; readonly message: string },
+      ): void;
+    }) => void | Promise<void>,
+    options?: { readonly scope?: "operator.admin" },
+  ) => void;
   registerCli(
     registrar: (context: { program: CliCommand }) => void | Promise<void>,
     options: { readonly descriptors: readonly CliDescriptor[] },

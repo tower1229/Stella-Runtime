@@ -270,13 +270,20 @@ test("only an exact authorized Telegram callback can issue a single-use Approval
     }),
     /APPROVAL_RECEIPT_CANDIDATE_MISMATCH/,
   );
-  service.consumeApprovalReceipt({
-    receiptId: decision.receipt.receipt_id,
-    candidateId: candidate.candidate_id,
-    candidateRevision: candidate.revision,
-    candidateChecksum: candidate.checksum,
-    baseAuthorityVersion: candidate.base_authority_version,
-  });
+  assert.deepEqual(
+    service.consumeApprovalReceiptForCandidate(
+      candidate.candidate_id,
+      candidate.revision,
+    ),
+    decision.receipt,
+  );
+  assert.throws(
+    () => service.consumeApprovalReceiptForCandidate(
+      candidate.candidate_id,
+      candidate.revision,
+    ),
+    /APPROVAL_RECEIPT_INVALID/,
+  );
   assert.throws(
     () => service.consumeApprovalReceipt({
       receiptId: decision.receipt.receipt_id,
@@ -402,6 +409,13 @@ test("reject cannot publish while an accepted rewritten revision is identified e
   assert.equal(rejection.status, "decided");
   assert.equal(rejection.receipt.decision, "rejected");
   assert.throws(
+    () => rejectedService.consumeApprovalReceiptForCandidate(
+      rejected.candidate.candidate_id,
+      rejected.candidate.revision,
+    ),
+    /APPROVAL_RECEIPT_INVALID/,
+  );
+  assert.throws(
     () => rejectedService.consumeApprovalReceipt({
       receiptId: rejection.receipt.receipt_id,
       candidateId: rejected.candidate.candidate_id,
@@ -452,6 +466,13 @@ test("reject cannot publish while an accepted rewritten revision is identified e
   assert.equal(decision.receipt.decision, "rewritten");
   assert.equal(decision.receipt.candidate_revision, 2);
   assert.equal(decision.receipt.candidate_checksum, rewritten.checksum);
+  assert.deepEqual(
+    rewrittenService.consumeApprovalReceiptForCandidate(
+      rewritten.candidate_id,
+      rewritten.revision,
+    ),
+    decision.receipt,
+  );
 });
 
 test("Candidate bases are checked against trusted Authority head state", () => {
@@ -538,13 +559,10 @@ test("Candidate bases are checked against trusted Authority head state", () => {
     checksum: `sha256:${"2".repeat(64)}`,
   };
   assert.throws(
-    () => service.consumeApprovalReceipt({
-      receiptId: decision.receipt.receipt_id,
-      candidateId: candidate.candidate_id,
-      candidateRevision: candidate.revision,
-      candidateChecksum: candidate.checksum,
-      baseAuthorityVersion: candidate.base_authority_version,
-    }),
+    () => service.consumeApprovalReceiptForCandidate(
+      candidate.candidate_id,
+      candidate.revision,
+    ),
     /APPROVAL_RECEIPT_INVALID/,
   );
 });
@@ -597,13 +615,10 @@ test("unconsumed Approval Receipts expire with their Discovery workflow", () => 
   assert.equal(decision.status, "decided");
   now = new Date("2026-08-14T02:00:00.000Z");
   assert.throws(
-    () => service.consumeApprovalReceipt({
-      receiptId: decision.receipt.receipt_id,
-      candidateId: candidate.candidate_id,
-      candidateRevision: candidate.revision,
-      candidateChecksum: candidate.checksum,
-      baseAuthorityVersion: candidate.base_authority_version,
-    }),
+    () => service.consumeApprovalReceiptForCandidate(
+      candidate.candidate_id,
+      candidate.revision,
+    ),
     /APPROVAL_RECEIPT_INVALID/,
   );
 });

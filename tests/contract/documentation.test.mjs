@@ -44,7 +44,8 @@ test("public documentation covers install, configuration, CLI, data, operations,
 test("exact-host evidence records the stable package acceptance command", async () => {
   const evidence = await read("docs/evidence/openclaw-2026.6.34.md");
 
-  assert.match(evidence, /Package version: `0\.1\.0`/);
+  assert.match(evidence, /Published package version: `0\.1\.0`/);
+  assert.match(evidence, /Accepted source target: `0\.2\.0` on Node\.js `24\.18\.0`/);
   assert.match(evidence, /npm run test:pack-install/);
   assert.match(evidence, /OpenClaw 2026\.6\.34 \(5c38f99\)/);
   assert.match(evidence, /synthetic/i);

@@ -5,8 +5,10 @@ explicit, versioned, traceable, and correctable knowledge to one host-owned Agen
 Run without turning model inference or generated projections into hidden
 authority.
 
-> Current release source: `0.1.0`. It supports only OpenClaw extended-stable
-> `2026.6.34`; compatibility is exact, not minimum-version based.
+> Current source target: `0.2.0`; the published stable release remains `0.1.0`.
+> Source compatibility is accepted only for OpenClaw extended-stable
+> `2026.6.34` on Node.js `24.18.0`; compatibility is exact, not minimum-version
+> based.
 
 ## What ships
 

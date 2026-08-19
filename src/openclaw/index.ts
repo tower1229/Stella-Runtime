@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 
 import { runSelfCheck } from "../cli/index.js";
 import type {
@@ -77,6 +79,47 @@ interface RecoveryPluginConfig {
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const execFileAsync = promisify(execFile);
+
+const callGatewaySync = async (
+  sourceRevision: string,
+  cutoverPlanPath?: string,
+): Promise<Readonly<Record<string, unknown>>> => {
+  const configuredBinary = process.env.OPENCLAW_BIN;
+  const command = configuredBinary ?? process.execPath;
+  const arguments_ = configuredBinary === undefined
+    ? [process.argv[1] ?? "", "gateway", "call", "cognitive-runtime.sync"]
+    : ["gateway", "call", "cognitive-runtime.sync"];
+  arguments_.push(
+    "--json",
+    "--timeout",
+    "120000",
+    "--params",
+    JSON.stringify({
+      sourceRevision,
+      ...(cutoverPlanPath === undefined ? {} : { cutoverPlanPath }),
+    }),
+  );
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync(command, arguments_, {
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    }));
+  } catch (error: unknown) {
+    const details = isRecord(error)
+      ? [error.message, error.stdout, error.stderr]
+          .filter((value): value is string => typeof value === "string")
+          .join("\n")
+      : String(error);
+    throw new Error(`SYNC_GATEWAY_CALL_FAILED:${details}`);
+  }
+  const parsed = JSON.parse(stdout) as unknown;
+  const result = isRecord(parsed) && isRecord(parsed.result) ? parsed.result : parsed;
+  if (!isRecord(result)) throw new Error("SYNC_GATEWAY_RESPONSE_INVALID");
+  return result;
+};
 
 const readStringOption = (
   options: Readonly<Record<string, unknown>>,
@@ -389,6 +432,94 @@ const plugin = {
         }));
       });
     }
+    const performSync = async (
+      sourceRevision: string,
+      cutoverPlan?: InstanceCutoverPlan,
+    ) => {
+      if (
+        runtimeConfig === null ||
+        runtimeController === null ||
+        hostTransition === undefined
+      ) {
+        throw new Error("SYNC_RUNTIME_PORTS_REQUIRED");
+      }
+      const result = await syncGeneration({
+        config: runtimeConfig,
+        sourceRevision,
+        packageVersion,
+        hostVersion: api.runtime.version,
+        nodeVersion: process.versions.node,
+        host: hostTransition,
+        runs: runtimeController,
+        ...(healthMonitor === null ? {} : { lifecycle: healthMonitor }),
+        ...(cutoverPlan === undefined ? {} : {
+          cutover: {
+            plan: cutoverPlan,
+            ...(api.cognitiveRuntimeCutoverPublication === undefined ? {} : {
+              publication: api.cognitiveRuntimeCutoverPublication,
+            }),
+            ...(api.cognitiveRuntimePublicCorpus === undefined ? {} : {
+              publicCorpus: api.cognitiveRuntimePublicCorpus,
+            }),
+          },
+        }),
+      });
+      await healthMonitor?.reconcile("sync");
+      return {
+        package_version: packageVersion,
+        source_revision: result.sourceRevision,
+        sync_generation: result.syncGeneration,
+        reused_generation: result.reusedGeneration,
+        receipt_path: result.receiptPath,
+        pointer_path: result.pointerPath,
+        ...(cutoverPlan === undefined ? {} : {
+          cutover_plan_checksum: cutoverPlan.checksum,
+        }),
+      };
+    };
+    api.registerGatewayMethod?.(
+      "cognitive-runtime.sync",
+      async ({ params, respond }) => {
+        try {
+          const sourceRevision = params.sourceRevision;
+          if (typeof sourceRevision !== "string" || sourceRevision.length === 0) {
+            throw new Error("SOURCE_REVISION_REQUIRED");
+          }
+          const cutoverPlanPath = params.cutoverPlanPath;
+          if (cutoverPlanPath !== undefined && typeof cutoverPlanPath !== "string") {
+            throw new Error("CUTOVER_PLAN_PATH_INVALID");
+          }
+          const cutoverPlan = cutoverPlanPath === undefined
+            ? undefined
+            : await readJsonFile<InstanceCutoverPlan>(cutoverPlanPath);
+          respond(true, await performSync(
+            sourceRevision,
+            cutoverPlan,
+          ));
+        } catch (error: unknown) {
+          respond(false, undefined, {
+            code: "COGNITIVE_SYNC_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+      { scope: "operator.admin" },
+    );
+    api.registerGatewayMethod?.(
+      "cognitive-runtime.reconcile",
+      async ({ respond }) => {
+        try {
+          if (healthMonitor === null) throw new Error("RUNTIME_HEALTH_UNAVAILABLE");
+          respond(true, await healthMonitor.reconcile("detected_drift"));
+        } catch (error: unknown) {
+          respond(false, undefined, {
+            code: "COGNITIVE_RECONCILIATION_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+      { scope: "operator.admin" },
+    );
     if (api.on !== undefined && api.pluginConfig?.recovery !== undefined) {
       const recoveryConfig = readRecoveryConfig(api.pluginConfig);
       api.on("before_prompt_build", async (_event, context) => {
@@ -507,50 +638,21 @@ const plugin = {
           .option("--json", "Emit a machine-readable result")
           .action(async (options) => {
             requireJson(options);
-            if (
-              runtimeConfig === null ||
-              runtimeController === null ||
-              hostTransition === undefined
-            ) {
-              throw new Error("SYNC_RUNTIME_PORTS_REQUIRED");
-            }
             const cutoverPlanPath = readOptionalString(options, "cutoverPlan");
-            const cutoverPlan = cutoverPlanPath === undefined
-              ? undefined
-              : await readJsonFile<InstanceCutoverPlan>(cutoverPlanPath);
-            const result = await syncGeneration({
-              config: runtimeConfig,
-              sourceRevision: readStringOption(options, "revision"),
-              packageVersion,
-              hostVersion: api.runtime.version,
-              nodeVersion: process.versions.node,
-              host: hostTransition,
-              runs: runtimeController,
-              ...(healthMonitor === null ? {} : { lifecycle: healthMonitor }),
-              ...(cutoverPlan === undefined ? {} : {
-                cutover: {
-                  plan: cutoverPlan,
-                  ...(api.cognitiveRuntimeCutoverPublication === undefined ? {} : {
-                    publication: api.cognitiveRuntimeCutoverPublication,
-                  }),
-                  ...(api.cognitiveRuntimePublicCorpus === undefined ? {} : {
-                    publicCorpus: api.cognitiveRuntimePublicCorpus,
-                  }),
-                },
-              }),
-            });
-            await healthMonitor?.reconcile("sync");
+            const result = api.registerGatewayMethod === undefined
+              ? await performSync(
+                  readStringOption(options, "revision"),
+                  cutoverPlanPath === undefined
+                    ? undefined
+                    : await readJsonFile<InstanceCutoverPlan>(cutoverPlanPath),
+                )
+              : await callGatewaySync(
+                  readStringOption(options, "revision"),
+                  cutoverPlanPath === undefined ? undefined : resolve(cutoverPlanPath),
+                );
             console.log(JSON.stringify({
               operation: "sync",
-              package_version: packageVersion,
-              source_revision: result.sourceRevision,
-              sync_generation: result.syncGeneration,
-              reused_generation: result.reusedGeneration,
-              receipt_path: result.receiptPath,
-              pointer_path: result.pointerPath,
-              ...(cutoverPlan === undefined ? {} : {
-                cutover_plan_checksum: cutoverPlan.checksum,
-              }),
+              ...result,
             }));
           });
 

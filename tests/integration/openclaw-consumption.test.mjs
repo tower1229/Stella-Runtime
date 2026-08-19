@@ -304,6 +304,7 @@ test("OpenClaw adapter proves deep status plus bound search and get sentinels", 
   let staleSearch = false;
   let searchPath = workspaceRelativePath;
   let statusPatch = {};
+  let getReloadFailures = 2;
   const adapter = new OpenClawGenerationConsumptionAdapter(config, {
     config: {
       current: () => ({
@@ -356,6 +357,10 @@ test("OpenClaw adapter proves deep status plus bound search and get sentinels", 
     async get(agentId, path) {
       assert.equal(agentId, "main");
       assert.equal(path, workspaceRelativePath);
+      if (getReloadFailures > 0) {
+        getReloadFailures -= 1;
+        throw new Error("OPENCLAW_GATEWAY_CONFIG_RELOAD_PENDING");
+      }
       return {
         path,
         text: document,
@@ -367,6 +372,8 @@ test("OpenClaw adapter proves deep status plus bound search and get sentinels", 
   });
 
   const evidence = await adapter.verifyTarget(target);
+
+  assert.equal(getReloadFailures, 0);
 
   assert.deepEqual(evidence, {
     deepStatus: "pass",
@@ -532,6 +539,8 @@ test("OpenClaw command adapter uses supported forced index, deep status, search,
       "call",
       "tools.invoke",
       "--json",
+      "--timeout",
+      "5000",
       "--params",
       JSON.stringify({
         name: "memory_get",

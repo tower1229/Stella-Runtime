@@ -2,7 +2,40 @@
 
 > Status: accepted first-host baseline
 > Exact build observed: `2026.6.34 (5c38f99)`
-> Package version: `0.1.0`
+> Published package version: `0.1.0`
+> Accepted source target: `0.2.0` on Node.js `24.18.0`
+
+## Runtime 0.2 Generation Consumption acceptance
+
+On 2026-08-18, the `0.2.0` source target passed the packed exact-host scenario
+against OpenClaw `2026.6.34 (5c38f99)` and Node.js `24.18.0`. The test installs a
+fresh npm tarball into an isolated profile and proves the following closed path:
+
+```text
+Discovery Authorization -> Candidate Revision -> Telegram callback
+  -> Change Set -> Git revision -> Generation build -> sync
+  -> deep index + path-bound search/get -> next Eligible Run context
+```
+
+The same acceptance covers ordinary conversation, ended authorization, changed
+base/checksum, unsupported channel, and natural-language approval rejection. It
+also injects Host configuration, index, search-sentinel, interruption,
+stale-Receipt, and config/index-drift failures, proving either prior-Generation
+restoration or a closed new-Run gate. A public de-identified CangHai Instance
+Test Pack verifies push-before-sync, legacy retrieval removal, `active-memory`
+disablement, matching `USER.md`/`MEMORY.md` Bootstrap targets, and independent
+Public Corpus continuity through the public Runner.
+
+Reproduce the repository evidence with:
+
+```bash
+npm test
+npm run test:pack-install
+npm run test:runner -- --instance-test-pack tests/fixtures/instance-packs/canghai-public
+```
+
+This acceptance does not claim that `0.2.0` is published. Registry, tag, Release,
+and production-instance gates remain separate delivery evidence.
 
 ## Stable package acceptance
 

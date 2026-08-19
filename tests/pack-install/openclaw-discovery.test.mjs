@@ -3,6 +3,7 @@ import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFile,
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -17,6 +18,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 import {
+  commitAuthorityChanges,
   commitSyntheticAuthority,
   writeSyntheticAuthority,
 } from "../helpers/synthetic-authority.mjs";
@@ -159,8 +161,13 @@ function sendOpenAiResponse(response, body, content, toolCall) {
 
 async function startSyntheticModelServer(port) {
   const requests = [];
+  const control = {
+    embeddingMode: "normal",
+    embeddingFailureCount: 0,
+    onEmbeddingRequest: undefined,
+  };
   const server = createServer(async (request, response) => {
-    if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
+    if (request.method !== "POST") {
       response.writeHead(404);
       response.end();
       return;
@@ -171,6 +178,37 @@ async function startSyntheticModelServer(port) {
     }
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     requests.push(body);
+    if (request.url === "/v1/embeddings") {
+      const inputs = Array.isArray(body.input) ? body.input : [body.input];
+      control.onEmbeddingRequest?.();
+      if (control.embeddingMode === "fail") {
+        control.embeddingFailureCount += 1;
+        response.writeHead(503, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "Synthetic embedding failure" } }));
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        object: "list",
+        model: body.model ?? "synthetic-embedding",
+        data: inputs.map((input, index) => ({
+          object: "embedding",
+          index,
+          embedding: control.embeddingMode === "search-miss"
+            && String(input).includes("generation-")
+            && !String(input).includes("\n")
+            ? [0, 1, 0, 0, 0, 0, 0, 0]
+            : [1, 0, 0, 0, 0, 0, 0, 0],
+        })),
+        usage: { prompt_tokens: inputs.length, total_tokens: inputs.length },
+      }));
+      return;
+    }
+    if (request.url !== "/v1/chat/completions") {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
     const latestUser = [...(body.messages ?? [])]
       .reverse()
       .find((message) => message.role === "user");
@@ -184,7 +222,27 @@ async function startSyntheticModelServer(port) {
       return;
     }
     if (latestUserContent.includes("Return exactly one Router Result JSON object.")) {
-      sendOpenAiResponse(response, body, JSON.stringify(routerResult()), undefined);
+      const result = latestUserContent.includes("ELIGIBLE_GENERATION_RUN")
+        ? {
+            ...routerResult(),
+            memory_route: "optional",
+            retrieval_plan: [{
+              layer: "semantic",
+              method: "direct_get",
+              target: "sem-synthetic-claim",
+              query: null,
+              purpose: "Use the prior activated semantic claim",
+            }, {
+              layer: "semantic",
+              method: "direct_get",
+              target: "sem-packed-accepted",
+              query: null,
+              purpose: "Use the newly published semantic claim",
+            }],
+            reason_codes: ["SYNTHETIC_ACTIVATED_GENERATION"],
+          }
+        : routerResult();
+      sendOpenAiResponse(response, body, JSON.stringify(result), undefined);
       return;
     }
     if (latestUserContent.includes("PLAIN_RUN_ABORT")) {
@@ -213,6 +271,7 @@ async function startSyntheticModelServer(port) {
   });
   return {
     requests,
+    control,
     close: () => new Promise((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     ),
@@ -289,6 +348,15 @@ async function stopGateway(gateway) {
   }
 }
 
+async function waitForGatewayProcessReady(gateway) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (gateway.diagnostics.includes("[gateway] ready")) return;
+    if (gateway.exitCode !== null || gateway.signalCode !== null) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`OPENCLAW_GATEWAY_READY_TIMEOUT\n${gateway.diagnostics}`);
+}
+
 async function readProbeEvidence(evidencePath, minimumAgentEnds) {
   let content = "";
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -304,6 +372,36 @@ async function readProbeEvidence(evidencePath, minimumAgentEnds) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`SYNTHETIC_HOST_PROBE_EVIDENCE_TIMEOUT\n${content}`);
+}
+
+async function waitForRuntimeHealth(runtimeStorage) {
+  let content = "";
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    content = await readFile(join(runtimeStorage, "runtime-health.json"), "utf8")
+      .catch(() => "");
+    if (content.length > 0 && JSON.parse(content).status === "pass") return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`RUNTIME_HEALTH_PASS_TIMEOUT\n${content}`);
+}
+
+async function waitForRuntimeHealthFailure(runtimeStorage, reasonPattern) {
+  let content = "";
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    content = await readFile(join(runtimeStorage, "runtime-health.json"), "utf8")
+      .catch(() => "");
+    if (content.length > 0) {
+      const health = JSON.parse(content);
+      if (
+        health.status === "fail"
+        && health.reasonCodes.some((reason) => reasonPattern.test(reason))
+      ) {
+        return health;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`RUNTIME_HEALTH_FAILURE_TIMEOUT\n${content}`);
 }
 
 async function verifyHostRouter(environment) {
@@ -322,6 +420,10 @@ async function verifyHostRouter(environment) {
 }
 
 async function runHostSuccessors(environment, evidencePath, port, token) {
+  const baselineEvidence = await readProbeEvidence(evidencePath, 0);
+  const baselineAgentEnds = baselineEvidence.filter(
+    (entry) => entry.hook === "agent_end",
+  ).length;
   await run("openclaw", ["cognitive-probe", "seed", "command"], {
     env: environment,
   });
@@ -349,7 +451,7 @@ async function runHostSuccessors(environment, evidencePath, port, token) {
       stderr: error.stderr ?? "",
     };
   }
-  await readProbeEvidence(evidencePath, 1);
+  await readProbeEvidence(evidencePath, baselineAgentEnds + 1);
   const commandResult = await run(
     "openclaw",
     [
@@ -364,7 +466,7 @@ async function runHostSuccessors(environment, evidencePath, port, token) {
     ],
     { env: environment },
   );
-  await readProbeEvidence(evidencePath, 2);
+  await readProbeEvidence(evidencePath, baselineAgentEnds + 2);
   await run("openclaw", ["cognitive-probe", "seed", "ui"], {
     env: environment,
   });
@@ -394,7 +496,7 @@ async function runHostSuccessors(environment, evidencePath, port, token) {
 
   let evidence;
   try {
-    evidence = await readProbeEvidence(evidencePath, 3);
+    evidence = await readProbeEvidence(evidencePath, baselineAgentEnds + 3);
   } catch (error) {
     throw new Error([
       error.message,
@@ -807,6 +909,337 @@ async function verifyPackedAdapters(pluginRoot, successors) {
   await verifyTelegramConfirmationGateway(runtime);
 }
 
+async function verifyExactHostGenerationConsumption({
+  runtime,
+  runtimeConfig,
+  sourceRevision,
+  environment,
+  evidencePath,
+  modelRequests,
+  port,
+  token,
+  restartGateway,
+}) {
+  const priorBinding = await new runtime.FileBindingCompiler().compile({
+    config: runtimeConfig,
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+  });
+  assert.equal(priorBinding.authorityRevision, sourceRevision);
+  assert.equal(
+    priorBinding.context.semanticClaims.some((claim) =>
+      claim.id === "sem-packed-accepted"),
+    false,
+  );
+  const { stdout: publicationOutput } = await run(
+    "openclaw",
+    [
+      "gateway",
+      "call",
+      "cognitive-probe.publish-accepted",
+      "--url",
+      `ws://127.0.0.1:${port}`,
+      "--token",
+      token,
+      "--json",
+      "--timeout",
+      "120000",
+    ],
+    { env: environment, timeout: 180_000 },
+  );
+  const publicationResponse = parseJsonOutput(publicationOutput);
+  const publication = publicationResponse.result ?? publicationResponse;
+  assert.equal(publication.publicationStatus, "Published");
+  assert.notEqual(publication.sourceRevision, sourceRevision);
+  const pointerBeforeSync = JSON.parse(await readFile(
+    join(runtimeConfig.runtime_storage, "active-generation.json"),
+    "utf8",
+  ));
+  assert.equal(pointerBeforeSync.source_revision, sourceRevision);
+
+  const { stdout: syncOutput, stderr: syncError } = await run(
+    "openclaw",
+    [
+      "cognitive",
+      "sync",
+      "--revision",
+      publication.sourceRevision,
+      "--json",
+    ],
+    { env: environment, timeout: 180_000 },
+  );
+  const activated = parseJsonOutput(syncOutput.length > 0 ? syncOutput : syncError);
+  assert.equal(activated.operation, "sync");
+  assert.equal(activated.source_revision, publication.sourceRevision);
+  const receipt = JSON.parse(await readFile(activated.receipt_path, "utf8"));
+  assert.equal(receipt.index_evidence.deep_status, "pass");
+  assert.match(receipt.index_evidence.search_sentinel_checksum, /^sha256:[a-f0-9]{64}$/);
+  assert.match(receipt.index_evidence.get_sentinel_checksum, /^sha256:[a-f0-9]{64}$/);
+  await restartGateway();
+  await waitForDeepGatewayProbe(environment);
+  await waitForRuntimeHealth(runtimeConfig.runtime_storage);
+
+  const result = await run(
+    "openclaw",
+    [
+      "agent",
+      "--agent",
+      "main",
+      "--channel",
+      "telegram",
+      "--to",
+      "+15555550123",
+      "--message",
+      "ELIGIBLE_GENERATION_RUN",
+      "--json",
+      "--timeout",
+      "15",
+    ],
+    { env: environment },
+  );
+  assert.match(result.stdout, /Synthetic host response/);
+  const evidence = await readProbeEvidence(evidencePath, 1);
+  const eligible = evidence.find((entry) => entry.hook === "eligible_generation_run");
+  assert.ok(eligible, JSON.stringify(evidence, null, 2));
+  assert.equal(eligible.agentId, "main");
+  assert.equal(eligible.trigger, "user");
+  assert.equal(eligible.messageProvider, "telegram");
+  assert.equal(eligible.senderId, "+15555550123");
+  assert.equal(eligible.chatId, "+15555550123");
+  assert.ok(modelRequests.some((request) =>
+    Array.isArray(request.messages)
+    && JSON.stringify(request.messages).includes("[semantic:sem-synthetic-claim]")
+    && JSON.stringify(request.messages).includes("Synthetic claims can be tested.")),
+  "next Eligible Run did not preserve the prior activated semantic claim");
+  assert.ok(modelRequests.some((request) =>
+    Array.isArray(request.messages)
+    && JSON.stringify(request.messages).includes("[semantic:sem-packed-accepted]")
+    && JSON.stringify(request.messages).includes(
+      "Packed approval reaches the next eligible Run.",
+    )),
+  "next Eligible Run did not consume the published semantic claim");
+  const binding = await new runtime.FileBindingCompiler().compile({
+    config: runtimeConfig,
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+  });
+  assert.equal(binding.syncGeneration, activated.sync_generation);
+  assert.equal(binding.authorityRevision, publication.sourceRevision);
+}
+
+async function verifyExactHostFailureRecovery({
+  runtime,
+  runtimeConfig,
+  authorityDirectory,
+  environment,
+  configPath,
+  modelServer,
+  restartGateway,
+  interruptGateway,
+}) {
+  const activePointer = JSON.parse(await readFile(
+    join(runtimeConfig.runtime_storage, "active-generation.json"),
+    "utf8",
+  ));
+  const assertPriorRestored = async () => {
+    await restartGateway();
+    await waitForDeepGatewayProbe(environment);
+    await waitForRuntimeHealth(runtimeConfig.runtime_storage);
+    const pointer = JSON.parse(await readFile(
+      join(runtimeConfig.runtime_storage, "active-generation.json"),
+      "utf8",
+    ));
+    assert.deepEqual(pointer, activePointer);
+    const binding = await new runtime.FileBindingCompiler().compile({
+      config: runtimeConfig,
+      hostVersion: "2026.6.34",
+      nodeVersion: process.versions.node,
+    });
+    assert.equal(binding.syncGeneration, activePointer.generation_id);
+  };
+  const commitFailureRevision = async (reason) => {
+    await writeFile(join(authorityDirectory, "failure-probe.txt"), `${reason}\n`);
+    return commitAuthorityChanges(authorityDirectory, `acceptance: ${reason}`);
+  };
+  const runFailedSync = async (revision, reasonPattern) => {
+    try {
+      await run(
+        "openclaw",
+        ["cognitive", "sync", "--revision", revision, "--json"],
+        { env: environment, timeout: 180_000 },
+      );
+      assert.fail("expected cognitive sync to fail");
+    } catch (error) {
+      const output = [error?.message, error?.stdout, error?.stderr]
+        .filter((value) => typeof value === "string")
+        .join("\n");
+      assert.match(output, reasonPattern);
+    }
+  };
+
+  const configRevision = await commitFailureRevision("host-config-mutation");
+  await chmod(dirname(configPath), 0o500);
+  try {
+    await runFailedSync(configRevision, /EACCES|permission denied/i);
+  } finally {
+    await chmod(dirname(configPath), 0o700);
+  }
+  await assertPriorRestored();
+
+  const indexRevision = await commitFailureRevision("host-index");
+  const failureCountBefore = modelServer.control.embeddingFailureCount;
+  modelServer.control.embeddingMode = "fail";
+  try {
+    await runFailedSync(indexRevision, /OPENCLAW_DEEP_STATUS_FAILED/);
+  } finally {
+    modelServer.control.embeddingMode = "normal";
+  }
+  assert.ok(modelServer.control.embeddingFailureCount > failureCountBefore);
+  await assertPriorRestored();
+
+  const searchRevision = await commitFailureRevision("search-sentinel");
+  const searchConfigText = await readFile(configPath, "utf8");
+  const searchConfig = JSON.parse(searchConfigText);
+  searchConfig.agents.list[0].memorySearch.query.minScore = 0.9;
+  searchConfig.agents.list[0].memorySearch.query.hybrid = { enabled: false };
+  searchConfig.agents.list[0].memorySearch.cache = { enabled: false };
+  await writeFile(configPath, `${JSON.stringify(searchConfig, null, 2)}\n`, { mode: 0o600 });
+  await restartGateway();
+  await waitForRuntimeHealth(runtimeConfig.runtime_storage);
+  modelServer.control.embeddingMode = "search-miss";
+  try {
+    await runFailedSync(searchRevision, /OPENCLAW_SEARCH_SENTINEL_MISSING/);
+  } finally {
+    modelServer.control.embeddingMode = "normal";
+    await writeFile(configPath, searchConfigText, { mode: 0o600 });
+  }
+  await assertPriorRestored();
+
+  const interruptionRevision = await commitFailureRevision("process-interruption");
+  let interruption;
+  const interrupted = new Promise((resolve, reject) => {
+    modelServer.control.onEmbeddingRequest = () => {
+      modelServer.control.onEmbeddingRequest = undefined;
+      interruption = interruptGateway().then(resolve, reject);
+    };
+  });
+  await runFailedSync(
+    interruptionRevision,
+    /ECONNRESET|ECONNREFUSED|socket.*closed|gateway.*closed|terminated/i,
+  );
+  await interrupted;
+  await interruption;
+  await assertPriorRestored();
+}
+
+async function verifyExactHostDriftGates({
+  runtimeConfig,
+  environment,
+  modelServer,
+  port,
+  token,
+}) {
+  const activePointer = JSON.parse(await readFile(
+    join(runtimeConfig.runtime_storage, "active-generation.json"),
+    "utf8",
+  ));
+  const receiptPath = join(
+    runtimeConfig.runtime_storage,
+    "activation-receipts",
+    `${activePointer.activation_receipt_id}.json`,
+  );
+  const originalReceipt = await readFile(receiptPath, "utf8");
+  const reconcileGateway = async () => {
+    await run(
+      "openclaw",
+      [
+        "gateway",
+        "call",
+        "cognitive-runtime.reconcile",
+        "--url",
+        `ws://127.0.0.1:${port}`,
+        "--token",
+        token,
+        "--json",
+        "--timeout",
+        "120000",
+      ],
+      { env: environment },
+    );
+  };
+  const callProbe = async (method) => {
+    await run(
+      "openclaw",
+      [
+        "gateway",
+        "call",
+        method,
+        "--url",
+        `ws://127.0.0.1:${port}`,
+        "--token",
+        token,
+        "--json",
+        "--timeout",
+        "120000",
+      ],
+      { env: environment },
+    );
+  };
+  const assertRunGated = async (reasonPattern, options = {}) => {
+    if (options.restart !== false) await restartGateway();
+    await waitForRuntimeHealthFailure(runtimeConfig.runtime_storage, reasonPattern);
+    const requestStart = modelServer.requests.length;
+    await run(
+      "openclaw",
+      [
+        "agent",
+        "--agent",
+        "main",
+        "--channel",
+        "telegram",
+        "--to",
+        "+15555550123",
+        "--message",
+        "ELIGIBLE_GENERATION_RUN",
+        "--json",
+        "--timeout",
+        "15",
+      ],
+      { env: environment },
+    );
+    assert.equal(
+      modelServer.requests.slice(requestStart).some((request) =>
+        JSON.stringify(request).includes("[semantic:sem-packed-accepted]")),
+      false,
+    );
+  };
+
+  const staleReceipt = JSON.parse(originalReceipt);
+  staleReceipt.generation_id = `generation-${"f".repeat(64)}`;
+  await writeFile(receiptPath, JSON.stringify(staleReceipt));
+  await reconcileGateway();
+  await assertRunGated(/STALE_RECEIPT/, { restart: false });
+  await writeFile(receiptPath, originalReceipt);
+  await reconcileGateway();
+  await waitForRuntimeHealth(runtimeConfig.runtime_storage);
+
+  const configDriftReceipt = JSON.parse(originalReceipt);
+  configDriftReceipt.host_config_checksum = `sha256:${"e".repeat(64)}`;
+  await writeFile(receiptPath, JSON.stringify(configDriftReceipt));
+  await reconcileGateway();
+  await assertRunGated(/CONFIG_DRIFT/, { restart: false });
+  await writeFile(receiptPath, originalReceipt);
+  await reconcileGateway();
+  await waitForRuntimeHealth(runtimeConfig.runtime_storage);
+
+  await callProbe("cognitive-probe.remove-retrieval-paths");
+  await reconcileGateway();
+  await assertRunGated(/INDEX_DRIFT/, { restart: false });
+  await callProbe("cognitive-probe.restore-retrieval-paths");
+  await reconcileGateway();
+  await waitForRuntimeHealth(runtimeConfig.runtime_storage);
+}
+
 test("packed runtime passes the exact OpenClaw host smoke and restores configuration", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-runtime-openclaw-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -820,7 +1253,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
   const token = ["synthetic", "gateway", "token"].join("-");
   const providerKey = ["synthetic", "provider", "credential"].join("-");
   const sessionKey = "agent:main:synthetic-smoke";
-  await mkdir(workspace, { recursive: true });
+  await mkdir(join(workspace, "memory"), { recursive: true });
   await writeFile(join(workspace, "MEMORY.md"), "# Synthetic memory\n", "utf8");
   const originalConfig = `${JSON.stringify({
     gateway: {
@@ -835,6 +1268,25 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
         model: { primary: "synthetic/synthetic-model" },
         timeoutSeconds: 30,
       },
+      list: [{
+        id: "main",
+        workspace,
+        model: { primary: "synthetic/synthetic-model" },
+        memorySearch: {
+          enabled: true,
+          sources: ["memory"],
+          provider: "openai-compatible",
+          model: "synthetic-embedding",
+          fallback: "none",
+          remote: {
+            baseUrl: `http://127.0.0.1:${modelPort}/v1`,
+            apiKey: providerKey,
+            batch: { enabled: false },
+          },
+          sync: { onSessionStart: false, onSearch: false, watch: false },
+          query: { minScore: 0 },
+        },
+      }],
     },
     models: {
       mode: "merge",
@@ -939,7 +1391,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       authorityDirectory,
       stateDirectory: generationState,
       sourceRevision,
-      packageVersion: "0.1.0",
+      packageVersion: "0.2.0",
     });
     const state = installedRuntime.createStateManagementPort({
       stateRoot: runtimeStorage,
@@ -954,10 +1406,10 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       runtime_storage: runtimeStorage,
       generation_storage: join(generationState, "generations"),
       host: { agent_id: "main", eligible_scope: ["private_main_session"] },
-      authority_owner: { provider: "telegram", actor_id: "owner-synthetic" },
+      authority_owner: { provider: "telegram", actor_id: "+15555550123" },
       limits: { max_active_runs: 8, drain_timeout_ms: 60_000 },
       adapters: {
-        authority_checkout: "authority-local",
+        authority_checkout: authorityDirectory,
         host_retrieval: "openclaw-memory",
       },
     };
@@ -1092,6 +1544,50 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
 
     gateway = spawnGateway(port, token, environment);
     await waitForDeepGatewayProbe(environment);
+    const restartGateway = async () => {
+      if (gateway !== undefined) await stopGateway(gateway);
+      gateway = spawnGateway(port, token, environment);
+      try {
+        await waitForGatewayProcessReady(gateway);
+      } catch (error) {
+        throw new Error([
+          error.stderr ?? String(error),
+          `GATEWAY_DIAGNOSTICS=${gateway.diagnostics}`,
+        ].join("\n"));
+      }
+    };
+    const interruptGateway = async () => {
+      if (gateway !== undefined) await stopGateway(gateway);
+      gateway = undefined;
+    };
+    await verifyExactHostGenerationConsumption({
+      runtime: installedRuntime,
+      runtimeConfig,
+      sourceRevision,
+      environment,
+      evidencePath,
+      modelRequests: modelServer.requests,
+      port,
+      token,
+      restartGateway,
+    });
+    await verifyExactHostFailureRecovery({
+      runtime: installedRuntime,
+      runtimeConfig,
+      authorityDirectory,
+      environment,
+      configPath,
+      modelServer,
+      restartGateway,
+      interruptGateway,
+    });
+    await verifyExactHostDriftGates({
+      runtimeConfig,
+      environment,
+      modelServer,
+      port,
+      token,
+    });
     const successors = await runHostSuccessors(
       environment,
       evidencePath,
@@ -1115,7 +1611,8 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
     );
     assert.equal(
       modelServer.requests.some((request) =>
-        JSON.stringify(request).includes("[current_input]")),
+        JSON.stringify(request).includes("PLAIN_RUN")
+        && JSON.stringify(request).includes("[current_input]")),
       false,
       "the CLI operational probe must not receive a private cognitive packet",
     );

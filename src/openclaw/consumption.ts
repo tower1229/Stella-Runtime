@@ -180,6 +180,8 @@ export class OpenClawCliRetrievalCommands implements OpenClawRetrievalCommands {
         "call",
         "tools.invoke",
         "--json",
+        "--timeout",
+        "5000",
         "--params",
         JSON.stringify({
           name: "memory_get",
@@ -389,6 +391,25 @@ const getSentinelChecksum = (
   return checksum(JSON.stringify({ path, text, from, lines }));
 };
 
+const getAfterHostReload = async (
+  commands: OpenClawRetrievalCommands,
+  agentId: string,
+  path: string,
+): Promise<unknown> => {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await commands.get(agentId, path);
+    } catch (error: unknown) {
+      lastError = error;
+      if (attempt < 2) {
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+      }
+    }
+  }
+  throw lastError;
+};
+
 const parseSnapshot = (
   value: HostSnapshot,
   config: InstanceRuntimeConfig,
@@ -591,7 +612,11 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
       workspaceDirectory,
     );
     const getChecksum = getSentinelChecksum(
-      await this.#commands.get(this.#config.host.agent_id, search.path),
+      await getAfterHostReload(
+        this.#commands,
+        this.#config.host.agent_id,
+        search.path,
+      ),
       search.path,
       target,
       sentinel,

@@ -2,10 +2,13 @@
 
 ## Supported matrix
 
-Version `0.1.0` supports only OpenClaw release channel `extended-stable`, exact
-version `2026.6.34`. The committed compatibility manifest and synthetic host
-smoke evidence are normative. No version range, later version, or rolling
-documentation implies support.
+Published version `0.1.0` supports only OpenClaw release channel
+`extended-stable`, exact version `2026.6.34`. The `0.2.0` source target has
+passed packed Generation Consumption acceptance only on exact OpenClaw
+`2026.6.34` with Node.js `24.18.0`; this is source evidence, not a publication
+claim. The committed compatibility manifest and synthetic host smoke evidence
+are normative. No version range, later version, or rolling documentation implies
+support.
 
 Node.js support is `^22.19.0 || ^24.0.0`. The public contracts under
 `cognitive-runtime.<contract>/v2` remain compatible unless a versioned migration

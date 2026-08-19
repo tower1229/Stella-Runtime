@@ -24,6 +24,12 @@ Versioning; cognitive contract namespaces remain independently versioned.
   consumer-owned remote publication prerequisites, same-Barrier legacy path and
   mechanism removal, target-Generation Bootstrap deployment, independent Public
   Corpus continuity evidence, and a public de-identified CangHai fixture.
+- accepts the packed `0.2.0` source target on exact OpenClaw `2026.6.34` and
+  Node.js `24.18.0`, proving deterministic Telegram approval through Git
+  publication, Generation sync, Host index/search/get, restart continuity, and
+  next-Eligible-Run consumption, plus fail-closed recovery and drift gates.
+- adds a public de-identified CangHai Instance Test Pack that the public Runner
+  executes without exposing private instance state.
 
 ## [0.1.0] - 2026-08-13
 

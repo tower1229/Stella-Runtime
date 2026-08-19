@@ -1,13 +1,19 @@
 import { appendFileSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
 const evidencePath = process.env.STELLA_RUNTIME_PROBE_EVIDENCE;
 const runtimeRoot = process.env.STELLA_RUNTIME_PROBE_ROOT;
 const databasePath = process.env.STELLA_RUNTIME_PROBE_DATABASE;
 const sessionKey = process.env.STELLA_RUNTIME_PROBE_SESSION_KEY;
 const activeRuns = new Map();
+const execFileAsync = promisify(execFile);
+let acceptedPublication;
+let savedRetrievalPaths;
 const contractChecksum = (digit) => `sha256:${digit.repeat(64)}`;
 
 function record(entry) {
@@ -20,6 +26,9 @@ function record(entry) {
 function runKind(prompt) {
   if (prompt.includes("MEMORY_RUN")) {
     return "memory";
+  }
+  if (prompt.includes("ELIGIBLE_GENERATION_RUN")) {
+    return "eligible_generation";
   }
   if (prompt.includes("PLAIN_RUN_RETRY")) {
     return "command_retry";
@@ -40,6 +49,15 @@ async function loadRuntime() {
   return import(pathToFileURL(join(runtimeRoot, "dist", "index.js")).href);
 }
 
+function readConfiguredRuntime(api) {
+  const config = api.runtime.config.current();
+  const runtimeConfig = config.plugins?.entries?.["cognitive-runtime"]?.config?.runtime;
+  if (runtimeConfig === undefined) {
+    throw new Error("STELLA_RUNTIME_PROBE_CONFIG_REQUIRED");
+  }
+  return runtimeConfig;
+}
+
 async function runConfirmationProbe() {
   const runtime = await loadRuntime();
   runtime.configureOpenClawCandidateAuthorityHead({
@@ -58,13 +76,14 @@ async function runConfirmationProbe() {
   const candidate = service.createCandidate({
     authorizationId: authorization.authorization_id,
     candidateType: "semantic",
-    stableId: "semantic-host-probe",
+    stableId: "sem-packed-accepted",
     baseAuthorityVersion: null,
     baseChecksum: null,
     baseContent: null,
-    content: { claim: "Exact Host callback claim." },
+    content: { claim: "Packed approval reaches the next eligible Run." },
     sourceMap: [{ sourceRef: "source-host-probe", contentPath: "body" }],
   });
+  acceptedPublication = { candidate };
   let presented;
   await runtime.presentTelegramConfirmation({
     service,
@@ -118,7 +137,89 @@ async function runConfirmationProbe() {
       },
     }),
   });
+  const receipt = service.consumeApprovalReceiptForCandidate(
+    candidate.candidate_id,
+    candidate.revision,
+  );
+  acceptedPublication = { candidate, receipt };
   record({ hook: "gateway_start_confirmation", dispatch, replies });
+}
+
+async function publishAcceptedCandidate(runtime, config) {
+  const candidate = acceptedPublication?.candidate;
+  const receipt = acceptedPublication?.receipt;
+  if (candidate === undefined || receipt === undefined) {
+    throw new Error("ACCEPTED_CANDIDATE_REQUIRED");
+  }
+  const authorityDirectory = config.adapters.authority_checkout;
+  const approvals = new runtime.FileApprovalPublicationStore({
+    directory: join(config.runtime_storage, "approval-publication"),
+  });
+  await approvals.recordApproval({ receipt, candidate });
+  const journal = new runtime.FilePublicationJournal({
+    directory: join(config.runtime_storage, "publication-journal"),
+  });
+  let committed;
+  const expectedTreeChecksum = contractChecksum("b");
+  const authority = {
+    async inspectCheckout() {
+      const { stdout } = await execFileAsync("git", ["status", "--porcelain"], {
+        cwd: authorityDirectory,
+      });
+      return { kind: "dedicated", clean: stdout.length === 0 };
+    },
+    async validatePublication() {
+      return {
+        completeEntity: true,
+        baseMatches: true,
+        schemaValid: true,
+        referencesValid: true,
+        targetChecksumsValid: true,
+        expectedTreeChecksum,
+      };
+    },
+    async findCommit(changeSet) {
+      return committed?.changeSetId === changeSet.change_set_id ? committed : null;
+    },
+    async commitPublication({ changeSet, operations, metadata }) {
+      for (const operation of operations) {
+        const path = join(authorityDirectory, operation.path);
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, operation.content);
+      }
+      await execFileAsync("git", ["add", "."], { cwd: authorityDirectory });
+      await execFileAsync("git", ["commit", "-m", metadata.subject], {
+        cwd: authorityDirectory,
+      });
+      const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+        cwd: authorityDirectory,
+      });
+      committed = {
+        changeSetId: changeSet.change_set_id,
+        changeSetChecksum: changeSet.checksum,
+        commitId: stdout.trim(),
+        sourceRevision: stdout.trim(),
+        treeChecksum: expectedTreeChecksum,
+      };
+      return committed;
+    },
+  };
+  const content = `---\nschema_version: cognitive-runtime.semantic/v2\nclaim_id: sem-packed-accepted\nrecord_type: fact\naliases: []\nscope: { contexts: [review], conditions: [] }\nvalid_time: { from: 2026-08-18, to: null }\nepistemic: user_explicit\nconfidence: high\nsource_refs: [src-synthetic-note]\nrelated_claims: []\nsupersedes: []\ncreated_at: 2026-08-18\nupdated_at: 2026-08-18\n---\nPacked approval reaches the next eligible Run.\n`;
+  const coordinator = new runtime.ChangeSetPublicationCoordinator({
+    journal,
+    authority,
+    approvals,
+  });
+  return coordinator.publish({
+    candidate,
+    approvalReceipt: receipt,
+    operations: [{
+      operation: "write",
+      path: "semantic/sem-packed-accepted/claim.md",
+      content,
+      contentChecksum: runtime.calculatePublicationContentChecksum(content),
+    }],
+  });
 }
 
 async function openStore() {
@@ -171,10 +272,94 @@ const plugin = {
   name: "Cognitive Runtime Synthetic Host Probe",
   description: "Synthetic exact-host probe for Stella Runtime pack-install tests",
   register(api) {
+    api.registerGatewayMethod(
+      "cognitive-probe.publish-accepted",
+      async ({ respond }) => {
+        try {
+          const runtime = await loadRuntime();
+          const config = readConfiguredRuntime(api);
+          respond(true, await publishAcceptedCandidate(runtime, config));
+        } catch (error) {
+          respond(false, undefined, {
+            code: "CANDIDATE_PUBLICATION_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+      { scope: "operator.admin" },
+    );
+    api.registerGatewayMethod(
+      "cognitive-probe.remove-retrieval-paths",
+      async ({ respond }) => {
+        try {
+          await api.runtime.config.mutateConfigFile({
+            afterWrite: { mode: "auto" },
+            mutate(draft) {
+              const agent = draft.agents?.list?.find((entry) => entry.id === "main");
+              if (agent?.memorySearch === undefined) {
+                throw new Error("HOST_RETRIEVAL_CONFIG_REQUIRED");
+              }
+              savedRetrievalPaths = [...(agent.memorySearch.extraPaths ?? [])];
+              agent.memorySearch.extraPaths = [];
+            },
+          });
+          respond(true, { removed: true });
+        } catch (error) {
+          respond(false, undefined, {
+            code: "HOST_RETRIEVAL_MUTATION_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+      { scope: "operator.admin" },
+    );
+    api.registerGatewayMethod(
+      "cognitive-probe.restore-retrieval-paths",
+      async ({ respond }) => {
+        try {
+          if (savedRetrievalPaths === undefined) {
+            throw new Error("HOST_RETRIEVAL_SNAPSHOT_REQUIRED");
+          }
+          await api.runtime.config.mutateConfigFile({
+            afterWrite: { mode: "auto" },
+            mutate(draft) {
+              const agent = draft.agents?.list?.find((entry) => entry.id === "main");
+              if (agent?.memorySearch === undefined) {
+                throw new Error("HOST_RETRIEVAL_CONFIG_REQUIRED");
+              }
+              agent.memorySearch.extraPaths = [...savedRetrievalPaths];
+            },
+          });
+          savedRetrievalPaths = undefined;
+          respond(true, { restored: true });
+        } catch (error) {
+          respond(false, undefined, {
+            code: "HOST_RETRIEVAL_RESTORE_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+      { scope: "operator.admin" },
+    );
     api.on("gateway_start", runConfirmationProbe);
     api.on("before_prompt_build", async (event, context) => {
       const kind = runKind(event.prompt);
       if (context.runId === undefined || kind === "other") {
+        return;
+      }
+      if (kind === "eligible_generation") {
+        context.senderId ??= "+15555550123";
+        context.chatId ??= "+15555550123";
+        record({
+          hook: "eligible_generation_run",
+          runId: context.runId,
+          sessionKey: context.sessionKey,
+          agentId: context.agentId,
+          trigger: context.trigger,
+          messageProvider: context.messageProvider,
+          senderId: context.senderId,
+          chatId: context.chatId,
+        });
         return;
       }
       if (activeRuns.has(context.runId)) {
@@ -214,7 +399,7 @@ const plugin = {
         nestedCompletionKeys: Object.keys(nestedCompletion).sort(),
       });
       return { prependContext: "[synthetic_probe_injection]" };
-    });
+    }, { priority: 100 });
     api.on("after_tool_call", (event, context) => {
       record({
         hook: "after_tool_call",

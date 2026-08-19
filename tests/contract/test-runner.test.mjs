@@ -50,6 +50,50 @@ test("Runner executes an optional external Instance Test Pack", async (t) => {
   assert.equal(await readFile(instanceMarker, "utf8"), "yes");
 });
 
+test("Runner drives the public deidentified CangHai Instance Test Pack", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "stella-runtime-canghai-pack-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repositoryTests = path.join(root, "repository-tests");
+  const receiptPath = path.join(root, "canghai-receipt.json");
+  await mkdir(path.join(repositoryTests, "unit"), { recursive: true });
+  await writeFile(
+    path.join(repositoryTests, "unit", "repository.test.mjs"),
+    `import test from "node:test"; test("repository gate", () => {});\n`,
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      new URL("../../dist/testing/runner.js", import.meta.url).pathname,
+      "--repository-test-root",
+      repositoryTests,
+      "--instance-test-pack",
+      new URL("../fixtures/instance-packs/canghai-public", import.meta.url).pathname,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(([key]) => key !== "NODE_TEST_CONTEXT"),
+        ),
+        STELLA_RUNTIME_PUBLIC_PACK_RECEIPT: receiptPath,
+      },
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /INSTANCE_TEST_PACK_PASSED/);
+  assert.deepEqual(JSON.parse(await readFile(receiptPath, "utf8")), {
+    status: "pass",
+    planId: "cutover-canghai-public",
+    pushBeforeSync: true,
+    legacyRemoval: true,
+    activeMemoryDisabled: true,
+    bootstrapTargets: ["USER.md", "MEMORY.md"],
+    publicCorpusAdapter: "canghai-public-corpus",
+  });
+});
+
 test("Runner emits only a bounded receipt for a failing external Instance Test Pack", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "stella-runtime-runner-private-"));
   t.after(() => rm(root, { recursive: true, force: true }));

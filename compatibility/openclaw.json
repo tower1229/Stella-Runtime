@@ -1,11 +1,25 @@
 {
   "schemaVersion": "cognitive-runtime.openclaw-compatibility/v2",
-  "packageVersion": "0.1.0",
+  "packageVersion": "0.2.0",
   "hosts": [
     {
       "releaseChannel": "extended-stable",
       "openclawVersion": "2026.6.34",
+      "nodeVersion": "24.18.0",
       "evidence": "docs/evidence/openclaw-2026.6.34.md",
+      "generationConsumptionAcceptance": {
+        "status": "passed",
+        "profile": "packed-exact-host",
+        "scenarios": [
+          "approved-publication-to-next-eligible-run",
+          "host-config-mutation-failure",
+          "index-failure",
+          "search-sentinel-failure",
+          "process-interruption",
+          "stale-receipt",
+          "config-or-index-drift"
+        ]
+      },
       "capabilityExpectations": {
         "typedHooks": {
           "status": "required",

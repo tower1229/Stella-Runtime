@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
@@ -113,6 +113,57 @@ test("OpenClaw discovers cognitive self-check through the plugin entry", async (
   assert.deepEqual(output, [
     '{"status":"ok","pluginId":"cognitive-runtime","hostCapabilities":{"hostModelCompletion":"llm.complete"}}',
   ]);
+});
+
+test("OpenClaw resolves a relative cutover plan before proxying sync to Gateway", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-openclaw-sync-proxy-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const capturePath = join(root, "gateway-arguments.json");
+  const binaryPath = join(root, "openclaw-proxy.mjs");
+  const planPath = join(root, "plan.json");
+  await writeFile(planPath, "{}\n");
+  await writeFile(binaryPath, [
+    "#!/usr/bin/env node",
+    'import { writeFileSync } from "node:fs";',
+    `writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify(process.argv.slice(2)));`,
+    'process.stdout.write(JSON.stringify({ result: { source_revision: "revision-synthetic" } }));',
+  ].join("\n"));
+  await chmod(binaryPath, 0o700);
+  const priorOpenClawBin = process.env.OPENCLAW_BIN;
+  process.env.OPENCLAW_BIN = binaryPath;
+  t.after(() => {
+    if (priorOpenClawBin === undefined) delete process.env.OPENCLAW_BIN;
+    else process.env.OPENCLAW_BIN = priorOpenClawBin;
+  });
+  const program = new FakeCommand();
+  await plugin.register({
+    runtime: {
+      version: "2026.6.34",
+      llm: { complete: async () => ({}) },
+    },
+    registerGatewayMethod() {},
+    registerCli(registrar) { return registrar({ program }); },
+  });
+  const output = [];
+  const originalLog = console.log;
+  console.log = (value) => output.push(JSON.parse(value));
+  try {
+    await program.children.get("cognitive").children.get("sync").handler({
+      revision: "revision-synthetic",
+      cutoverPlan: relative(process.cwd(), planPath),
+      json: true,
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  const arguments_ = JSON.parse(await readFile(capturePath, "utf8"));
+  const paramsIndex = arguments_.indexOf("--params");
+  assert.notEqual(paramsIndex, -1);
+  assert.deepEqual(JSON.parse(arguments_[paramsIndex + 1]), {
+    sourceRevision: "revision-synthetic",
+    cutoverPlanPath: planPath,
+  });
+  assert.equal(output[0].operation, "sync");
 });
 
 test("OpenClaw exposes validate, build, generation show, and the full sync Barrier", async (t) => {

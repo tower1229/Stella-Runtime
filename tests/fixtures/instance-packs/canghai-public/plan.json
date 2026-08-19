@@ -1,0 +1,16 @@
+{
+  "schema_version": "cognitive-runtime.instance-cutover-plan/v2",
+  "plan_id": "cutover-canghai-public",
+  "instance_id": "instance-canghai-deidentified",
+  "target_source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "publication_prerequisites": {
+    "remote_base_check": true,
+    "push_before_sync": true
+  },
+  "remove_retrieval_paths": ["/srv/canghai/private/30_RAG"],
+  "disable_mechanisms": ["active-memory"],
+  "preserve_independent_paths": ["/srv/canghai/public-author-corpus"],
+  "bootstrap_targets": ["USER.md", "MEMORY.md"],
+  "public_corpus_adapter": "canghai-public-corpus",
+  "checksum": "sha256:8c9bd9c461101c65285844163d4a7da62b34b208f53d74b3b82c09ae4e5cf186"
+}

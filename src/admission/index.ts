@@ -739,6 +739,30 @@ export class CandidateAdmissionService {
     return immutableCopy({ status: "decided" as const, receipt: stored });
   }
 
+  consumeApprovalReceiptForCandidate(
+    candidateId: string,
+    candidateRevision: number,
+  ): DecisionReceipt {
+    for (const record of this.#receipts.values()) {
+      if (
+        !record.invalidated &&
+        !record.consumed &&
+        record.receipt.candidate_id === candidateId &&
+        record.receipt.candidate_revision === candidateRevision &&
+        record.receipt.decision !== "rejected"
+      ) {
+        return this.consumeApprovalReceipt({
+          receiptId: record.receipt.receipt_id,
+          candidateId,
+          candidateRevision,
+          candidateChecksum: record.receipt.candidate_checksum,
+          baseAuthorityVersion: record.receipt.base_authority_version,
+        });
+      }
+    }
+    throw new Error("APPROVAL_RECEIPT_INVALID");
+  }
+
   consumeApprovalReceipt(input: ApprovalReceiptConsumptionInput): DecisionReceipt {
     const record = this.#receipts.get(input.receiptId);
     if (record === undefined || record.invalidated) {
