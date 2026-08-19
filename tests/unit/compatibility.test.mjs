@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  resolveCompatibleHost,
+  resolveCompatibilityMatrixRow,
 } from "../../dist/compatibility/index.js";
 
 test("Compatibility Matrix authorizes one exact smoked OpenClaw and Node row", async () => {
-  assert.deepEqual(await resolveCompatibleHost({
+  assert.deepEqual(await resolveCompatibilityMatrixRow({
     openclawVersion: "2026.6.34",
     nodeVersion: "24.18.0",
   }), {
@@ -19,7 +19,7 @@ test("Compatibility Matrix authorizes one exact smoked OpenClaw and Node row", a
 
 test("an engine-compatible but unsmoked Node version is incompatible", async () => {
   await assert.rejects(
-    resolveCompatibleHost({
+    resolveCompatibilityMatrixRow({
       openclawVersion: "2026.6.34",
       nodeVersion: "24.17.0",
     }),

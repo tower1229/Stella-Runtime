@@ -12,7 +12,7 @@ import type {
 import { atomicWriteFile } from "../core/persistence.js";
 import { validateContract } from "../contracts/index.js";
 import { verifyGeneration } from "../generation/index.js";
-import { resolveCompatibleHost } from "../compatibility/index.js";
+import { resolveCompatibilityMatrixRow } from "../compatibility/index.js";
 import {
   ACTIVATION_RECEIPTS_DIRECTORY,
   ACTIVE_GENERATION_POINTER_FILE,
@@ -156,9 +156,9 @@ export const validateActiveReceipt = async (
   hostVersion: string,
   nodeVersion: string,
 ): Promise<ReceiptValidity> => {
-  let compatibleHost;
+  let matrixRow;
   try {
-    compatibleHost = await resolveCompatibleHost({
+    matrixRow = await resolveCompatibilityMatrixRow({
       openclawVersion: hostVersion,
       nodeVersion,
     });
@@ -184,7 +184,7 @@ export const validateActiveReceipt = async (
     projection !== undefined &&
     receipt.projection_checksum === projection.checksum &&
     receipt.host_config_checksum === calculateRuntimeConfigIdentityChecksum(config) &&
-    receipt.release_channel === compatibleHost.releaseChannel &&
+    receipt.release_channel === matrixRow.releaseChannel &&
     receipt.openclaw_version === hostVersion &&
     receipt.node_version === nodeVersion;
   if (valid) return { valid: true, reasonCodes: [] };
@@ -192,7 +192,7 @@ export const validateActiveReceipt = async (
     calculateRuntimeConfigIdentityChecksum(config);
   const hostDrift = receipt.openclaw_version !== hostVersion ||
     receipt.node_version !== nodeVersion ||
-    receipt.release_channel !== compatibleHost.releaseChannel;
+    receipt.release_channel !== matrixRow.releaseChannel;
   return {
     valid: false,
     reasonCodes: [
@@ -443,7 +443,7 @@ export class RuntimeHealthMonitor {
         if (!await this.#options.pluginDiscovered()) throw new Error("PLUGIN_NOT_DISCOVERED");
       }, DRIFT_REASON_CODES.pluginDiscoveryFailed),
       this.#check("host_capabilities", async () => {
-        await resolveCompatibleHost({
+        await resolveCompatibilityMatrixRow({
           openclawVersion: this.#options.hostVersion,
           nodeVersion: this.#options.nodeVersion,
         });

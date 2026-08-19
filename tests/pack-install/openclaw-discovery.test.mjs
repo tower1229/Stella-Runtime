@@ -1492,6 +1492,12 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
     assert.deepEqual(parseJsonOutput(selfCheckOutput), {
       status: "ok",
       pluginId: "cognitive-runtime",
+      compatibilityMatrixRow: {
+        releaseChannel: "extended-stable",
+        openclawVersion: "2026.6.34",
+        nodeVersion: "24.18.0",
+        evidence: "docs/evidence/openclaw-2026.6.34.md",
+      },
       hostCapabilities: { hostModelCompletion: "llm.complete" },
     });
     const { stdout: skillOutput } = await run(

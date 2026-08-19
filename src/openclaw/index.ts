@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { runSelfCheck } from "../cli/index.js";
+import { resolveCompatibilityMatrixRow } from "../compatibility/index.js";
 import type {
   CurrentStateEvent,
   InstanceCutoverPlan,
@@ -554,15 +555,31 @@ const plugin = {
               }));
               return;
             }
-            console.log(JSON.stringify({
-              ...runSelfCheck(),
-              hostCapabilities: {
-                hostModelCompletion:
-                  typeof api.runtime.llm.complete === "function"
-                    ? "llm.complete"
-                    : "unavailable",
-              },
-            }));
+            const hostCapabilities = {
+              hostModelCompletion:
+                typeof api.runtime.llm.complete === "function"
+                  ? "llm.complete"
+                  : "unavailable",
+            };
+            try {
+              const matrixRow = await resolveCompatibilityMatrixRow({
+                openclawVersion: api.runtime.version,
+                nodeVersion: process.versions.node,
+              });
+              console.log(JSON.stringify({
+                ...runSelfCheck(),
+                compatibilityMatrixRow: matrixRow,
+                hostCapabilities,
+              }));
+            } catch {
+              console.log(JSON.stringify({
+                status: "fail",
+                pluginId: "cognitive-runtime",
+                compatibilityMatrixRow: null,
+                hostCapabilities,
+                reasonCodes: ["INCOMPATIBLE_HOST"],
+              }));
+            }
           });
 
         cognitive

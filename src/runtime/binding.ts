@@ -9,7 +9,7 @@ import type {
   StateView,
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
-import { resolveCompatibleHost } from "../compatibility/index.js";
+import { resolveCompatibilityMatrixRow } from "../compatibility/index.js";
 import { verifyGeneration } from "../generation/index.js";
 import type { ExplicitContextBinding } from "../packet/index.js";
 import {
@@ -257,7 +257,7 @@ const validateActivationChain = (input: {
 
 export class FileBindingCompiler implements BindingCompilerPort {
   async compile(input: BindingCompilerInput): Promise<ActiveRunBinding> {
-    const compatibleHost = await resolveCompatibleHost({
+    const matrixRow = await resolveCompatibilityMatrixRow({
       openclawVersion: input.hostVersion,
       nodeVersion: input.nodeVersion,
     });
@@ -304,7 +304,7 @@ export class FileBindingCompiler implements BindingCompilerPort {
       config: input.config,
       hostVersion: input.hostVersion,
       nodeVersion: input.nodeVersion,
-      releaseChannel: compatibleHost.releaseChannel,
+      releaseChannel: matrixRow.releaseChannel,
       manifestGeneration: verification.manifest.sync_generation,
       manifestRevision: verification.manifest.source_revision,
     });

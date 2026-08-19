@@ -1,13 +1,13 @@
 import { readFile } from "node:fs/promises";
 
-export interface CompatibleHostIdentity {
+export interface CompatibilityMatrixRow {
   readonly releaseChannel: string;
   readonly openclawVersion: string;
   readonly nodeVersion: string;
   readonly evidence: string;
 }
 
-export interface HostCompatibilityInput {
+export interface CompatibilityMatrixLookup {
   readonly openclawVersion: string;
   readonly nodeVersion: string;
   readonly releaseChannel?: string;
@@ -31,7 +31,7 @@ const requireExactVersion = (value: unknown): string => {
   return version;
 };
 
-const parseAuthorizedRows = (value: unknown): readonly CompatibleHostIdentity[] => {
+const parseAuthorizedRows = (value: unknown): readonly CompatibilityMatrixRow[] => {
   if (
     !isRecord(value) ||
     value.schemaVersion !== "cognitive-runtime.openclaw-compatibility/v2" ||
@@ -51,7 +51,7 @@ const parseAuthorizedRows = (value: unknown): readonly CompatibleHostIdentity[] 
       openclawVersion: requireExactVersion(entry.openclawVersion),
       nodeVersion: requireExactVersion(entry.nodeVersion),
       evidence: requireString(entry.evidence),
-    } satisfies CompatibleHostIdentity;
+    } satisfies CompatibilityMatrixRow;
   });
   const identities = rows.map((row) =>
     `${row.releaseChannel}\u0000${row.openclawVersion}\u0000${row.nodeVersion}`);
@@ -61,21 +61,21 @@ const parseAuthorizedRows = (value: unknown): readonly CompatibleHostIdentity[] 
   return rows;
 };
 
-const readAuthorizedRows = async (): Promise<readonly CompatibleHostIdentity[]> => {
+const readAuthorizedRows = async (): Promise<readonly CompatibilityMatrixRow[]> => {
   const path = new URL("../../compatibility/openclaw.json", import.meta.url);
   return parseAuthorizedRows(JSON.parse(await readFile(path, "utf8")) as unknown);
 };
 
-let authorizedRows: Promise<readonly CompatibleHostIdentity[]> | undefined;
+let authorizedRows: Promise<readonly CompatibilityMatrixRow[]> | undefined;
 
-const loadAuthorizedRows = (): Promise<readonly CompatibleHostIdentity[]> => {
+const loadAuthorizedRows = (): Promise<readonly CompatibilityMatrixRow[]> => {
   authorizedRows ??= readAuthorizedRows();
   return authorizedRows;
 };
 
-export const resolveCompatibleHost = async (
-  input: HostCompatibilityInput,
-): Promise<CompatibleHostIdentity> => {
+export const resolveCompatibilityMatrixRow = async (
+  input: CompatibilityMatrixLookup,
+): Promise<CompatibilityMatrixRow> => {
   const matches = (await loadAuthorizedRows()).filter((row) =>
     row.openclawVersion === input.openclawVersion &&
     row.nodeVersion === input.nodeVersion &&

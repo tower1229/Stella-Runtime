@@ -111,8 +111,32 @@ test("OpenClaw discovers cognitive self-check through the plugin entry", async (
   }
 
   assert.deepEqual(output, [
-    '{"status":"ok","pluginId":"cognitive-runtime","hostCapabilities":{"hostModelCompletion":"llm.complete"}}',
+    '{"status":"ok","pluginId":"cognitive-runtime","compatibilityMatrixRow":{"releaseChannel":"extended-stable","openclawVersion":"2026.6.34","nodeVersion":"24.18.0","evidence":"docs/evidence/openclaw-2026.6.34.md"},"hostCapabilities":{"hostModelCompletion":"llm.complete"}}',
   ]);
+});
+
+test("self-check rejects an unlisted Host without Runtime configuration", async () => {
+  const program = new FakeCommand();
+  await plugin.register({
+    runtime: {
+      version: "2026.6.35",
+      llm: { complete: async () => ({}) },
+    },
+    registerCli(registrar) {
+      return registrar({ program });
+    },
+  });
+  const output = [];
+  const originalLog = console.log;
+  console.log = (value) => output.push(JSON.parse(value));
+  try {
+    await program.children.get("cognitive").children.get("self-check").handler({});
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(output[0].status, "fail");
+  assert.deepEqual(output[0].reasonCodes, ["INCOMPATIBLE_HOST"]);
 });
 
 test("OpenClaw resolves a relative cutover plan before proxying sync to Gateway", async (t) => {

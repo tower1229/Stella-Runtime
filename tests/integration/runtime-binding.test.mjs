@@ -141,6 +141,21 @@ test("Eligible Run binding rejects an engine-compatible Host absent from the mat
   }), { message: "INCOMPATIBLE_HOST" });
 });
 
+test("Eligible Run hook preserves the stable incompatible Host reason", async () => {
+  const runtime = createRuntime({
+    compile: async () => { throw new Error("INCOMPATIBLE_HOST"); },
+  });
+
+  await assert.rejects(
+    runtime.hooks.get("before_prompt_build")(
+      { prompt: "incompatible", messages: [] },
+      eligible("run-incompatible-host"),
+    ),
+    /COGNITIVE_BINDING_REJECTED:INCOMPATIBLE_HOST/,
+  );
+  assert.ok(runtime.logs.some((entry) => entry.reasonCode === "INCOMPATIBLE_HOST"));
+});
+
 test("eligible Run compiles once and pins Generation and State View until cleanup", async () => {
   let next = binding("one");
   let compileCalls = 0;
