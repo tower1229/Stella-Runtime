@@ -5,6 +5,7 @@ import {
   type ConfirmationAction,
   type ConfirmationPreparationInput,
 } from "../admission/index.js";
+import { FileCandidateAdmissionStore } from "../admission/persistence.js";
 import type {
   ApprovalMessageReference,
   CandidateReviewArtifact,
@@ -89,6 +90,14 @@ export function configureOpenClawCandidateAuthorityHead(
 export const openClawCandidateAdmissionService = new CandidateAdmissionService({
   authorityHead: openClawAuthorityHead,
 });
+
+export function configureOpenClawCandidateAdmissionPersistence(
+  runtimeStorage: string,
+): FileCandidateAdmissionStore {
+  const store = new FileCandidateAdmissionStore({ directory: runtimeStorage });
+  openClawCandidateAdmissionService.configurePersistence(store);
+  return store;
+}
 
 const actionMetadata = {
   accept: { code: "a", text: "接受此版本" },

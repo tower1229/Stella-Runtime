@@ -12,7 +12,6 @@ const databasePath = process.env.STELLA_RUNTIME_PROBE_DATABASE;
 const sessionKey = process.env.STELLA_RUNTIME_PROBE_SESSION_KEY;
 const activeRuns = new Map();
 const execFileAsync = promisify(execFile);
-let acceptedPublication;
 let savedRetrievalPaths;
 const contractChecksum = (digit) => `sha256:${digit.repeat(64)}`;
 
@@ -83,7 +82,6 @@ async function runConfirmationProbe() {
     content: { claim: "Packed approval reaches the next eligible Run." },
     sourceMap: [{ sourceRef: "source-host-probe", contentPath: "body" }],
   });
-  acceptedPublication = { candidate };
   let presented;
   await runtime.presentTelegramConfirmation({
     service,
@@ -137,25 +135,21 @@ async function runConfirmationProbe() {
       },
     }),
   });
-  const receipt = service.consumeApprovalReceiptForCandidate(
-    candidate.candidate_id,
-    candidate.revision,
-  );
-  acceptedPublication = { candidate, receipt };
   record({ hook: "gateway_start_confirmation", dispatch, replies });
 }
 
 async function publishAcceptedCandidate(runtime, config) {
-  const candidate = acceptedPublication?.candidate;
-  const receipt = acceptedPublication?.receipt;
-  if (candidate === undefined || receipt === undefined) {
-    throw new Error("ACCEPTED_CANDIDATE_REQUIRED");
-  }
   const authorityDirectory = config.adapters.authority_checkout;
-  const approvals = new runtime.FileApprovalPublicationStore({
-    directory: join(config.runtime_storage, "approval-publication"),
+  const approvals = new runtime.FileCandidateAdmissionStore({
+    directory: config.runtime_storage,
   });
-  await approvals.recordApproval({ receipt, candidate });
+  const pending = await approvals.listApprovedCandidateRevisions(
+    "instance-host-probe",
+  );
+  if (pending.length !== 1) throw new Error("ACCEPTED_CANDIDATE_REQUIRED");
+  const [approved] = pending;
+  const candidate = approved.candidate;
+  const receipt = approved.receipt;
   const journal = new runtime.FilePublicationJournal({
     directory: join(config.runtime_storage, "publication-journal"),
   });

@@ -40,6 +40,7 @@ export type {
   ApprovalReceiptConsumptionInput,
   BindConfirmationMessageInput,
   CandidateAdmissionServiceOptions,
+  CandidateAdmissionPersistencePort,
   CandidateAuthorityHead,
   CandidateAuthorityHeadPort,
   CandidateRewriteInput,
@@ -55,6 +56,11 @@ export type {
   FrameworkAdmissionProposal,
   FrameworkAdmissionResult,
 } from "./admission/index.js";
+export { FileCandidateAdmissionStore } from "./admission/persistence.js";
+export type {
+  ApprovedCandidateRevision,
+  FileCandidateAdmissionStoreOptions,
+} from "./admission/persistence.js";
 export {
   lintAuthorityRecord,
   parseAuthorityMarkdown,
@@ -206,6 +212,7 @@ export type {
 } from "./openclaw/ports.js";
 export {
   buildTelegramConfirmationActions,
+  configureOpenClawCandidateAdmissionPersistence,
   configureOpenClawCandidateAuthorityHead,
   createOpenClawTelegramConfirmationPresentation,
   OPENCLAW_TELEGRAM_CONFIRMATION_VERSION,

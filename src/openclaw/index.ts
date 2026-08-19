@@ -52,6 +52,7 @@ import {
 } from "./consumption.js";
 import {
   openClawCandidateAdmissionService,
+  configureOpenClawCandidateAdmissionPersistence,
   registerTelegramConfirmationGateway,
 } from "./confirmation.js";
 import {
@@ -270,6 +271,10 @@ const plugin = {
   description: "Instance-neutral cognitive runtime for OpenClaw",
   register(api: CognitiveRuntimePluginApi): void {
     const packageVersion = api.version ?? "0.0.0";
+    const runtimeConfig = readRuntimeConfig(api.pluginConfig);
+    if (runtimeConfig !== null) {
+      configureOpenClawCandidateAdmissionPersistence(runtimeConfig.runtime_storage);
+    }
     if (api.registerInteractiveHandler !== undefined) {
       registerTelegramConfirmationGateway({
         api: { registerInteractiveHandler: api.registerInteractiveHandler },
@@ -277,7 +282,6 @@ const plugin = {
         hostVersion: api.runtime.version,
       });
     }
-    const runtimeConfig = readRuntimeConfig(api.pluginConfig);
     let runtimeHooksRegistered = false;
     const hostTransition = runtimeConfig === null
       ? undefined
