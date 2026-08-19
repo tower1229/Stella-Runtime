@@ -111,8 +111,32 @@ test("OpenClaw discovers cognitive self-check through the plugin entry", async (
   }
 
   assert.deepEqual(output, [
-    '{"status":"ok","pluginId":"cognitive-runtime","hostCapabilities":{"hostModelCompletion":"llm.complete"}}',
+    '{"status":"ok","pluginId":"cognitive-runtime","compatibilityMatrixRow":{"releaseChannel":"extended-stable","openclawVersion":"2026.6.34","nodeVersion":"24.18.0","evidence":"docs/evidence/openclaw-2026.6.34.md"},"hostCapabilities":{"hostModelCompletion":"llm.complete"}}',
   ]);
+});
+
+test("self-check rejects an unlisted Host without Runtime configuration", async () => {
+  const program = new FakeCommand();
+  await plugin.register({
+    runtime: {
+      version: "2026.6.35",
+      llm: { complete: async () => ({}) },
+    },
+    registerCli(registrar) {
+      return registrar({ program });
+    },
+  });
+  const output = [];
+  const originalLog = console.log;
+  console.log = (value) => output.push(JSON.parse(value));
+  try {
+    await program.children.get("cognitive").children.get("self-check").handler({});
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(output[0].status, "fail");
+  assert.deepEqual(output[0].reasonCodes, ["INCOMPATIBLE_HOST"]);
 });
 
 test("OpenClaw resolves a relative cutover plan before proxying sync to Gateway", async (t) => {
@@ -642,6 +666,67 @@ test("OpenClaw startup attempts interrupted sync recovery and keeps admission cl
       { prompt: "blocked", messages: [] },
       {
         runId: "run-startup-blocked",
+        sessionKey: "agent:main:telegram:direct:owner-synthetic",
+        agentId: "main",
+        trigger: "user",
+        messageProvider: "telegram",
+        senderId: "owner-synthetic",
+        chatId: "owner-synthetic",
+      },
+    ),
+    /COGNITIVE_BINDING_REJECTED:MAINTENANCE_GATE_CLOSED/,
+  );
+});
+
+test("OpenClaw startup rejects an unlisted exact Host without Host mutation", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-openclaw-incompatible-startup-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const hooks = new Map();
+  const logs = [];
+  const hostMutations = [];
+
+  await plugin.register({
+    version: "0.2.0-test",
+    pluginConfig: { runtime: {
+      schema_version: "cognitive-runtime.instance-runtime-config/v2",
+      instance_id: "instance-synthetic",
+      mode: "enforce",
+      runtime_storage: join(root, "runtime"),
+      generation_storage: join(root, "generations"),
+      host: { agent_id: "main", eligible_scope: ["private_main_session"] },
+      authority_owner: { provider: "telegram", actor_id: "owner-synthetic" },
+      limits: { max_active_runs: 4, drain_timeout_ms: 30_000 },
+      adapters: {
+        authority_checkout: join(root, "authority"),
+        host_retrieval: "openclaw-memory",
+      },
+    } },
+    runtime: {
+      version: "2026.6.35",
+      llm: { complete: async () => ({}) },
+    },
+    on(name, handler) { hooks.set(name, handler); },
+    logger: { info() {}, warn(message) { logs.push(JSON.parse(message)); } },
+    cognitiveRuntimeHostTransition: {
+      async capture() { hostMutations.push("capture"); return {}; },
+      async applyTarget() { hostMutations.push("apply"); },
+      async verifyTarget() { hostMutations.push("verify"); throw new Error("UNEXPECTED_VERIFY"); },
+      async restore() { hostMutations.push("restore"); },
+      async verifyPrior() { hostMutations.push("verify-prior"); throw new Error("UNEXPECTED_VERIFY"); },
+    },
+    registerCli() {},
+  });
+
+  for (let attempt = 0; logs.length === 0 && attempt < 100; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  assert.deepEqual(hostMutations, []);
+  assert.ok(logs.some((entry) => entry.reasonCode === "INCOMPATIBLE_HOST"));
+  await assert.rejects(
+    hooks.get("before_prompt_build")(
+      { prompt: "blocked", messages: [] },
+      {
+        runId: "run-incompatible-startup",
         sessionKey: "agent:main:telegram:direct:owner-synthetic",
         agentId: "main",
         trigger: "user",

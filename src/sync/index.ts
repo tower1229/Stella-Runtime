@@ -15,6 +15,10 @@ import type {
   InstanceRuntimeConfig,
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
+import {
+  resolveCompatibilityMatrixRow,
+  type CompatibilityMatrixRow,
+} from "../compatibility/index.js";
 import type {
   CutoverExecutionOptions,
   CutoverTarget,
@@ -488,6 +492,10 @@ const recoverInterruptedSyncLocked = async (
 export async function recoverInterruptedSync(
   options: SyncRecoveryOptions,
 ): Promise<void> {
+  await resolveCompatibilityMatrixRow({
+    openclawVersion: options.hostVersion,
+    nodeVersion: options.nodeVersion,
+  });
   const runtimeStorage = resolve(options.config.runtime_storage);
   return runWithSyncLease(runtimeStorage, () => recoverInterruptedSyncLocked(options));
 }
@@ -500,6 +508,7 @@ const generationStateDirectory = (config: InstanceRuntimeConfig): string => {
 
 const syncGenerationLocked = async (
   options: SyncGenerationOptions,
+  matrixRow: CompatibilityMatrixRow,
 ): Promise<SyncGenerationResult> => {
   const runtimeStorage = resolve(options.config.runtime_storage);
   const now = options.now ?? (() => new Date());
@@ -625,6 +634,7 @@ const syncGenerationLocked = async (
       ...(options.cutover === undefined ? {} : {
         cutover_plan_checksum: options.cutover.plan.checksum,
       }),
+      release_channel: matrixRow.releaseChannel,
       openclaw_version: options.hostVersion,
       node_version: options.nodeVersion,
       verified_at: now().toISOString(),
@@ -690,6 +700,13 @@ const syncGenerationLocked = async (
 export async function syncGeneration(
   options: SyncGenerationOptions,
 ): Promise<SyncGenerationResult> {
+  const matrixRow = await resolveCompatibilityMatrixRow({
+    openclawVersion: options.hostVersion,
+    nodeVersion: options.nodeVersion,
+  });
   const runtimeStorage = resolve(options.config.runtime_storage);
-  return runWithSyncLease(runtimeStorage, () => syncGenerationLocked(options));
+  return runWithSyncLease(
+    runtimeStorage,
+    () => syncGenerationLocked(options, matrixRow),
+  );
 }

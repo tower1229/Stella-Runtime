@@ -9,6 +9,7 @@ import type {
   StateView,
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
+import { resolveCompatibilityMatrixRow } from "../compatibility/index.js";
 import { verifyGeneration } from "../generation/index.js";
 import type { ExplicitContextBinding } from "../packet/index.js";
 import {
@@ -215,6 +216,7 @@ const validateActivationChain = (input: {
   readonly config: InstanceRuntimeConfig;
   readonly hostVersion: string;
   readonly nodeVersion: string;
+  readonly releaseChannel: string;
   readonly manifestGeneration: string;
   readonly manifestRevision: string;
 }): void => {
@@ -248,10 +250,17 @@ const validateActivationChain = (input: {
   if (receipt.openclaw_version !== input.hostVersion || receipt.node_version !== input.nodeVersion) {
     throw new Error("ACTIVATION_HOST_IDENTITY_STALE");
   }
+  if (receipt.release_channel !== input.releaseChannel) {
+    throw new Error("ACTIVATION_HOST_IDENTITY_STALE");
+  }
 };
 
 export class FileBindingCompiler implements BindingCompilerPort {
   async compile(input: BindingCompilerInput): Promise<ActiveRunBinding> {
+    const matrixRow = await resolveCompatibilityMatrixRow({
+      openclawVersion: input.hostVersion,
+      nodeVersion: input.nodeVersion,
+    });
     const runtimeStorage = resolve(input.config.runtime_storage);
     const generationStorage = resolve(input.config.generation_storage);
     let pointerValue: unknown;
@@ -295,6 +304,7 @@ export class FileBindingCompiler implements BindingCompilerPort {
       config: input.config,
       hostVersion: input.hostVersion,
       nodeVersion: input.nodeVersion,
+      releaseChannel: matrixRow.releaseChannel,
       manifestGeneration: verification.manifest.sync_generation,
       manifestRevision: verification.manifest.source_revision,
     });

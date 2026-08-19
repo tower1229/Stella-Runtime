@@ -8,7 +8,11 @@ import {
   inspectGenerationStatus,
   inspectStoredGenerationStatus,
   RuntimeHealthMonitor,
+  validateActiveReceipt,
 } from "../../dist/diagnostics/index.js";
+import {
+  calculateRuntimeConfigIdentityChecksum,
+} from "../../dist/runtime/binding.js";
 
 const generation = `generation-${"a".repeat(64)}`;
 const manifestChecksum = `sha256:${"1".repeat(64)}`;
@@ -55,8 +59,9 @@ const active = {
       search_sentinel_checksum: `sha256:${"4".repeat(64)}`,
       get_sentinel_checksum: `sha256:${"5".repeat(64)}`,
     },
+    release_channel: "extended-stable",
     openclaw_version: "2026.6.34",
-    node_version: "24.9.0",
+    node_version: "24.18.0",
     verified_at: "2026-08-18T00:00:00.000Z",
   },
   manifest: {
@@ -103,7 +108,7 @@ test("generation status preserves Pointer identity when its Receipt is missing",
     config: config(root),
     latestSourceRevision: "b".repeat(40),
     hostVersion: "2026.6.34",
-    nodeVersion: "24.9.0",
+    nodeVersion: "24.18.0",
   }), {
     status: "degraded",
     activeSourceRevision: "a".repeat(40),
@@ -118,6 +123,29 @@ test("generation status preserves Pointer identity when its Receipt is missing",
   });
 });
 
+test("Active Receipt must bind the release channel of its exact matrix row", async () => {
+  const runtimeConfig = config("/synthetic");
+  const mismatched = structuredClone(active);
+  mismatched.receipt.host_config_checksum =
+    calculateRuntimeConfigIdentityChecksum(runtimeConfig);
+  mismatched.receipt.release_channel = "unverified-channel";
+  mismatched.manifest.sync_generation = generation;
+  mismatched.manifest.files = [{
+    path: "projection-entries.json",
+    checksum: projectionChecksum,
+  }];
+
+  assert.deepEqual(await validateActiveReceipt(
+    mismatched,
+    runtimeConfig,
+    "2026.6.34",
+    "24.18.0",
+  ), {
+    valid: false,
+    reasonCodes: ["INCOMPATIBLE_HOST"],
+  });
+});
+
 test("full self-check separates Authority input validation from environment health", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-diagnostics-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -125,9 +153,7 @@ test("full self-check separates Authority input validation from environment heal
   const monitor = new RuntimeHealthMonitor({
     config: config(root),
     hostVersion: "2026.6.34",
-    nodeVersion: "24.9.0",
-    expectedHostVersion: "2026.6.34",
-    expectedNodeVersions: ["22.19.0", "24.9.0"],
+    nodeVersion: "24.18.0",
     pluginDiscovered: () => true,
     authority: { validate: async () => ({ sourceRevision: "b".repeat(40) }) },
     configIdentity: { verify: async () => true },
@@ -153,6 +179,35 @@ test("full self-check separates Authority input validation from environment heal
   ]);
 });
 
+test("self-check rejects an engine-compatible Node version absent from the matrix", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-unsmoked-host-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(config(root).runtime_storage, { recursive: true });
+  const monitor = new RuntimeHealthMonitor({
+    config: config(root),
+    hostVersion: "2026.6.34",
+    nodeVersion: "24.17.0",
+    pluginDiscovered: () => true,
+    hostCapabilities: () => true,
+    authority: { validate: async () => ({ sourceRevision: "b".repeat(40) }) },
+    configIdentity: { verify: async () => true },
+    retrieval: { verify: async () => undefined },
+    publicCorpus: { verify: async () => ({ adapterId: "public-synthetic" }) },
+    active: { load: async () => active },
+  });
+
+  const result = await monitor.selfCheck();
+  assert.equal(result.status, "fail");
+  assert.deepEqual(
+    result.environment.checks.find((check) => check.id === "host_capabilities"),
+    {
+      id: "host_capabilities",
+      status: "fail",
+      reasonCodes: ["INCOMPATIBLE_HOST"],
+    },
+  );
+});
+
 test("self-check preserves Receipt Host incompatibility instead of reporting config drift", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-receipt-reason-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -160,9 +215,7 @@ test("self-check preserves Receipt Host incompatibility instead of reporting con
   const monitor = new RuntimeHealthMonitor({
     config: config(root),
     hostVersion: "2026.6.34",
-    nodeVersion: "24.9.0",
-    expectedHostVersion: "2026.6.34",
-    expectedNodeVersions: ["24.9.0"],
+    nodeVersion: "24.18.0",
     pluginDiscovered: () => true,
     hostCapabilities: () => true,
     authority: { validate: async () => ({ sourceRevision: "a".repeat(40) }) },
@@ -190,9 +243,7 @@ test("reconciliation persists stable drift codes and enforce gates while observe
   const options = {
     config: config(root),
     hostVersion: "2026.6.34",
-    nodeVersion: "24.9.0",
-    expectedHostVersion: "2026.6.34",
-    expectedNodeVersions: ["24.9.0"],
+    nodeVersion: "24.18.0",
     pluginDiscovered: () => true,
     authority: { validate: async () => ({ sourceRevision: "a".repeat(40) }) },
     configIdentity: { verify: async () => true },
@@ -230,9 +281,7 @@ test("lifecycle metrics contain bounded outcomes and reject private trace fields
   const monitor = new RuntimeHealthMonitor({
     config: config(root),
     hostVersion: "2026.6.34",
-    nodeVersion: "24.9.0",
-    expectedHostVersion: "2026.6.34",
-    expectedNodeVersions: ["24.9.0"],
+    nodeVersion: "24.18.0",
     pluginDiscovered: () => true,
     authority: { validate: async () => ({ sourceRevision: "a".repeat(40) }) },
     configIdentity: { verify: async () => true },

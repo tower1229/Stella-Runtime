@@ -340,13 +340,13 @@ test("packed Runtime proves approval through publication, recovery, and next-Run
   }
 
   const active = await runtime.loadActiveGenerationHealth(config);
-  assert.deepEqual(runtime.validateActiveReceipt(
+  assert.deepEqual(await runtime.validateActiveReceipt(
     { ...active, receipt: { ...active.receipt, generation_id: `generation-${"f".repeat(64)}` } },
     config,
     "2026.6.34",
     "24.18.0",
   ), { valid: false, reasonCodes: ["STALE_RECEIPT"] });
-  assert.deepEqual(runtime.validateActiveReceipt(
+  assert.deepEqual(await runtime.validateActiveReceipt(
     active,
     {
       ...config,
@@ -360,8 +360,6 @@ test("packed Runtime proves approval through publication, recovery, and next-Run
     config,
     hostVersion: "2026.6.34",
     nodeVersion: "24.18.0",
-    expectedHostVersion: "2026.6.34",
-    expectedNodeVersions: ["24.18.0"],
     pluginDiscovered: () => true,
     hostCapabilities: () => true,
     authority: { validate: async () => ({ sourceRevision }) },

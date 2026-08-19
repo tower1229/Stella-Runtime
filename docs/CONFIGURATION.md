@@ -40,8 +40,10 @@ At the start of each eligible Run, the Binding Compiler reads
 `<runtime_storage>/active-generation.json`, the referenced receipt under
 `<runtime_storage>/activation-receipts/`, the immutable Generation under
 `<generation_storage>/`, and one checksummed State View. It validates their
-Generation, Manifest, Projection, Host, Node, instance, and configuration
-identities once and pins the resulting Active Run Binding until Run cleanup.
+Generation, Manifest, Projection, Compatibility Matrix release channel, exact
+Host/Node row, instance, and configuration identities once and pins the
+resulting Active Run Binding until Run cleanup. Package engine ranges constrain
+installation only and never authorize admission.
 
 `sync` closes `<runtime_storage>/maintenance-gate.json` before draining existing
 eligible Runs. Every Host transition phase is persisted in

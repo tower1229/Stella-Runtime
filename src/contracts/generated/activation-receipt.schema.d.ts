@@ -19,6 +19,7 @@ export interface ActivationReceipt {
     get_sentinel_checksum: Checksum;
   };
   cutover_plan_checksum?: Checksum;
+  release_channel: string;
   openclaw_version: string;
   node_version: string;
   verified_at: string;
