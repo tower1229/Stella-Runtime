@@ -98,11 +98,19 @@ const runContext = (runId, extra = {}) => ({
   ...extra,
 });
 
-const register = async ({ mode = "enforce", result = routerResult(), complete, recordProvenance } = {}) => {
+const register = async ({
+  mode = "enforce",
+  result = routerResult(),
+  complete,
+  recordProvenance,
+  bindingCompiler,
+  healthGate,
+  config = runtimeConfig(mode),
+} = {}) => {
   const hooks = new Map();
   const logs = [];
   const calls = [];
-  registerRuntimeHooks({
+  const controller = registerRuntimeHooks({
     runtime: {
       version: "2026.6.34",
       llm: {
@@ -118,11 +126,12 @@ const register = async ({ mode = "enforce", result = routerResult(), complete, r
       info(message) { logs.push(JSON.parse(message)); },
       warn(message) { logs.push(JSON.parse(message)); },
     },
-  }, readRuntimeConfig({ runtime: runtimeConfig(mode) }), {
-    bindingCompiler: { compile: async () => staticBinding() },
+  }, readRuntimeConfig({ runtime: config }), {
+    bindingCompiler: bindingCompiler ?? { compile: async () => staticBinding() },
     ...(recordProvenance === undefined ? {} : { recordProvenance }),
+    ...(healthGate === undefined ? {} : { healthGate }),
   });
-  return { hooks, logs, calls };
+  return { hooks, logs, calls, controller };
 };
 
 test("enforce pipeline routes once, reuses binding, and injects an explicit packet", async () => {
@@ -259,7 +268,7 @@ test("expired Run state fails closed instead of recompiling a drifting binding",
   assert.match(first.prependContext, /PRIVATE_FIRST/);
 });
 
-test("observe, off, rejection, missing run id, and capacity fail without interrupting host", async () => {
+test("observe records Router degradation without injection while off bypasses binding", async () => {
   const observed = await register({ mode: "observe" });
   assert.equal(await observed.hooks.get("before_prompt_build")(
     { prompt: "Private synthetic prompt", messages: [] },
@@ -273,25 +282,245 @@ test("observe, off, rejection, missing run id, and capacity fail without interru
   ), undefined);
   assert.equal(off.calls.length, 0);
 
-  const rejected = await register({ complete: async () => ({ text: "not-json" }) });
-  assert.equal(await rejected.hooks.get("before_prompt_build")(
-    { prompt: "Prompt", messages: [] }, runContext("run-rejected"),
+  const degraded = await register({
+    mode: "observe",
+    complete: async () => ({ text: "PRIVATE_PROMPT_SENTINEL not-json" }),
+  });
+  assert.equal(await degraded.hooks.get("before_prompt_build")(
+    { prompt: "PRIVATE_PROMPT_SENTINEL", messages: [] },
+    runContext("run-observe-degraded"),
   ), undefined);
-  assert.ok(rejected.logs.some((entry) => entry.reasonCode === "ROUTER_NON_JSON_OUTPUT"));
-  assert.equal(await rejected.hooks.get("before_prompt_build")(
-    { prompt: "Prompt", messages: [] }, { ...runContext("missing"), runId: undefined },
-  ), undefined);
-  assert.ok(rejected.logs.some((entry) => entry.reasonCode === "RUN_ID_REQUIRED"));
+  assert.deepEqual(
+    degraded.logs.map((entry) => entry.reasonCode),
+    ["ROUTER_NON_JSON_OUTPUT"],
+  );
+  assert.doesNotMatch(JSON.stringify(degraded.logs), /PRIVATE_PROMPT_SENTINEL/);
+});
 
-  await rejected.hooks.get("before_prompt_build")(
+test("before_agent_run blocks enforce degradation before the Host model request", async () => {
+  const rejected = await register({
+    complete: async () => ({ text: "PRIVATE_ROUTER_OUTPUT not-json" }),
+  });
+
+  assert.deepEqual(await rejected.hooks.get("before_agent_run")(
+    { prompt: "PRIVATE_GATE_PROMPT", messages: [] },
+    runContext("run-host-gate"),
+  ), {
+    outcome: "block",
+    reason: "COGNITIVE_BINDING_REJECTED:ROUTER_NON_JSON_OUTPUT",
+    message: "Cognitive Runtime is unavailable for this Eligible Run.",
+    category: "cognitive_runtime_unavailable",
+    metadata: { reasonCode: "ROUTER_NON_JSON_OUTPUT" },
+  });
+  assert.equal(rejected.calls.length, 0);
+  assert.doesNotMatch(JSON.stringify(rejected.logs), /PRIVATE_/);
+});
+
+test("before_agent_run blocks a Router timeout with a stable reason", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let markCompletionStarted;
+  const completionStarted = new Promise((resolve) => {
+    markCompletionStarted = resolve;
+  });
+  const timedOut = await register({
+    complete: async () => {
+      markCompletionStarted();
+      return new Promise(() => {});
+    },
+  });
+  const pending = timedOut.hooks.get("before_agent_run")(
+    { prompt: "PRIVATE_TIMEOUT_PROMPT", messages: [] },
+    runContext("run-router-timeout"),
+  );
+  await completionStarted;
+  t.mock.timers.tick(10_000);
+
+  assert.deepEqual(await pending, {
+    outcome: "block",
+    reason: "COGNITIVE_BINDING_REJECTED:ROUTER_TIMEOUT",
+    message: "Cognitive Runtime is unavailable for this Eligible Run.",
+    category: "cognitive_runtime_unavailable",
+    metadata: { reasonCode: "ROUTER_TIMEOUT" },
+  });
+  assert.deepEqual(timedOut.logs.map((entry) => entry.reasonCode), ["ROUTER_TIMEOUT"]);
+  assert.doesNotMatch(JSON.stringify(timedOut.logs), /PRIVATE_TIMEOUT_PROMPT/);
+});
+
+test("before_agent_run preserves an earlier prompt-build rejection instead of retrying", async () => {
+  let attempts = 0;
+  const rejected = await register({
+    complete: async () => {
+      attempts += 1;
+      return attempts === 1
+        ? { text: "not-json" }
+        : { text: JSON.stringify(routerResult()) };
+    },
+  });
+  const event = { prompt: "PRIVATE_FIRST_FAILURE", messages: [] };
+  const context = runContext("run-latched-rejection");
+
+  await assert.rejects(
+    rejected.hooks.get("before_prompt_build")(event, context),
+    /COGNITIVE_BINDING_REJECTED:ROUTER_NON_JSON_OUTPUT/,
+  );
+  assert.deepEqual(await rejected.hooks.get("before_agent_run")(event, context), {
+    outcome: "block",
+    reason: "COGNITIVE_BINDING_REJECTED:ROUTER_NON_JSON_OUTPUT",
+    message: "Cognitive Runtime is unavailable for this Eligible Run.",
+    category: "cognitive_runtime_unavailable",
+    metadata: { reasonCode: "ROUTER_NON_JSON_OUTPUT" },
+  });
+  assert.equal(attempts, 1);
+  assert.doesNotMatch(JSON.stringify(rejected.logs), /PRIVATE_FIRST_FAILURE/);
+});
+
+test("lifecycle cleanup preserves a prompt-build rejection as an invalidated Run", async () => {
+  let attempts = 0;
+  const rejected = await register({
+    complete: async () => {
+      attempts += 1;
+      return attempts === 1
+        ? { text: "not-json" }
+        : { text: JSON.stringify(routerResult()) };
+    },
+  });
+  const event = { prompt: "PRIVATE_CLEANUP_RACE", messages: [] };
+  const context = runContext("run-cleanup-race");
+
+  await assert.rejects(
+    rejected.hooks.get("before_prompt_build")(event, context),
+    /COGNITIVE_BINDING_REJECTED:ROUTER_NON_JSON_OUTPUT/,
+  );
+  rejected.controller.clearLifecycle("restart");
+  const gate = await rejected.hooks.get("before_agent_run")(event, context);
+
+  assert.equal(gate.outcome, "block");
+  assert.equal(gate.metadata.reasonCode, "RUN_BINDING_INVALIDATED");
+  assert.equal(attempts, 1);
+  assert.doesNotMatch(JSON.stringify(rejected.logs), /PRIVATE_CLEANUP_RACE/);
+});
+
+test("health and gated-metrics exceptions become privacy-safe Runtime failures", async () => {
+  const checkFailure = await register({
+    healthGate: {
+      checkRunGate: async () => { throw new Error("PRIVATE_HEALTH_FAILURE"); },
+    },
+  });
+  assert.deepEqual(await checkFailure.hooks.get("before_agent_run")(
+    { prompt: "PRIVATE_HEALTH_PROMPT", messages: [] },
+    runContext("run-health-failure"),
+  ), {
+    outcome: "block",
+    reason: "COGNITIVE_BINDING_REJECTED:RUNTIME_FAILURE",
+    message: "Cognitive Runtime is unavailable for this Eligible Run.",
+    category: "cognitive_runtime_unavailable",
+    metadata: { reasonCode: "RUNTIME_FAILURE" },
+  });
+
+  const metricsFailure = await register({
+    healthGate: {
+      checkRunGate: async () => ({ allowed: false, reasonCodes: ["INDEX_DRIFT"] }),
+      recordLifecycle: () => { throw new Error("PRIVATE_METRICS_FAILURE"); },
+    },
+  });
+  const metricsResult = await metricsFailure.hooks.get("before_agent_run")(
+    { prompt: "PRIVATE_METRICS_PROMPT", messages: [] },
+    runContext("run-metrics-failure"),
+  );
+  assert.equal(metricsResult.metadata.reasonCode, "RUNTIME_FAILURE");
+  assert.doesNotMatch(
+    JSON.stringify([...checkFailure.logs, ...metricsFailure.logs]),
+    /PRIVATE_/,
+  );
+});
+
+test("enforce rejects missing Run ID, Router invalid, input overflow, and scratch exhaustion", async () => {
+  const missing = await register();
+  await assert.rejects(
+    missing.hooks.get("before_prompt_build")(
+      { prompt: "PRIVATE_MISSING_RUN", messages: [] },
+      { ...runContext("missing"), runId: undefined },
+    ),
+    /COGNITIVE_BINDING_REJECTED:RUN_ID_REQUIRED/,
+  );
+
+  const rejected = await register({ complete: async () => ({ text: "not-json" }) });
+  await assert.rejects(
+    rejected.hooks.get("before_prompt_build")(
+      { prompt: "PRIVATE_INVALID_ROUTER", messages: [] },
+      runContext("run-rejected"),
+    ),
+    /COGNITIVE_BINDING_REJECTED:ROUTER_NON_JSON_OUTPUT/,
+  );
+
+  const overflow = await register();
+  await assert.rejects(
+    overflow.hooks.get("before_prompt_build")(
+      { prompt: "x".repeat(16_001), messages: [] },
+      runContext("run-overflow"),
+    ),
+    /COGNITIVE_BINDING_REJECTED:ROUTER_INPUT_LIMIT_EXCEEDED/,
+  );
+
+  const capacity = await register();
+  await capacity.hooks.get("before_prompt_build")(
     { prompt: "Prompt", messages: [] }, runContext("run-capacity-a"),
   );
-  const callsBeforeCapacity = rejected.calls.length;
-  assert.equal(await rejected.hooks.get("before_prompt_build")(
-    { prompt: "Prompt", messages: [] }, runContext("run-capacity-b"),
-  ), undefined);
-  assert.ok(rejected.logs.some((entry) => entry.reasonCode === "RUN_SCRATCH_CAPACITY"));
-  assert.equal(rejected.calls.length, callsBeforeCapacity);
+  const callsBeforeCapacity = capacity.calls.length;
+  await assert.rejects(
+    capacity.hooks.get("before_prompt_build")(
+      { prompt: "Prompt", messages: [] }, runContext("run-capacity-b"),
+    ),
+    /COGNITIVE_BINDING_REJECTED:RUN_SCRATCH_CAPACITY/,
+  );
+  assert.equal(capacity.calls.length, callsBeforeCapacity);
+  assert.doesNotMatch(JSON.stringify([
+    ...missing.logs,
+    ...rejected.logs,
+    ...overflow.logs,
+    ...capacity.logs,
+  ]), /PRIVATE_/);
+});
+
+test("enforce rejects lifecycle invalidation and unexpected Runtime failures with bounded reasons", async () => {
+  let release;
+  const barrier = new Promise((resolve) => { release = resolve; });
+  const hooks = new Map();
+  const controller = registerRuntimeHooks({
+    runtime: { version: "2026.6.34", llm: { complete: async () => {
+      await barrier;
+      return { text: JSON.stringify(routerResult()) };
+    } } },
+    on(name, handler) { hooks.set(name, handler); },
+    registerCli() {},
+  }, readRuntimeConfig({ runtime: runtimeConfig() }), {
+    bindingCompiler: { compile: async () => staticBinding() },
+  });
+  const pending = hooks.get("before_prompt_build")(
+    { prompt: "PRIVATE_LIFECYCLE_SENTINEL", messages: [] },
+    runContext("run-lifecycle-rejected"),
+  );
+  controller.clearLifecycle("disable");
+  release();
+  await assert.rejects(
+    pending,
+    /COGNITIVE_BINDING_REJECTED:RUN_LIFECYCLE_INVALIDATED/,
+  );
+
+  const unexpected = await register({
+    bindingCompiler: {
+      compile: async () => ({ ...staticBinding(), context: null }),
+    },
+  });
+  await assert.rejects(
+    unexpected.hooks.get("before_prompt_build")(
+      { prompt: "PRIVATE_RUNTIME_FAILURE_SENTINEL", messages: [] },
+      runContext("run-runtime-failure"),
+    ),
+    /COGNITIVE_BINDING_REJECTED:RUNTIME_FAILURE/,
+  );
+  assert.deepEqual(unexpected.logs.map((entry) => entry.reasonCode), ["RUNTIME_FAILURE"]);
+  assert.doesNotMatch(JSON.stringify(unexpected.logs), /PRIVATE_RUNTIME_FAILURE_SENTINEL/);
 });
 
 test("unserializable recent context degrades safely without interrupting the host", async () => {
@@ -573,7 +802,10 @@ test("lifecycle cleanup invalidates an in-flight Router completion", async () =>
   await lifecycle.cleanup({ reason: "disable" });
   release();
 
-  assert.equal(await pending, undefined);
+  await assert.rejects(
+    pending,
+    /COGNITIVE_BINDING_REJECTED:RUN_LIFECYCLE_INVALIDATED/,
+  );
   assert.equal(await hooks.get("before_agent_finalize")(
     {}, runContext("run-in-flight-cleanup"),
   ), undefined);

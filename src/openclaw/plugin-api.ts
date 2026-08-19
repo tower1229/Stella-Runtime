@@ -80,6 +80,7 @@ export interface CognitiveRuntimePluginApi {
 }
 
 export type PluginHookName =
+  | "before_agent_run"
   | "before_prompt_build"
   | "after_tool_call"
   | "before_agent_finalize"

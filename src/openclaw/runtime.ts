@@ -11,6 +11,7 @@ import {
 } from "../packet/index.js";
 import {
   StrictRouter,
+  type RouterDegradedReason,
   type RouterOutcome,
   type RouterRegistry,
 } from "../router/index.js";
@@ -31,6 +32,94 @@ const ROUTER_MAX_TOKENS = 512;
 const ROUTER_MAX_INPUT_CHARACTERS = 16_000;
 const ROUTER_MAX_OUTPUT_CHARACTERS = 16_000;
 const PACKET_MAX_CHARACTERS = 32_000;
+
+const BINDING_FAILURE_REASONS = [
+  "ACTIVATION_CONFIG_IDENTITY_STALE",
+  "ACTIVATION_HOST_IDENTITY_STALE",
+  "ACTIVATION_RECEIPT_INVALID",
+  "ACTIVATION_RECEIPT_MISMATCH",
+  "ACTIVATION_RECEIPT_MISSING",
+  "ACTIVE_BINDING_GENERATION_MISMATCH",
+  "ACTIVE_BINDING_INSTANCE_MISMATCH",
+  "ACTIVE_GENERATION_INVALID",
+  "ACTIVE_GENERATION_POINTER_INVALID",
+  "ACTIVE_GENERATION_POINTER_MISSING",
+  "ACTIVE_GOVERNING_CHECKSUM_MISMATCH",
+  "ACTIVE_GOVERNING_INVALID",
+  "ACTIVE_MANIFEST_CHECKSUM_MISMATCH",
+  "ACTIVE_PROJECTION_CHECKSUM_MISMATCH",
+  "ACTIVE_PROJECTION_GENERATION_MISMATCH",
+  "ACTIVE_PROJECTION_INVALID",
+  "ACTIVE_PROJECTION_MISSING",
+  "ACTIVE_PROJECTION_REGISTRY_MISMATCH",
+  "ACTIVE_REGISTRY_CHECKSUM_MISMATCH",
+  "ACTIVE_REGISTRY_GENERATION_MISMATCH",
+  "ACTIVE_REGISTRY_INVALID",
+  "RUNTIME_CONFIG_IDENTITY_INVALID",
+  "STATE_VIEW_INVALID",
+  "STATE_VIEW_REGISTRY_ID_COLLISION",
+] as const;
+
+const HEALTH_GATE_REASONS = [
+  "ACTIVE_GENERATION_UNAVAILABLE",
+  "AUTHORITY_INPUT_INVALID",
+  "CONFIG_DRIFT",
+  "HEALTH_RECONCILIATION_MISSING",
+  "INCOMPATIBLE_HOST",
+  "INDEX_DRIFT",
+  "PLUGIN_DISCOVERY_FAILED",
+  "PUBLIC_CORPUS_UNHEALTHY",
+  "RUNTIME_STORAGE_UNAVAILABLE",
+  "STALE_RECEIPT",
+] as const;
+
+const SCRATCH_FAILURE_REASONS = ["RUN_SCRATCH_CAPACITY"] as const;
+
+type RuntimeRejectionReason =
+  | RouterDegradedReason
+  | typeof BINDING_FAILURE_REASONS[number]
+  | typeof HEALTH_GATE_REASONS[number]
+  | typeof SCRATCH_FAILURE_REASONS[number]
+  | "BINDING_COMPILATION_FAILED"
+  | "MAINTENANCE_GATE_CLOSED"
+  | "MAINTENANCE_GATE_INVALID"
+  | "RUN_BINDING_INVALIDATED"
+  | "RUN_ID_REQUIRED"
+  | "RUN_LIFECYCLE_INVALIDATED"
+  | "RUNTIME_FAILURE"
+  | "RUNTIME_HEALTH_GATED";
+
+class EligibleRunRejectedError extends Error {
+  constructor(readonly reasonCode: RuntimeRejectionReason) {
+    super(`COGNITIVE_BINDING_REJECTED:${reasonCode}`);
+  }
+}
+
+const boundedValue = <
+  TAllowed extends RuntimeRejectionReason,
+  TFallback extends RuntimeRejectionReason,
+>(
+  candidate: string | undefined,
+  allowed: readonly TAllowed[],
+  fallback: TFallback,
+): TAllowed | TFallback =>
+  candidate !== undefined && allowed.some((reason) => reason === candidate)
+    ? candidate as TAllowed
+    : fallback;
+
+const boundedReason = <
+  TAllowed extends RuntimeRejectionReason,
+  TFallback extends RuntimeRejectionReason,
+>(
+  error: unknown,
+  allowed: readonly TAllowed[],
+  fallback: TFallback,
+): TAllowed | TFallback => {
+  const candidate = error instanceof Error
+    ? error.message.split(":", 1)[0]
+    : undefined;
+  return boundedValue(candidate, allowed, fallback);
+};
 
 interface HookBinding {
   readonly syncGeneration: string;
@@ -235,16 +324,24 @@ export const registerRuntimeHooks = (
   }
   const injectedPackets = new Map<string, string>();
   const promptBuilds = new Map<string, Promise<{ readonly prependContext: string } | undefined>>();
+  const rejectedRuns = new Map<string, RuntimeRejectionReason>();
   const invalidatedRuns = new Set<string>();
   const cleanlyReleasingRuns = new Set<string>();
+  const trimOldestRunIds = (collection: {
+    readonly size: number;
+    keys(): IterableIterator<string>;
+    delete(runId: string): boolean;
+  }): void => {
+    while (collection.size > config.limits.max_active_runs * 4) {
+      const oldest = collection.keys().next().value;
+      if (oldest === undefined) break;
+      collection.delete(oldest);
+    }
+  };
   const invalidateRun = (runId: string): void => {
     if (cleanlyReleasingRuns.delete(runId)) return;
     invalidatedRuns.add(runId);
-    while (invalidatedRuns.size > config.limits.max_active_runs * 4) {
-      const oldest = invalidatedRuns.values().next().value as string | undefined;
-      if (oldest === undefined) break;
-      invalidatedRuns.delete(oldest);
-    }
+    trimOldestRunIds(invalidatedRuns);
   };
   const scratch = new RunScratchMap<HookBinding>({
     capacity: config.limits.max_active_runs,
@@ -275,6 +372,28 @@ export const registerRuntimeHooks = (
       ...(runId === undefined ? {} : { runId }),
     }));
   };
+  const rejectUnavailable = (
+    reasonCode: RuntimeRejectionReason,
+    runId?: string,
+  ): undefined => {
+    let boundedReasonCode = reasonCode;
+    if (config.mode === "enforce") {
+      try {
+        options.healthGate?.recordLifecycle?.("gated");
+      } catch {
+        boundedReasonCode = "RUNTIME_FAILURE";
+      }
+    }
+    runsDegraded += 1;
+    log(boundedReasonCode, runId);
+    if (config.mode === "enforce") {
+      if (runId !== undefined && !rejectedRuns.has(runId)) {
+        rejectedRuns.set(runId, boundedReasonCode);
+        trimOldestRunIds(rejectedRuns);
+      }
+      throw new EligibleRunRejectedError(boundedReasonCode);
+    }
+  };
 
   const buildPromptContext = async (
     event: Readonly<Record<string, unknown>>,
@@ -293,49 +412,38 @@ export const registerRuntimeHooks = (
         : undefined;
     }
     if (admissionClosed) {
-      runsDegraded += 1;
-      log("MAINTENANCE_GATE_CLOSED", runId);
-      throw new Error("COGNITIVE_BINDING_REJECTED:MAINTENANCE_GATE_CLOSED");
+      return rejectUnavailable("MAINTENANCE_GATE_CLOSED", runId);
     }
     let maintenanceGate;
     try {
       maintenanceGate = await loadMaintenanceGate(config.runtime_storage);
     } catch (error: unknown) {
-      const reason = error instanceof Error
-        ? error.message
-        : "MAINTENANCE_GATE_INVALID";
-      runsDegraded += 1;
-      log(reason, runId);
-      throw new Error(`COGNITIVE_BINDING_REJECTED:${reason}`);
+      return rejectUnavailable("MAINTENANCE_GATE_INVALID", runId);
     }
     if (maintenanceGate !== null) {
-      runsDegraded += 1;
-      log("MAINTENANCE_GATE_CLOSED", runId);
-      throw new Error("COGNITIVE_BINDING_REJECTED:MAINTENANCE_GATE_CLOSED");
+      return rejectUnavailable("MAINTENANCE_GATE_CLOSED", runId);
     }
     if (options.healthGate !== undefined) {
       const health = await options.healthGate.checkRunGate();
-      for (const reasonCode of health.reasonCodes) log(reasonCode, runId);
-      if (!health.allowed && config.mode === "enforce") {
-        const reason = health.reasonCodes[0] ?? "RUNTIME_HEALTH_GATED";
-        runsDegraded += 1;
-        options.healthGate.recordLifecycle?.("gated");
+      if (!health.allowed) {
+        const candidate = health.reasonCodes[0];
+        const reason = boundedValue(
+          candidate,
+          HEALTH_GATE_REASONS,
+          "RUNTIME_HEALTH_GATED",
+        );
         await options.healthGate.reconcile?.("detected_drift").catch(() => undefined);
-        throw new Error(`COGNITIVE_BINDING_REJECTED:${reason}`);
+        if (config.mode === "enforce") {
+          return rejectUnavailable(reason, runId);
+        }
+        rejectUnavailable(reason, runId);
       }
     }
     if (invalidatedRuns.has(runId)) {
-      runsDegraded += 1;
-      log("RUN_BINDING_INVALIDATED", runId);
-      if (config.mode === "enforce") {
-        throw new Error("COGNITIVE_BINDING_REJECTED:RUN_BINDING_INVALIDATED");
-      }
-      return;
+      return rejectUnavailable("RUN_BINDING_INVALIDATED", runId);
     }
     if (scratch.size + promptBuilds.size >= config.limits.max_active_runs) {
-      runsDegraded += 1;
-      log("RUN_SCRATCH_CAPACITY", runId);
-      return;
+      return rejectUnavailable("RUN_SCRATCH_CAPACITY", runId);
     }
     const prompt = typeof event.prompt === "string" ? event.prompt : "";
     const recentContext = Array.isArray(event.messages)
@@ -346,8 +454,7 @@ export const registerRuntimeHooks = (
       0,
     );
     if (inputCharacters > ROUTER_MAX_INPUT_CHARACTERS) {
-      log("ROUTER_INPUT_LIMIT_EXCEEDED", runId);
-      return;
+      return rejectUnavailable("ROUTER_INPUT_LIMIT_EXCEEDED", runId);
     }
     let activeBinding: ActiveRunBinding;
     try {
@@ -357,17 +464,13 @@ export const registerRuntimeHooks = (
         nodeVersion: process.versions.node,
       });
     } catch (error: unknown) {
-      runsDegraded += 1;
-      const reason = error instanceof Error
-        ? (error.message.split(":", 1)[0] ?? "BINDING_COMPILATION_FAILED")
-        : "BINDING_COMPILATION_FAILED";
-      log(reason, runId);
+      const reason = boundedReason(
+        error,
+        BINDING_FAILURE_REASONS,
+        "BINDING_COMPILATION_FAILED",
+      );
       await options.healthGate?.reconcile?.("detected_drift").catch(() => undefined);
-      if (config.mode === "enforce") {
-        options.healthGate?.recordLifecycle?.("gated");
-        throw new Error(`COGNITIVE_BINDING_REJECTED:${reason}`);
-      }
-      return;
+      return rejectUnavailable(reason, runId);
     }
     try {
       const router = new StrictRouter({
@@ -393,9 +496,7 @@ export const registerRuntimeHooks = (
         registry: activeBinding.registry,
       });
       if (startedEpoch !== lifecycleEpoch) {
-        runsDegraded += 1;
-        log("RUN_LIFECYCLE_INVALIDATED", runId);
-        return;
+        return rejectUnavailable("RUN_LIFECYCLE_INVALIDATED", runId);
       }
       let packet: string | null = null;
       if (routerResult.status === "ok") {
@@ -409,8 +510,7 @@ export const registerRuntimeHooks = (
           maxCharacters: PACKET_MAX_CHARACTERS,
         });
       } else {
-        runsDegraded += 1;
-        log(routerResult.reasonCode, runId);
+        rejectUnavailable(routerResult.reasonCode, runId);
       }
       await scratch.acquire(runId, {
         syncGeneration: activeBinding.syncGeneration,
@@ -428,40 +528,79 @@ export const registerRuntimeHooks = (
         return { prependContext: packet };
       }
     } catch (error: unknown) {
-      runsDegraded += 1;
-      const reason = error instanceof Error
-        ? (error.message.split(":", 1)[0] ?? "RUNTIME_FAILURE")
-        : "RUNTIME_FAILURE";
-      log(reason, runId);
+      if (error instanceof EligibleRunRejectedError) throw error;
+      const reason = boundedReason(
+        error,
+        SCRATCH_FAILURE_REASONS,
+        "RUNTIME_FAILURE",
+      );
+      return rejectUnavailable(reason, runId);
     }
   };
 
-  api.on("before_prompt_build", async (event, context) => {
+  const prepareEligibleRun = async (
+    event: Readonly<Record<string, unknown>>,
+    context: PluginHookContext,
+  ): Promise<
+    | { readonly eligible: false }
+    | {
+        readonly eligible: true;
+        readonly promptContext: { readonly prependContext: string } | undefined;
+      }
+  > => {
     if (routerCompletionScope.getStore() === true) {
-      return;
+      return { eligible: false };
     }
-    if (config.mode === "off") {
-      return;
-    }
-    if (!isEligibleRun(context, config)) {
-      return;
+    if (config.mode === "off" || !isEligibleRun(context, config)) {
+      return { eligible: false };
     }
     const runId = runIdFrom(event, context);
     if (runId === null) {
-      log("RUN_ID_REQUIRED");
-      return;
+      rejectUnavailable("RUN_ID_REQUIRED");
+      return { eligible: true, promptContext: undefined };
     }
-    const inFlight = promptBuilds.get(runId);
-    if (inFlight !== undefined) {
-      return inFlight;
+    const rejectedReason = rejectedRuns.get(runId);
+    if (rejectedReason !== undefined) {
+      throw new EligibleRunRejectedError(rejectedReason);
     }
-    const pending = buildPromptContext(event, context, runId);
-    promptBuilds.set(runId, pending);
     try {
-      return await pending;
-    } finally {
-      promptBuilds.delete(runId);
+      const inFlight = promptBuilds.get(runId);
+      if (inFlight !== undefined) {
+        return { eligible: true, promptContext: await inFlight };
+      }
+      const pending = buildPromptContext(event, context, runId);
+      promptBuilds.set(runId, pending);
+      try {
+        return { eligible: true, promptContext: await pending };
+      } finally {
+        promptBuilds.delete(runId);
+      }
+    } catch (error: unknown) {
+      if (error instanceof EligibleRunRejectedError) throw error;
+      rejectUnavailable("RUNTIME_FAILURE", runId);
+      return { eligible: true, promptContext: undefined };
     }
+  };
+
+  api.on("before_agent_run", async (event, context) => {
+    try {
+      const preparation = await prepareEligibleRun(event, context);
+      return preparation.eligible ? { outcome: "pass" } : undefined;
+    } catch (error: unknown) {
+      if (!(error instanceof EligibleRunRejectedError)) throw error;
+      return {
+        outcome: "block",
+        reason: error.message,
+        message: "Cognitive Runtime is unavailable for this Eligible Run.",
+        category: "cognitive_runtime_unavailable",
+        metadata: { reasonCode: error.reasonCode },
+      };
+    }
+  });
+
+  api.on("before_prompt_build", async (event, context) => {
+    const preparation = await prepareEligibleRun(event, context);
+    return preparation.eligible ? preparation.promptContext : undefined;
   });
 
   api.on("after_tool_call", async (event, context) => {
@@ -578,6 +717,7 @@ export const registerRuntimeHooks = (
     } finally {
       injectedPackets.delete(runId);
       promptBuilds.delete(runId);
+      rejectedRuns.delete(runId);
       invalidatedRuns.delete(runId);
       cleanlyReleasingRuns.add(runId);
       await scratch.release(runId);
@@ -597,6 +737,9 @@ export const registerRuntimeHooks = (
       lifecycleEpoch += 1;
       injectedPackets.clear();
       promptBuilds.clear();
+      for (const runId of rejectedRuns.keys()) invalidatedRuns.add(runId);
+      trimOldestRunIds(invalidatedRuns);
+      rejectedRuns.clear();
       return scratch.clearLifecycle(lifecycle);
     },
     closeAdmission: (_targetSourceRevision) => {

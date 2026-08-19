@@ -563,7 +563,7 @@ async function runHostSuccessors(environment, evidencePath, port, token) {
   assert.equal(
     evidence
       .filter((entry) =>
-        entry.hook === "agent_end" && entry.runId !== abortedRun.runId
+        entry.hook === "agent_end" && [commandRun.runId, uiRun.runId].includes(entry.runId)
       )
       .every((entry) => entry.success && entry.activeRunCount === 0),
     true,
@@ -1207,10 +1207,16 @@ async function verifyExactHostDriftGates({
       ],
       { env: environment },
     );
+    const requestsAfterGate = modelServer.requests.slice(requestStart);
     assert.equal(
-      modelServer.requests.slice(requestStart).some((request) =>
+      requestsAfterGate.some((request) =>
         JSON.stringify(request).includes("[semantic:sem-packed-accepted]")),
       false,
+    );
+    assert.deepEqual(
+      requestsAfterGate,
+      [],
+      "a gated Eligible Run must not reach the final Agent model or produce a native answer",
     );
   };
 
