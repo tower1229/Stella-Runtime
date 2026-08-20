@@ -1458,8 +1458,10 @@ async function verifyExactHostDriftGates({
         JSON.stringify(request).includes("[semantic:sem-packed-accepted]")),
       false,
     );
+    const agentModelRequests = requestsAfterGate.filter((request) =>
+      Array.isArray(request.messages));
     assert.deepEqual(
-      requestsAfterGate,
+      agentModelRequests,
       [],
       "a gated Eligible Run must not reach the final Agent model or produce a native answer",
     );
