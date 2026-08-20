@@ -47,6 +47,11 @@ test("stable release verifies the immutable tag, package, tarball, and published
   assert.match(workflow, /test -f "\$TARBALL"/);
   assert.match(workflow, /npm ci/);
   assert.match(workflow, /npm install --global openclaw@2026\.6\.34/);
+  assert.equal(
+    [...workflow.matchAll(/node-version:\s*24\.18\.0/g)].length,
+    2,
+  );
+  assert.doesNotMatch(workflow, /node-version:\s*24\s*(?:#.*)?$/m);
   assert.match(workflow, /2026\.6\.34 \(5c38f99\)/);
   assert.match(workflow, /npm run verify:env -- release --json/);
   assert.match(workflow, /\.stella\/verification\/release\.json/);

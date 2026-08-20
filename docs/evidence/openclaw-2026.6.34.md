@@ -2,8 +2,8 @@
 
 > Status: accepted first-host baseline
 > Exact build observed: `2026.6.34 (5c38f99)`
-> Published package version: `0.1.0`
-> Accepted source target: `0.2.0` on Node.js `24.18.0`
+> Stable release candidate: `0.2.0` on Node.js `24.18.0`
+> Previous rollback version: published `0.1.0`
 
 ## Runtime 0.2 Generation Consumption acceptance
 
@@ -26,7 +26,8 @@ Test Pack verifies push-before-sync, legacy retrieval removal, `active-memory`
 disablement, matching `USER.md`/`MEMORY.md` Bootstrap targets, and independent
 Public Corpus continuity through the public Runner.
 
-Reproduce the complete source-bound repository evidence with:
+Reproduce the complete source-bound verification receipt for the checked-out
+revision with:
 
 ```bash
 npm run verify:env -- release --json

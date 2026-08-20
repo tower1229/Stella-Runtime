@@ -5,8 +5,9 @@ explicit, versioned, traceable, and correctable knowledge to one host-owned Agen
 Run without turning model inference or generated projections into hidden
 authority.
 
-> Current source target: `0.2.0`; the published stable release remains `0.1.0`.
-> Source compatibility is accepted only for OpenClaw extended-stable
+> Stable release candidate: `0.2.0`; it is not yet published. The previous
+> published rollback version is `0.1.0`. Compatibility is accepted only for
+> OpenClaw extended-stable
 > `2026.6.34` on Node.js `24.18.0`; compatibility is exact, not minimum-version
 > based.
 
@@ -29,13 +30,13 @@ system, vector database, persona engine, or action authority.
 
 Requirements:
 
-- Node.js `^22.19.0 || ^24.0.0`;
+- Node.js `24.18.0` exactly;
 - OpenClaw extended-stable `2026.6.34` exactly.
 
-Install through OpenClaw:
+After `0.2.0` is published, install the exact stable version through OpenClaw:
 
 ```sh
-openclaw plugins install @tower1229/stella-cognitive-runtime@0.1.0
+openclaw plugins install @tower1229/stella-cognitive-runtime@0.2.0
 openclaw plugins inspect cognitive-runtime --runtime --json
 openclaw cognitive self-check
 ```
@@ -43,7 +44,7 @@ openclaw cognitive self-check
 Library or Runner consumers can install the exact package with:
 
 ```sh
-npm install --save-exact @tower1229/stella-cognitive-runtime@0.1.0
+npm install --save-exact @tower1229/stella-cognitive-runtime@0.2.0
 ```
 
 Begin in `off`, configure the Instance Runtime Config and Git-external Runtime
@@ -129,7 +130,8 @@ consumer repository is optional and never an implementation dependency.
 
 ## Upgrade, rollback, and recovery
 
-Use exact package versions and integrity, retain the previous verified artifact
+For the `0.2.0` stable line, the exact package rollback version is the published
+`0.1.0`. Use exact package versions and integrity, retain that verified artifact
 and receipt, create and read-only verify a Runtime Recovery Snapshot, then prove
 State/outbox and restart continuity before enabling `observe` or `enforce`.
 Package rollback and state recovery are separate operations. The full sequence is

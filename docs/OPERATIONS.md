@@ -3,14 +3,19 @@
 This guide operates exact artifacts. Replace no version or integrity value with
 a range, tag such as `latest`, or floating branch.
 
-## Install 0.1.0
+## Install 0.2.0
 
-1. Confirm Node.js satisfies `^22.19.0 || ^24.0.0` and OpenClaw reports exactly
-   `2026.6.34 (5c38f99)`.
+`0.2.0` is a stable release candidate and is not yet published. Run these
+registry installation commands only after the immutable `v0.2.0` release has
+been published.
+
+1. Confirm Node.js is exactly `24.18.0` and OpenClaw reports exactly
+   `2026.6.34 (5c38f99)`. The package `engines` range is only an install boundary;
+   Compatibility Matrix admission remains exact.
 2. Install the exact public package:
 
    ```sh
-   openclaw plugins install @tower1229/stella-cognitive-runtime@0.1.0
+   openclaw plugins install @tower1229/stella-cognitive-runtime@0.2.0
    ```
 
 3. Configure `runtime.mode` as `off`, the bounded limits, immutable binding,
@@ -21,7 +26,7 @@ a range, tag such as `latest`, or floating branch.
    `enforce` when any exact-host capability or continuity check fails.
 
 For a plain npm consumer, use
-`npm install --save-exact @tower1229/stella-cognitive-runtime@0.1.0`.
+`npm install --save-exact @tower1229/stella-cognitive-runtime@0.2.0`.
 
 ## Upgrade
 
@@ -125,14 +130,13 @@ compatibility or integrity requires it; package rollback and data recovery are
 separate operations. Re-run self-check, exact-host conformance, and restart
 continuity before moving to `observe`.
 
-The V1 previous verified rollback record is
-`@tower1229/stella-cognitive-runtime@0.1.0-beta.0` at source revision
-`1260ba888ea84e0a0d0da0f72c6c9c0db532d323`, published under the `beta` dist-tag
-with integrity
-`sha512-kU+wNjr2fbs+1pIGJEksWTPCe9lOPCsorlaZJayh8wLkzhf0kD8k3GVH6Qb+hRYrq/RlCUe3doSSgEHkNeK1SA==`.
-Pack-install builds that fixed source revision as an exact beta tarball, installs
-it, upgrades to `0.1.0`, and checks the installed package and lockfile integrity.
-The first stable release has no earlier stable npm version.
+The `0.2.0` previous verified rollback version is the published stable
+`@tower1229/stella-cognitive-runtime@0.1.0` at source revision
+`513728dc729d3fa66555ecaac10da2bb5f5e4ef3`, with registry integrity
+`sha512-I3hRyGfmfR1ZCTlROA+R3nZ3PlNXxrfTXap/sQ5HCM0bMrW7wCZRz+JNaYjXaZUuod3+r/ngKxwI227eViwGdQ==`.
+Pack-install builds that fixed source revision as an exact stable tarball,
+installs it, upgrades to the `0.2.0` release-candidate tarball, and checks the
+installed package and lockfile integrity.
 
 ## Release operator checklist
 
@@ -152,10 +156,12 @@ The first stable release has no earlier stable npm version.
   release-stable.yml --repo tower1229/Stella-Runtime --env npm --allow-publish`.
   Then disallow legacy publish tokens. This bootstrap is a one-time external
   operation, not a CI fallback path.
+- the `0.2.0` release-candidate revision is pushed to `master`, the worktree is
+  clean, `HEAD` equals `origin/master`, and Verification succeeds for that SHA;
 - all tests and clean pack-install gates pass on the release commit;
 - package, lockfile, Plugin manifest, Skill, and compatibility matrix say
-  `0.1.0`;
-- tag `v0.1.0` points at that exact commit;
+  `0.2.0`;
+- only after this checklist passes, tag `v0.2.0` at that exact commit;
 - npm trusted publisher is restricted to `release-stable.yml` and environment
   `npm`, with no long-lived publish token;
 - workflow-published integrity equals the registry integrity;

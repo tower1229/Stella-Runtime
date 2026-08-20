@@ -2,17 +2,19 @@
 
 ## Supported matrix
 
-Published version `0.1.0` supports only OpenClaw release channel
-`extended-stable`, exact version `2026.6.34`. The `0.2.0` source target has
-passed packed Generation Consumption acceptance only on exact OpenClaw
-`2026.6.34` with Node.js `24.18.0`; this is source evidence, not a publication
-claim. The committed compatibility manifest and synthetic host smoke evidence
-are normative. No version range, later version, or rolling documentation implies
-support.
+The `0.2.0` stable release candidate is not yet published. It supports only
+OpenClaw release channel `extended-stable`, exact version `2026.6.34`, with
+Node.js `24.18.0`, and has passed packed Generation Consumption acceptance for
+that exact combination. Published `0.1.0` remains the rollback version until the
+external `0.2.0` release is executed. The committed compatibility manifest and
+synthetic host smoke evidence are normative. No version range, later version, or
+rolling documentation implies support.
 
-Node.js support is `^22.19.0 || ^24.0.0`. The public contracts under
-`cognitive-runtime.<contract>/v2` remain compatible unless a versioned migration
-and rejection behavior are published.
+The package `engines` value `^22.19.0 || ^24.0.0` is a package-install boundary,
+not a compatibility or support declaration. This release candidate admits only
+the exact Node.js version in the Compatibility Matrix. The public contracts
+under `cognitive-runtime.<contract>/v2` remain compatible unless a versioned
+migration and rejection behavior are published.
 
 Security, correctness, privacy-boundary, recovery, and exact-host compatibility
 bugs are supported for the V1 line. New host versions require a new matrix row,

@@ -73,6 +73,7 @@ test("plugin manifest declares a strict config and packaged Skill", async () => 
 
 test("every public release surface carries the source package version", async () => {
   const packageJson = await readJson(new URL("../../package.json", import.meta.url));
+  const packageLock = await readJson(new URL("../../package-lock.json", import.meta.url));
   const manifest = await readJson(new URL("../../openclaw.plugin.json", import.meta.url));
   const compatibility = await readJson(
     new URL("../../compatibility/openclaw.json", import.meta.url),
@@ -83,6 +84,8 @@ test("every public release surface carries the source package version", async ()
   );
 
   assert.equal(packageJson.version, "0.2.0");
+  assert.equal(packageLock.version, packageJson.version);
+  assert.equal(packageLock.packages[""].version, packageJson.version);
   assert.equal(manifest.version, packageJson.version);
   assert.equal(compatibility.packageVersion, packageJson.version);
   assert.match(skill, /^\s+package_version: 0\.2\.0$/m);

@@ -19,7 +19,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.18.0
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - run: npm ci
@@ -70,7 +70,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.18.0
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - uses: actions/download-artifact@v8

@@ -5,6 +5,8 @@ Versioning; cognitive contract namespaces remain independently versioned.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-20
+
 - replaces the never-activated v1 protocol with one closed v2 Contract Set;
 - adds v2 contracts for bounded Candidate approval, Change Sets, State,
   Generation/Projection identity, activation evidence, and instance cutover;
@@ -45,4 +47,6 @@ First stable technical release of Stella Runtime V1.
   recovery, restart continuity, upgrade, rollback, integrity, and public-data
   boundaries using synthetic fixtures only.
 
+[Unreleased]: https://github.com/tower1229/Stella-Runtime/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/tower1229/Stella-Runtime/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tower1229/Stella-Runtime/releases/tag/v0.1.0
