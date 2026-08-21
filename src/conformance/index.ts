@@ -5,6 +5,7 @@ import type {
   ReleasePin,
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
+import { checksumCanonicalJson } from "../core/canonical-json.js";
 
 const DEPLOYMENT_MODES = ["off", "observe", "enforce"] as const;
 type DeploymentMode = (typeof DEPLOYMENT_MODES)[number];
@@ -111,24 +112,8 @@ const assertProvenance = (
 
 type ScenarioReceipt = ConsumerConformanceReceipt["scenarios"][number];
 
-const canonicalize = (value: unknown): unknown => {
-  if (value === null || typeof value !== "object") {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(canonicalize);
-  }
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => [key, canonicalize(item)]),
-  );
-};
-
 const releasePinChecksum = (pin: ReleasePin): string =>
-  `sha256:${createHash("sha256")
-    .update(JSON.stringify(canonicalize(pin)))
-    .digest("hex")}`;
+  checksumCanonicalJson(pin);
 
 const assertReleasePin = (pin: ReleasePin, label: string): void => {
   if (!validateContract("release-pin", pin).valid) {

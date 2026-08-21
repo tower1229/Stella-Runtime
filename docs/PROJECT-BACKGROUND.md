@@ -37,7 +37,8 @@ establish correctness and traceability; they do not substitute for that judgment
 | npm | `@tower1229/stella-cognitive-runtime` |
 | OpenClaw Plugin ID | `cognitive-runtime` |
 | Plugin config root | `plugins.entries.cognitive-runtime` |
-| Schema namespace | `cognitive-runtime.<contract>/v1` |
+| Schema namespace (current) | `cognitive-runtime.<contract>/v2` |
+| Schema namespace (historical 0.1) | `cognitive-runtime.<contract>/v1` |
 | License | MIT |
 | Node.js engines | `^22.19.0 || ^24.0.0` |
 
@@ -171,11 +172,16 @@ initial issues are:
 5. [#5: authoritative Runtime state export, verification, and restore](https://github.com/tower1229/Stella-Runtime/issues/5)
    follows after the recovery contract is frozen.
 
-The remaining V1 implementation issues are [#6: State and provenance](https://github.com/tower1229/Stella-Runtime/issues/6),
+The historical V1 implementation sequence completed with [#6: State and provenance](https://github.com/tower1229/Stella-Runtime/issues/6),
 [#7: Plugin Runtime and beta](https://github.com/tower1229/Stella-Runtime/issues/7),
 [#8: Generation and framework admission](https://github.com/tower1229/Stella-Runtime/issues/8),
 [#9: release-candidate conformance](https://github.com/tower1229/Stella-Runtime/issues/9),
 and [#10: stable V1 release](https://github.com/tower1229/Stella-Runtime/issues/10).
+The completed `0.2.0` sequence is tracked by #11–#26 and the release chain
+#29–#31; it owns the v2 contracts, deterministic Candidate admission, Current
+State management, Generation/Projection, Active Run Binding, Authority
+publication, durable sync, OpenClaw consumption, instance cutover, diagnostics,
+exact compatibility, persistent Approval, health recovery, and stable publish.
 
 Private-instance configuration, migration maps, deployment, rollback evidence,
 and product acceptance remain tracked by each consumer. They are downstream

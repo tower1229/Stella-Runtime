@@ -1,4 +1,8 @@
-import { createHash } from "node:crypto";
+import {
+  canonicalizeJson,
+  checksumCanonicalJson,
+  compareCanonicalStrings,
+} from "../core/canonical-json.js";
 
 export interface CanonicalStateValue {
   readonly state_id: string;
@@ -6,25 +10,11 @@ export interface CanonicalStateValue {
   readonly source_event_id: string;
 }
 
-export const compareCanonicalStrings = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;
+export { compareCanonicalStrings };
 
-export const canonicalize = (value: unknown): unknown => {
-  if (Array.isArray(value)) {
-    return value.map(canonicalize);
-  }
-  if (typeof value !== "object" || value === null) {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([left], [right]) => compareCanonicalStrings(left, right))
-      .map(([key, child]) => [key, canonicalize(child)]),
-  );
-};
+export const canonicalize = canonicalizeJson;
 
-export const checksumCanonical = (value: unknown): string =>
-  `sha256:${createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex")}`;
+export const checksumCanonical = checksumCanonicalJson;
 
 export const calculateStateViewChecksum = (
   instanceId: string,

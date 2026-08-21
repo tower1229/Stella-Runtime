@@ -5,7 +5,8 @@ state. Crossing these boundaries changes authority semantics and is unsupported.
 
 | Owner | Contains | Must never contain |
 | --- | --- | --- |
-| Runtime repository and npm package | Generic source, contracts, adapter, CLI, Skill, synthetic fixtures, compatibility evidence | Private identity, knowledge, conversations, credentials, live databases, real experience records |
+| Runtime repository | Generic source, contracts, adapters, CLI, Skill, synthetic fixtures, tests, compatibility evidence, and release automation | Private identity, knowledge, conversations, credentials, live databases, real experience records |
+| npm package | Compiled Runtime, generated declarations, v2 schemas, compatibility manifest, selected documentation/evidence, Skill, and public Runner | Repository source/tests/scripts, synthetic fixture packs, private identity, knowledge, credentials, or live state |
 | Authority Repository | Private knowledge, identity, configuration, package pin, migration intent | Copied Runtime source or live Runtime databases |
 | Git-external Runtime State | Current State ledger/head, unfinished correction and outbox state, protected Candidate admission/Receipt records, rebuildable projections, minimized overlays | Source-code authority or credentials |
 

@@ -101,7 +101,7 @@ const binding = (suffix = "one", generationId = generation) => {
   };
 };
 
-const createRuntime = ({ mode = "enforce", compile, paths = {}, healthGate } = {}) => {
+const createRuntime = ({ mode = "enforce", compile, complete, paths = {}, healthGate } = {}) => {
   const hooks = new Map();
   const logs = [];
   const calls = [];
@@ -110,7 +110,9 @@ const createRuntime = ({ mode = "enforce", compile, paths = {}, healthGate } = {
       version: "2026.6.34",
       llm: { complete: async (request) => {
         calls.push(request);
-        return { text: JSON.stringify(routerResult) };
+        return complete === undefined
+          ? { text: JSON.stringify(routerResult) }
+          : complete(request);
       } },
     },
     on(name, handler) { hooks.set(name, handler); },
@@ -219,6 +221,18 @@ test("exact OpenClaw hook fields exclude callbacks, probes, shared chats, and ot
   }
   assert.equal(compileCalls, 0);
   assert.equal(runtime.calls.length, 0);
+});
+
+test("Gateway CLI private-session runs fail closed before the Agent model request", async () => {
+  const runtime = createRuntime({ complete: async () => ({ text: "not-json" }) });
+  const decision = await runtime.hooks.get("before_agent_run")(
+    { prompt: "invalid route", messages: [] },
+    { ...eligible("gateway-cli"), senderId: undefined },
+  );
+
+  assert.equal(decision.outcome, "block");
+  assert.equal(decision.metadata.reasonCode, "ROUTER_NON_JSON_OUTPUT");
+  assert.equal(runtime.calls.length, 1);
 });
 
 test("off bypasses binding, observe validates without injection, and enforce fails closed", async () => {

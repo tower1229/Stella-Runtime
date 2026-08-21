@@ -216,7 +216,8 @@ const isEligibleRun = (
   if (context.trigger !== "user") return false;
   if (
     context.messageProvider !== config.authority_owner.provider ||
-    context.senderId !== config.authority_owner.actor_id ||
+    (context.senderId !== undefined &&
+      context.senderId !== config.authority_owner.actor_id) ||
     context.chatId !== config.authority_owner.actor_id
   ) {
     return false;

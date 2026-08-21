@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
-
 import type { InstanceCutoverPlan } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
+import { checksumCanonicalJson } from "../core/canonical-json.js";
 import type { BootstrapProjectionResult } from "../generation/index.js";
 
 export type InstanceCutoverPlanPayload = Omit<InstanceCutoverPlan, "checksum">;
@@ -64,24 +63,11 @@ export interface CutoverTarget {
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const canonicalize = (value: unknown): unknown => {
-  if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
-    return value;
-  }
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]),
-    );
-  }
-  throw new Error("CUTOVER_PLAN_VALUE_INVALID");
-};
-
 export const calculateInstanceCutoverPlanChecksum = (
   plan: InstanceCutoverPlanPayload,
-): string => `sha256:${createHash("sha256")
-  .update(JSON.stringify(canonicalize(plan)))
-  .digest("hex")}`;
+): string => checksumCanonicalJson(plan, {
+  invalidValueReason: "CUTOVER_PLAN_VALUE_INVALID",
+});
 
 const planPayload = (plan: InstanceCutoverPlan): InstanceCutoverPlanPayload => {
   const { checksum: _checksum, ...payload } = plan;

@@ -5,8 +5,8 @@ explicit, versioned, traceable, and correctable knowledge to one host-owned Agen
 Run without turning model inference or generated projections into hidden
 authority.
 
-> Stable release candidate: `0.2.0`; it is not yet published. The previous
-> published rollback version is `0.1.0`. Compatibility is accepted only for
+> Published stable release: `0.2.1`. The verified rollback version is published
+> `0.2.0`. Compatibility is accepted only for
 > OpenClaw extended-stable
 > `2026.6.34` on Node.js `24.18.0`; compatibility is exact, not minimum-version
 > based.
@@ -20,7 +20,7 @@ The single package `@tower1229/stella-cognitive-runtime` contains:
 - bounded Router, context packet, Current State, correction/outbox, provenance,
   generation, recovery, and conformance modules;
 - the `framework-admission` Skill and public test Runner;
-- exact-host compatibility evidence and synthetic verification assets.
+- selected exact-host compatibility evidence.
 
 OpenClaw still owns sessions, the Agent loop, native memory tools, and its native
 audit trajectory. Stella Runtime is not a second Agent loop, general memory
@@ -33,10 +33,10 @@ Requirements:
 - Node.js `24.18.0` exactly;
 - OpenClaw extended-stable `2026.6.34` exactly.
 
-After `0.2.0` is published, install the exact stable version through OpenClaw:
+Install the exact stable version through OpenClaw:
 
 ```sh
-openclaw plugins install @tower1229/stella-cognitive-runtime@0.2.0
+openclaw plugins install @tower1229/stella-cognitive-runtime@0.2.1
 openclaw plugins inspect cognitive-runtime --runtime --json
 openclaw cognitive self-check
 ```
@@ -44,7 +44,7 @@ openclaw cognitive self-check
 Library or Runner consumers can install the exact package with:
 
 ```sh
-npm install --save-exact @tower1229/stella-cognitive-runtime@0.2.0
+npm install --save-exact @tower1229/stella-cognitive-runtime@0.2.1
 ```
 
 Begin in `off`, configure the Instance Runtime Config and Git-external Runtime
@@ -68,8 +68,10 @@ Read [Configuration reference](docs/CONFIGURATION.md).
 
 ## Data and authority
 
-This repository and npm package contain generic Runtime code and synthetic data
-only. A separate private Authority Repository owns durable knowledge, identity,
+This repository contains generic Runtime source and synthetic verification
+fixtures. The npm package contains compiled Runtime code, v2 schemas, selected
+documentation/evidence, the Skill, and the public Runner. A separate private
+Authority Repository owns durable knowledge, identity,
 configuration, and migration intent. Git-external Runtime State owns Current
 State, unfinished corrections/outbox, protected Candidate admission and
 Approval Receipt records, minimized overlays, and rebuildable projections.
@@ -114,11 +116,11 @@ restoration. Fixtures are synthetic.
 ## Source of truth
 
 - [Domain language](CONTEXT.md)
-- [V1 requirements](docs/requirements/V1.md)
-- [V1 architecture](docs/architecture/V1.md)
+- [Historical 0.1 requirements](docs/requirements/V1.md)
+- [Historical 0.1 architecture](docs/architecture/V1.md)
 - [Data contracts](docs/architecture/DATA-CONTRACTS.md)
 - [Requirement provenance](docs/REQUIREMENT-PROVENANCE.md)
-- [Implementation roadmap](docs/roadmap/V1.md)
+- [Historical 0.1 and completed 0.2 roadmap](docs/roadmap/V1.md)
 - [OpenClaw compatibility evidence](docs/evidence/openclaw-2026.6.34.md)
 - [Runtime recovery ADR](docs/adr/0001-runtime-owns-state-recovery.md)
 - [Repository authority ADR](docs/adr/0002-runtime-repository-is-requirement-authority.md)
@@ -130,8 +132,8 @@ consumer repository is optional and never an implementation dependency.
 
 ## Upgrade, rollback, and recovery
 
-For the `0.2.0` stable line, the exact package rollback version is the published
-`0.1.0`. Use exact package versions and integrity, retain that verified artifact
+For `0.2.1`, the exact package rollback version is published `0.2.0`. Use exact
+package versions and integrity, retain that verified artifact
 and receipt, create and read-only verify a Runtime Recovery Snapshot, then prove
 State/outbox and restart continuity before enabling `observe` or `enforce`.
 Package rollback and state recovery are separate operations. The full sequence is
@@ -139,12 +141,12 @@ in [Operations](docs/OPERATIONS.md).
 
 ## Known limitations
 
-V1 has one exact OpenClaw matrix row. It does not support `runContext`, native
+The `0.2.x` line has one exact OpenClaw matrix row. It does not support `runContext`, native
 structured output, direct persisted-session embedded Runs, host next-turn
 injection, or bundled-only scheduling. Successor attempts are at-least-once with
 one successful completion, not cross-Run exactly-once delivery. Cloud disaster
 recovery, bare-metal imaging, generic migration, complete erasure, and retention
-automation are outside V1.
+automation are outside this release line.
 
 Consumer product acceptance and personal usefulness are downstream non-blocking
 evidence; they are not generic Runtime technical release gates. Read the full

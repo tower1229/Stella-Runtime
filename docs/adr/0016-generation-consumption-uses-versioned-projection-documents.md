@@ -12,5 +12,6 @@ checksum, and sources so OpenClaw `memory_search` paths and `memory_get` content
 can be cross-checked. Runtime records which `extraPaths` entries it owns and
 replaces only those Runtime-managed Retrieval Paths, preserving every unrelated
 instance path. An identical valid target with a valid Activation Receipt makes
-`sync` a no-op, while `--force` rebuilds and reverifies the same identity without
-minting another Generation.
+`sync` a no-op. Every invocation still validates the target identity and Receipt;
+drift fails closed, and there is no public force override that can bypass those
+checks or mint another Generation for identical inputs.

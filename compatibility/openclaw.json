@@ -1,6 +1,6 @@
 {
   "schemaVersion": "cognitive-runtime.openclaw-compatibility/v2",
-  "packageVersion": "0.2.0",
+  "packageVersion": "0.2.1",
   "hosts": [
     {
       "releaseChannel": "extended-stable",
@@ -24,6 +24,7 @@
         "typedHooks": {
           "status": "required",
           "hooks": [
+            "before_agent_run",
             "before_prompt_build",
             "after_tool_call",
             "before_agent_finalize",

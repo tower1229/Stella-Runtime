@@ -23,7 +23,7 @@ the attempted transition.
 Config, and public contracts without host
 mutation. `self-check` owns Runtime storage, Plugin, exact OpenClaw and Node
 capability, independent Public Corpus Adapter health, and live instance
-environment checks. `sync --source-revision`
+environment checks. `sync --revision`
 validates its target, reuses an existing valid Generation or builds it when
 missing, and then executes the complete Barrier; standalone `build` remains a
 useful prebuild operation rather than a prerequisite command sequence.

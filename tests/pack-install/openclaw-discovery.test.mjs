@@ -422,6 +422,41 @@ async function verifyHostRouter(environment) {
   assert.deepEqual(result.generic, { status: "ok", result: routerResult() });
 }
 
+async function verifyExactHostBeforeAgentRunGate(environment, modelRequests) {
+  const requestStart = modelRequests.length;
+  await run(
+    "openclaw",
+    [
+      "agent",
+      "--agent",
+      "main",
+      "--session-key",
+      "agent:main:telegram:direct:+15555550123",
+      "--channel",
+      "telegram",
+      "--to",
+      "+15555550123",
+      "--message",
+      "ROUTER_INVALID",
+      "--json",
+      "--timeout",
+      "15",
+    ],
+    { env: environment },
+  );
+  const requests = modelRequests.slice(requestStart).filter((request) =>
+    Array.isArray(request.messages));
+  assert.equal(
+    requests.length,
+    1,
+    "a Router rejection must stop before the exact Host sends the final Agent model request",
+  );
+  assert.match(
+    JSON.stringify(requests[0]?.messages),
+    /Return exactly one Router Result JSON object\./,
+  );
+}
+
 async function runHostSuccessors(environment, evidencePath, port, token) {
   const baselineEvidence = await readProbeEvidence(evidencePath, 0);
   const baselineAgentEnds = baselineEvidence.filter(
@@ -1597,16 +1632,35 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
     });
     assert.match(versionOutput, /2026\.6\.34 \(5c38f99\)/);
 
-    const { stdout: packOutput } = await run(
-      "npm",
-      ["pack", "--json", "--ignore-scripts", "--pack-destination", root],
-      { cwd: repositoryRoot, env: environment },
+    const registryInstallSpec = process.env.STELLA_RUNTIME_INSTALL_SPEC?.trim();
+    const repositoryPackage = JSON.parse(
+      await readFile(new URL("package.json", repositoryRoot), "utf8"),
     );
-    const [pack] = JSON.parse(packOutput);
-    const tarball = join(root, pack.filename);
+    const expectedInstallVersion = process.env.STELLA_RUNTIME_EXPECTED_VERSION?.trim()
+      || repositoryPackage.version;
+    const expectedRegistryIntegrity = process.env.STELLA_RUNTIME_EXPECTED_INTEGRITY?.trim();
+    let installSpec;
+    if (registryInstallSpec === undefined || registryInstallSpec.length === 0) {
+      const { stdout: packOutput } = await run(
+        "npm",
+        ["pack", "--json", "--ignore-scripts", "--pack-destination", root],
+        { cwd: repositoryRoot, env: environment },
+      );
+      const [pack] = JSON.parse(packOutput);
+      installSpec = `npm-pack:${join(root, pack.filename)}`;
+    } else {
+      assert.ok(expectedRegistryIntegrity, "registry smoke requires exact expected integrity");
+      const { stdout: publishedIntegrity } = await run(
+        "npm",
+        ["view", registryInstallSpec, "dist.integrity"],
+        { env: environment },
+      );
+      assert.equal(publishedIntegrity.trim(), expectedRegistryIntegrity);
+      installSpec = registryInstallSpec;
+    }
     await run(
       "openclaw",
-      ["plugins", "install", `npm-pack:${tarball}`],
+      ["plugins", "install", installSpec],
       { env: environment },
     );
     runtimeInstalled = true;
@@ -1630,6 +1684,11 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       ["private_main_session"],
     );
     const pluginRoot = dirname(dirname(dirname(inspection.plugin.source)));
+    const installedPackage = JSON.parse(
+      await readFile(join(pluginRoot, "package.json"), "utf8"),
+    );
+    assert.equal(installedPackage.name, "@tower1229/stella-cognitive-runtime");
+    assert.equal(installedPackage.version, expectedInstallVersion);
     environment.STELLA_RUNTIME_PROBE_ROOT = pluginRoot;
     await verifyRejectedPathsAbsent(pluginRoot);
     const installedRuntime = await import(
@@ -1644,7 +1703,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       authorityDirectory,
       stateDirectory: generationState,
       sourceRevision,
-      packageVersion: "0.2.0",
+      packageVersion: installedPackage.version,
     });
     const state = installedRuntime.createStateManagementPort({
       stateRoot: runtimeStorage,
@@ -1710,6 +1769,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
     assert.deepEqual(
       compatibility.hosts[0].capabilityExpectations.typedHooks.hooks,
       [
+        "before_agent_run",
         "before_prompt_build",
         "after_tool_call",
         "before_agent_finalize",
@@ -1831,6 +1891,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       token,
       restartGateway,
     });
+    await verifyExactHostBeforeAgentRunGate(environment, modelServer.requests);
     await verifyPackedHostNegativeMatrices(
       environment,
       port,

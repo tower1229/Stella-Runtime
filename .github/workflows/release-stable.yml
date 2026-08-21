@@ -56,6 +56,9 @@ jobs:
 
   publish:
     needs: verify
+    outputs:
+      integrity: ${{ steps.pack.outputs.integrity }}
+      version: ${{ steps.pack.outputs.version }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: npm
@@ -88,6 +91,7 @@ jobs:
           test -f "$TARBALL"
           echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
           echo "integrity=$(node -p "require('./release/pack.json')[0].integrity")" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
       - name: Attest release tarball
         uses: actions/attest-build-provenance@v3
         with:
@@ -136,6 +140,15 @@ jobs:
           npm init --yes
           npm install --ignore-scripts --save-exact "$PACKAGE@$VERSION"
           npm audit signatures
+      - name: Render complete release notes from the changelog
+        run: |
+          RELEASE_VERSION=$(node -p "require('./package.json').version")
+          awk -v heading="## [$RELEASE_VERSION]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release/notes.md
+          test -s release/notes.md
       - name: Create immutable GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -147,6 +160,35 @@ jobs:
             mkdir existing-release
             gh release download "$RELEASE_TAG" --pattern "$ASSET" --dir existing-release
             test "$(sha512sum "$TARBALL" | cut -d ' ' -f1)" = "$(sha512sum "existing-release/$ASSET" | cut -d ' ' -f1)"
+            gh release edit "$RELEASE_TAG" --notes-file release/notes.md
           else
-            gh release create "$RELEASE_TAG" "$TARBALL#npm package" --verify-tag --generate-notes --title "Stella Runtime $RELEASE_TAG"
+            gh release create "$RELEASE_TAG" "$TARBALL#npm package" --verify-tag --notes-file release/notes.md --title "Stella Runtime $RELEASE_TAG"
           fi
+
+  registry-exact-host-smoke:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm ci
+      - name: Install the exact supported OpenClaw host
+        run: |
+          npm install --global openclaw@2026.6.34
+          openclaw --version | grep -F "2026.6.34 (5c38f99)"
+      - name: Smoke the published registry artifact on the exact Host
+        env:
+          STELLA_RUNTIME_INSTALL_SPEC: "@tower1229/stella-cognitive-runtime@${{ needs.publish.outputs.version }}"
+          STELLA_RUNTIME_EXPECTED_VERSION: ${{ needs.publish.outputs.version }}
+          STELLA_RUNTIME_EXPECTED_INTEGRITY: ${{ needs.publish.outputs.integrity }}
+        run: node --test --test-concurrency=1 tests/pack-install/openclaw-discovery.test.mjs

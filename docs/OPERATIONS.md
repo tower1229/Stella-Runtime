@@ -3,11 +3,10 @@
 This guide operates exact artifacts. Replace no version or integrity value with
 a range, tag such as `latest`, or floating branch.
 
-## Install 0.2.0
+## Install 0.2.1
 
-`0.2.0` is a stable release candidate and is not yet published. Run these
-registry installation commands only after the immutable `v0.2.0` release has
-been published.
+`0.2.1` is the published stable release. Use only the immutable exact package;
+do not replace it with a tag or range.
 
 1. Confirm Node.js is exactly `24.18.0` and OpenClaw reports exactly
    `2026.6.34 (5c38f99)`. The package `engines` range is only an install boundary;
@@ -15,7 +14,7 @@ been published.
 2. Install the exact public package:
 
    ```sh
-   openclaw plugins install @tower1229/stella-cognitive-runtime@0.2.0
+   openclaw plugins install @tower1229/stella-cognitive-runtime@0.2.1
    ```
 
 3. Configure `runtime.mode` as `off`, the bounded limits, immutable binding,
@@ -26,7 +25,7 @@ been published.
    `enforce` when any exact-host capability or continuity check fails.
 
 For a plain npm consumer, use
-`npm install --save-exact @tower1229/stella-cognitive-runtime@0.2.0`.
+`npm install --save-exact @tower1229/stella-cognitive-runtime@0.2.1`.
 
 ## Upgrade
 
@@ -130,15 +129,31 @@ compatibility or integrity requires it; package rollback and data recovery are
 separate operations. Re-run self-check, exact-host conformance, and restart
 continuity before moving to `observe`.
 
-The `0.2.0` previous verified rollback version is the published stable
-`@tower1229/stella-cognitive-runtime@0.1.0` at source revision
-`513728dc729d3fa66555ecaac10da2bb5f5e4ef3`, with registry integrity
-`sha512-I3hRyGfmfR1ZCTlROA+R3nZ3PlNXxrfTXap/sQ5HCM0bMrW7wCZRz+JNaYjXaZUuod3+r/ngKxwI227eViwGdQ==`.
-Pack-install builds that fixed source revision as an exact stable tarball,
-installs it, upgrades to the `0.2.0` release-candidate tarball, and checks the
-installed package and lockfile integrity.
+The previous verified rollback version for `0.2.1` is the published stable
+`@tower1229/stella-cognitive-runtime@0.2.0` at source revision
+`4e0000f4227a9ec7bf12e9b9ac0d7ca87f2f515b`, with registry integrity
+`sha512-FlVyQ97ZUvxr/U0Az+c7OlxbWcGm/1ZIV7mcqSk6wswUnhPrCWFqXOe7cxsIqvDxTGe53eRGiyUyIqhM7wDG3Q==`.
+Pack-install retrieves or builds that fixed prior artifact, upgrades to the
+`0.2.1` stable tarball, and checks the installed package and lockfile identity.
 
-## Release operator checklist
+## Stable 0.2.0 release receipt
+
+`0.2.0` was published on 2026-08-20 from source revision
+`4e0000f4227a9ec7bf12e9b9ac0d7ca87f2f515b`. The `v0.2.0` tag, default branch,
+npm package, and GitHub Release resolve to that revision. The npm integrity is
+`sha512-FlVyQ97ZUvxr/U0Az+c7OlxbWcGm/1ZIV7mcqSk6wswUnhPrCWFqXOe7cxsIqvDxTGe53eRGiyUyIqhM7wDG3Q==`.
+The GitHub Release carries the same tarball bytes. Release stable verification,
+registry integrity, signature audit, provenance attestation, and the immutable
+GitHub Release completed successfully.
+
+The `0.2.1` stable release automation runs a post-publish registry exact-host
+job that installs the exact published version on OpenClaw `2026.6.34` and
+Node.js `24.18.0`, then
+repeats Plugin discovery, Gateway restart continuity, Generation Consumption,
+fail-closed, recovery, uninstall, and configuration-restoration acceptance
+against those installed bytes.
+
+## Stable release operator checklist for the next version
 
 - The public scoped package was bootstrapped with the exact verified
   `0.1.0-beta.0` artifact. Registry version, `beta` dist-tag, integrity, public
@@ -156,16 +171,18 @@ installed package and lockfile integrity.
   release-stable.yml --repo tower1229/Stella-Runtime --env npm --allow-publish`.
   Then disallow legacy publish tokens. This bootstrap is a one-time external
   operation, not a CI fallback path.
-- the `0.2.0` release-candidate revision is pushed to `master`, the worktree is
-  clean, `HEAD` equals `origin/master`, and Verification succeeds for that SHA;
+- the release revision is pushed to `master`, the worktree is clean, `HEAD`
+  equals `origin/master`, and Verification succeeds for that SHA;
 - all tests and clean pack-install gates pass on the release commit;
-- package, lockfile, Plugin manifest, Skill, and compatibility matrix say
-  `0.2.0`;
-- only after this checklist passes, tag `v0.2.0` at that exact commit;
+- package, lockfile, Plugin manifest, Skill, and compatibility matrix all say
+  the same exact target version;
+- only after this checklist passes, create the stable tag at that exact commit;
 - npm trusted publisher is restricted to `release-stable.yml` and environment
   `npm`, with no long-lived publish token;
 - workflow-published integrity equals the registry integrity;
 - npm signature audit, GitHub attestation, and GitHub Release all succeed.
+- the post-publish registry exact-host job installs the published package and
+  proves discovery, restart, Generation Consumption, and fail-closed behavior.
 
 Consumer product acceptance remains downstream and does not block the generic
 Runtime technical release.

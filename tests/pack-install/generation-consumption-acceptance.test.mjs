@@ -30,7 +30,7 @@ async function installPackedRuntime(root) {
     },
   );
   const [pack] = JSON.parse(stdout);
-  assert.equal(pack.version, "0.2.0");
+  assert.equal(pack.version, "0.2.1");
   await execFileAsync("tar", ["-xzf", join(packRoot, pack.filename), "-C", consumerRoot]);
   await symlink(new URL("../../node_modules", import.meta.url), join(consumerRoot, "node_modules"));
   const packageRoot = join(consumerRoot, "package");
@@ -285,7 +285,7 @@ test("packed Runtime proves approval through publication, recovery, and next-Run
   const activated = await runtime.syncGeneration({
     config,
     sourceRevision,
-    packageVersion: "0.2.0",
+    packageVersion: "0.2.1",
     hostVersion: "2026.6.34",
     nodeVersion: "24.18.0",
     host,
@@ -322,7 +322,7 @@ test("packed Runtime proves approval through publication, recovery, and next-Run
     await assert.rejects(runtime.syncGeneration({
       config,
       sourceRevision: failedRevision,
-      packageVersion: "0.2.0",
+      packageVersion: "0.2.1",
       hostVersion: "2026.6.34",
       nodeVersion: "24.18.0",
       host,

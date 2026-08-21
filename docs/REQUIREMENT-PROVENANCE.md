@@ -5,9 +5,11 @@
 
 This document records why the V1 requirements have their current shape and how
 the pre-repository design artifacts were absorbed. It is historical evidence,
-not a second specification. Normative requirements live in
-[`requirements/V1.md`](requirements/V1.md); architecture lives in
-[`architecture/V1.md`](architecture/V1.md).
+not a second specification. The historical `0.1.0` requirements and architecture
+live in [`requirements/V1.md`](requirements/V1.md) and
+[`architecture/V1.md`](architecture/V1.md). Current `0.2.x` authority lives in
+the domain glossary, v2 data contracts, accepted ADRs, exact-host evidence, and
+the completed roadmap extension.
 
 Future Runtime work must not consult the original private-instance repository.
 All generic conclusions needed to challenge or implement V1 are preserved here,

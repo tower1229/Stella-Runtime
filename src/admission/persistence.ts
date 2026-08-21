@@ -13,6 +13,10 @@ import type {
   DecisionReceipt,
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
+import {
+  canonicalJsonEqual,
+  compareCanonicalStrings,
+} from "../core/canonical-json.js";
 import type {
   ApprovalPublicationFinalization,
   ApprovalPublicationPort,
@@ -30,20 +34,7 @@ export interface ApprovedCandidateRevision {
   readonly receipt: DecisionReceipt;
 }
 
-const canonicalize = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, child]) => [key, canonicalize(child)]),
-    );
-  }
-  return value;
-};
-
-const sameCanonical = (left: unknown, right: unknown): boolean =>
-  JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
+const sameCanonical = canonicalJsonEqual;
 
 const replaceReceipt = (
   snapshot: CandidateAdmissionSnapshot,
@@ -247,7 +238,7 @@ implements CandidateAdmissionPersistencePort, ApprovalPublicationPort {
         results.push({ candidate, receipt: record.receipt });
       }
       results.sort((left, right) =>
-        left.receipt.receipt_id.localeCompare(right.receipt.receipt_id));
+        compareCanonicalStrings(left.receipt.receipt_id, right.receipt.receipt_id));
       return { snapshot, result: results };
     });
   }

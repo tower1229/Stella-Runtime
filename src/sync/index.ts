@@ -30,6 +30,7 @@ import {
   verifyCutoverPrerequisites,
 } from "../cutover/index.js";
 import { atomicWriteFile } from "../core/persistence.js";
+import { canonicalJson as serializeCanonicalJson } from "../core/canonical-json.js";
 import {
   buildGeneration,
   verifyGeneration,
@@ -152,23 +153,11 @@ interface SyncJournal {
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const canonicalize = (value: unknown): unknown => {
-  if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(canonicalize);
-  }
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]),
-    );
-  }
-  throw new Error("SYNC_PERSISTED_VALUE_INVALID");
-};
-
 const canonicalJson = (value: unknown): string =>
-  `${JSON.stringify(canonicalize(value))}\n`;
+  serializeCanonicalJson(value, {
+    invalidValueReason: "SYNC_PERSISTED_VALUE_INVALID",
+    trailingNewline: true,
+  });
 
 const checksum = (value: string | Uint8Array): string =>
   `sha256:${createHash("sha256").update(value).digest("hex")}`;

@@ -3,7 +3,7 @@ name: framework-admission
 description: Admit a proposed reasoning framework into Cognitive authority only after explicit user confirmation.
 metadata:
   package: "@tower1229/stella-cognitive-runtime"
-  package_version: 0.2.0
+  package_version: 0.2.1
 ---
 
 # Framework Admission

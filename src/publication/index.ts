@@ -18,6 +18,11 @@ import type {
   DecisionReceipt,
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
+import {
+  canonicalJsonEqual,
+  checksumCanonicalJson,
+  compareCanonicalStrings,
+} from "../core/canonical-json.js";
 
 export type PublicationOperation =
   | {
@@ -155,20 +160,7 @@ interface ApprovalRecord {
   readonly finalization: ApprovalPublicationFinalization | null;
 }
 
-const canonicalize = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, child]) => [key, canonicalize(child)]),
-    );
-  }
-  return value;
-};
-
-const checksumCanonical = (value: unknown): string =>
-  `sha256:${createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex")}`;
+const checksumCanonical = checksumCanonicalJson;
 
 const freeze = <T>(value: T): T => {
   if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
@@ -179,8 +171,7 @@ const freeze = <T>(value: T): T => {
 
 const immutableCopy = <T>(value: T): T => freeze(structuredClone(value));
 
-const sameCanonical = (left: unknown, right: unknown): boolean =>
-  JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
+const sameCanonical = canonicalJsonEqual;
 
 const isErrorCode = (error: unknown, code: string): boolean =>
   typeof error === "object" && error !== null && "code" in error && error.code === code;
@@ -220,7 +211,7 @@ export function createChangeSet(input: {
   if (input.operations.length === 0) throw new Error("PUBLICATION_OPERATIONS_EMPTY");
   const normalizedOperations = [...input.operations]
     .map((operation) => immutableCopy(operation))
-    .sort((left, right) => left.path.localeCompare(right.path));
+    .sort((left, right) => compareCanonicalStrings(left.path, right.path));
   if (new Set(normalizedOperations.map((operation) => operation.path)).size !==
     normalizedOperations.length) {
     throw new Error("PUBLICATION_OPERATION_DUPLICATE_PATH");

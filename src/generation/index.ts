@@ -23,6 +23,10 @@ import {
 } from "../authority/index.js";
 import { validateContract } from "../contracts/index.js";
 import {
+  canonicalJson as serializeCanonicalJson,
+  compareCanonicalStrings,
+} from "../core/canonical-json.js";
+import {
   calculateRegistryChecksum,
   type RegistryRole,
   type RouterRegistryEntry,
@@ -39,9 +43,6 @@ const gitReadOnlyOptions = {
   encoding: "utf8",
   env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
 } as const;
-
-type JsonPrimitive = string | number | boolean | null;
-type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
 interface NormalizedRecord {
   readonly id: string;
@@ -215,30 +216,11 @@ export interface ActiveGeneration {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const canonicalize = (value: unknown): JsonValue => {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(canonicalize);
-  }
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((key) => [key, canonicalize(value[key])]),
-    );
-  }
-  throw new Error("GENERATION_VALUE_NOT_SERIALIZABLE");
-};
-
 const canonicalJson = (value: unknown): string =>
-  `${JSON.stringify(canonicalize(value))}\n`;
+  serializeCanonicalJson(value, {
+    invalidValueReason: "GENERATION_VALUE_NOT_SERIALIZABLE",
+    trailingNewline: true,
+  });
 
 const checksum = (value: string | Uint8Array): string =>
   `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -307,7 +289,7 @@ const normalizedRecord = (record: AuthorityRecord): NormalizedRecord => {
     body: record.body,
     sections: [...record.sections.entries()]
       .map(([title, content]) => ({ title, content }))
-      .sort((left, right) => left.title.localeCompare(right.title)),
+      .sort((left, right) => compareCanonicalStrings(left.title, right.title)),
   };
   return { ...base, checksum: checksum(canonicalJson(base)) };
 };
@@ -394,7 +376,8 @@ const discoverMarkdown = async (
 ): Promise<readonly string[]> => {
   const entries = await readdir(directory, { withFileTypes: true });
   const discovered: string[] = [];
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+  for (const entry of entries.sort((left, right) =>
+    compareCanonicalStrings(left.name, right.name))) {
     const path = join(directory, entry.name);
     if (entry.isSymbolicLink()) {
       throw new Error(`AUTHORITY_SYMLINK_UNSUPPORTED:${path}`);
@@ -449,7 +432,7 @@ const readAuthority = async (
     relative(checkout.authorityDirectory, path).split(sep).join("/")));
   const committedPaths = [...checkout.entries.keys()]
     .filter((path) => isAuthorityEntrypoint(path))
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareCanonicalStrings);
   for (const path of workingPaths) {
     if (!checkout.entries.has(path)) {
       throw new Error(`AUTHORITY_ENTRYPOINT_UNCOMMITTED:${path}`);
@@ -771,7 +754,7 @@ const writeBootstrapProjections = async (
   entries: readonly ProjectionEntry[],
   requestedTargets: readonly BootstrapTarget[] = [],
 ): Promise<readonly BootstrapProjectionResult[]> => {
-  const targets = [...new Set(requestedTargets)].sort((left, right) => left.localeCompare(right));
+  const targets = [...new Set(requestedTargets)].sort(compareCanonicalStrings);
   const results: BootstrapProjectionResult[] = [];
   for (const target of targets) {
     if (!BOOTSTRAP_TARGETS.includes(target)) {
@@ -832,7 +815,7 @@ const governingDigestPayload = (
         };
       })
       .filter((module) => module.governed_by === activeGoverningSystem)
-      .sort((left, right) => left.id.localeCompare(right.id)),
+      .sort((left, right) => compareCanonicalStrings(left.id, right.id)),
   };
 };
 
@@ -863,7 +846,7 @@ const sourceRefsFor = (record: NormalizedRecord): readonly string[] => {
     return [];
   }
   return [...requireStringArray(value, `AUTHORITY_REF_FIELD_INVALID:${record.id}:source_refs`)]
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareCanonicalStrings);
 };
 
 const projectionRoleFor = (record: NormalizedRecord): ProjectionEntry["role"] => {
@@ -931,7 +914,7 @@ export async function buildGeneration(
   const authority = await readAuthority(checkout);
   const records = authority.records
     .map(normalizedRecord)
-    .sort((left, right) => left.id.localeCompare(right.id));
+    .sort((left, right) => compareCanonicalStrings(left.id, right.id));
   const generationSeed = {
     contract_set: CONTRACT_VERSION,
     builder_format_version: BUILDER_FORMAT_VERSION,
@@ -1009,7 +992,7 @@ export async function buildGeneration(
       package_version: options.packageVersion,
       source_revision: options.sourceRevision,
       sync_generation: syncGeneration,
-      files: files.sort((left, right) => left.path.localeCompare(right.path)),
+      files: files.sort((left, right) => compareCanonicalStrings(left.path, right.path)),
     };
     const manifestValidation = validateContract("generation-manifest", manifest);
     if (!manifestValidation.valid) {
@@ -1128,7 +1111,7 @@ const listGenerationFiles = async (
 ): Promise<readonly string[]> => {
   const files: string[] = [];
   for (const entry of (await readdir(directory, { withFileTypes: true }))
-    .sort((left, right) => left.name.localeCompare(right.name))) {
+    .sort((left, right) => compareCanonicalStrings(left.name, right.name))) {
     const path = join(directory, entry.name);
     const manifestPath = relative(root, path).split(sep).join("/");
     if (entry.isSymbolicLink()) {

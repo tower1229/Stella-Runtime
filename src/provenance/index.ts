@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import type { CognitiveProvenanceOverlay } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
+import { canonicalJson } from "../core/canonical-json.js";
 
 export interface ProvenanceQuery {
   readonly runId?: string;
@@ -83,22 +84,7 @@ const initialize = (database: DatabaseSync): void => {
   }
 };
 
-const canonicalize = (value: unknown): unknown => {
-  if (Array.isArray(value)) {
-    return value.map(canonicalize);
-  }
-  if (typeof value !== "object" || value === null) {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
-      .map(([key, child]) => [key, canonicalize(child)]),
-  );
-};
-
-const serialize = (value: unknown): string =>
-  JSON.stringify(canonicalize(value));
+const serialize = canonicalJson;
 
 const deepFreeze = <T>(value: T): Readonly<T> => {
   if (typeof value !== "object" || value === null || Object.isFrozen(value)) {

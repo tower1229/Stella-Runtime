@@ -10,6 +10,7 @@ import type {
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
 import { resolveCompatibilityMatrixRow } from "../compatibility/index.js";
+import { canonicalJson as serializeCanonicalJson } from "../core/canonical-json.js";
 import { verifyGeneration } from "../generation/index.js";
 import type { ExplicitContextBinding } from "../packet/index.js";
 import {
@@ -42,28 +43,13 @@ export interface BindingCompilerPort {
   compile(input: BindingCompilerInput): Promise<ActiveRunBinding>;
 }
 
-type JsonPrimitive = string | number | boolean | null;
-type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
-
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const canonicalize = (value: unknown): JsonValue => {
-  if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
-    return value as JsonPrimitive;
-  }
-  if (Array.isArray(value)) {
-    return value.map(canonicalize);
-  }
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]),
-    );
-  }
-  throw new Error("RUNTIME_CONFIG_IDENTITY_INVALID");
-};
-
-const canonicalJson = (value: unknown): string => `${JSON.stringify(canonicalize(value))}\n`;
+const canonicalJson = (value: unknown): string => serializeCanonicalJson(value, {
+  invalidValueReason: "RUNTIME_CONFIG_IDENTITY_INVALID",
+  trailingNewline: true,
+});
 const checksum = (value: string | Uint8Array): string =>
   `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
@@ -414,7 +400,11 @@ export class FileBindingCompiler implements BindingCompilerPort {
       context: {
         stateView: stateView.values.map((value) => ({
           id: value.state_id,
-          content: typeof value.value === "string" ? value.value : JSON.stringify(canonicalize(value.value)),
+          content: typeof value.value === "string"
+            ? value.value
+            : serializeCanonicalJson(value.value, {
+                invalidValueReason: "RUNTIME_CONFIG_IDENTITY_INVALID",
+              }),
         })),
         semanticClaims: entriesForRole("semantic"),
         evidenceRefs: entriesForRole("evidence"),

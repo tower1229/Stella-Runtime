@@ -2,8 +2,18 @@
 
 > Status: accepted first-host baseline
 > Exact build observed: `2026.6.34 (5c38f99)`
-> Stable release candidate: `0.2.0` on Node.js `24.18.0`
-> Previous rollback version: published `0.1.0`
+> Published stable release: `0.2.1` on Node.js `24.18.0`
+> Previous rollback version: published `0.2.0`
+
+## Runtime 0.2.1 fail-closed and registry acceptance
+
+On 2026-08-21, the `0.2.1` source target passed the complete packed exact-host
+scenario. A real Gateway CLI Run targeting the exact private-session identity
+proved that malformed Router output invokes `before_agent_run`, performs only
+the bounded Router completion, and stops before the final Agent model request.
+The stable workflow then installs the exact published registry version, binds it
+to the workflow tarball integrity, and repeats discovery, Gateway restart,
+Generation Consumption, failure recovery, uninstall, and config restoration.
 
 ## Runtime 0.2 Generation Consumption acceptance
 
@@ -39,8 +49,10 @@ Instance Test Pack in one acceptance process. The preceding exact-host step is
 restricted to OpenClaw `2026.6.34 (5c38f99)` and Node.js `24.18.0`; a different
 OpenClaw or Node build requires its own Compatibility Matrix row and evidence.
 
-This acceptance does not claim that `0.2.0` is published. Registry, tag, Release,
-and production-instance gates remain separate delivery evidence.
+This dated source acceptance preceded publication and did not by itself prove a
+registry release. `0.2.0` was subsequently published on 2026-08-20 from source
+revision `4e0000f4227a9ec7bf12e9b9ac0d7ca87f2f515b`; registry integrity, tag,
+GitHub Release, and exact-host receipts remain separately reportable evidence.
 
 ## Stable package acceptance
 
@@ -65,9 +77,9 @@ committed capability row and reproducible synthetic smoke.
 
 ## Capability matrix
 
-| Capability | Result | V1 consequence |
+| Capability | Result | Runtime consequence |
 | --- | --- | --- |
-| Four typed hooks with `run_id` | pass | use the typed hooks |
+| Five typed hooks with `run_id`, including fail-closed `before_agent_run` | pass | gate before the final Agent model request, then use the lifecycle hooks |
 | Host-owned `llm.complete` | pass | use one bounded completion |
 | Stable refs in memory result `content/details` | pass | parse through MemoryObservation adapter |
 | `api.runContext.*` round trip | fail | use bounded in-process RunScratchMap |
@@ -84,7 +96,8 @@ committed capability row and reproducible synthetic smoke.
 
 ### Run correlation
 
-`before_prompt_build` creates or reuses scratch keyed only by `run_id`.
+`before_agent_run` performs the enforce-mode input gate before the final Agent
+model request. `before_prompt_build` creates or reuses scratch keyed only by `run_id`.
 `after_tool_call` records observations by `toolCallId`. Finalize may claim one
 remediation. `agent_end` writes the bounded overlay and clears scratch. Reset,
 disable, restart, TTL, and capacity paths also clear or reject deterministically.

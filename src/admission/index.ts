@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 
 import {
   lintAuthorityRecord,
@@ -13,6 +13,10 @@ import {
   type DiscoveryAuthorization,
   validateContract,
 } from "../contracts/index.js";
+import {
+  canonicalJson,
+  checksumCanonicalJson,
+} from "../core/canonical-json.js";
 import type {
   ApprovalPublicationFinalization,
   ChangeSetArtifact,
@@ -52,29 +56,15 @@ const requireNonEmpty = (value: string, reason: string): void => {
   }
 };
 
-const canonicalize = (value: unknown): unknown => {
-  if (Array.isArray(value)) {
-    return value.map(canonicalize);
-  }
-  if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, child]) => [key, canonicalize(child)]),
-    );
-  }
-  return value;
-};
-
 export function calculateCognitiveAuthorityChecksum(markdown: string): string {
   const record = parseAuthorityMarkdown(markdown);
-  return `sha256:${createHash("sha256").update(JSON.stringify(canonicalize({
+  return checksumCanonicalJson({
     id: record.id,
     schemaVersion: record.schemaVersion,
     recordType: record.recordType,
     frontmatter: record.frontmatter,
     body: record.body,
-  }))).digest("hex")}`;
+  });
 }
 
 const sameStrings = (
@@ -343,8 +333,7 @@ const deepFreeze = <T>(value: T): T => {
 
 const immutableCopy = <T>(value: T): T => deepFreeze(structuredClone(value));
 
-const checksum = (value: unknown): string =>
-  `sha256:${createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex")}`;
+const checksum = checksumCanonicalJson;
 
 export const calculateCandidateContentChecksum = (
   content: Readonly<Record<string, unknown>>,
@@ -354,8 +343,8 @@ export const calculateCandidateExactDiff = (
   baseContent: Readonly<Record<string, unknown>> | null,
   content: Readonly<Record<string, unknown>>,
 ): string => [
-  `base:${baseContent === null ? "null" : JSON.stringify(canonicalize(baseContent))}`,
-  `candidate:${JSON.stringify(canonicalize(content))}`,
+  `base:${baseContent === null ? "null" : canonicalJson(baseContent)}`,
+  `candidate:${canonicalJson(content)}`,
 ].join("\n");
 
 const assertCandidateBase = (

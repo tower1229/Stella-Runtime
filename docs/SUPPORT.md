@@ -2,29 +2,30 @@
 
 ## Supported matrix
 
-The `0.2.0` stable release candidate is not yet published. It supports only
+`0.2.1` is the published stable release. It supports only
 OpenClaw release channel `extended-stable`, exact version `2026.6.34`, with
 Node.js `24.18.0`, and has passed packed Generation Consumption acceptance for
-that exact combination. Published `0.1.0` remains the rollback version until the
-external `0.2.0` release is executed. The committed compatibility manifest and
+that exact combination. Published `0.2.0` is the verified rollback version. The
+committed compatibility manifest and
 synthetic host smoke evidence are normative. No version range, later version, or
 rolling documentation implies support.
 
 The package `engines` value `^22.19.0 || ^24.0.0` is a package-install boundary,
-not a compatibility or support declaration. This release candidate admits only
+not a compatibility or support declaration. This release admits only
 the exact Node.js version in the Compatibility Matrix. The public contracts
 under `cognitive-runtime.<contract>/v2` remain compatible unless a versioned
 migration and rejection behavior are published.
 
 Security, correctness, privacy-boundary, recovery, and exact-host compatibility
-bugs are supported for the V1 line. New host versions require a new matrix row,
+bugs are supported for the `0.2.x` line. New host versions require a new matrix row,
 package install, runtime inspection, behavioral smoke, and failure-path evidence.
 
 ## Known limitations
 
 - The Runtime is not a general memory system, second Agent loop, persona engine,
   vector database, action authority, or governance UI.
-- Only the four verified typed hooks and host-owned `llm.complete` path are
+- Only the five verified typed hooks, including the fail-closed
+  `before_agent_run` gate, and host-owned `llm.complete` path are
   supported. `runContext`, native structured output, direct persisted-session
   embedded Runs, host next-turn injection, and bundled-only scheduling are not.
 - Successor delivery is at-least-once across attempts and exactly once for a

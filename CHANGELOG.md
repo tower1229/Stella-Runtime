@@ -5,6 +5,21 @@ Versioning; cognitive contract namespaces remain independently versioned.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-21
+
+- adds a post-publish registry exact-host smoke that binds the installed npm
+  artifact to the workflow tarball integrity and repeats discovery, Gateway,
+  Generation Consumption, fail-closed, recovery, and restoration acceptance;
+  stable automation now also publishes the complete version section as GitHub
+  Release notes;
+- recognizes exact private-session Gateway CLI Runs whose Host context omits a
+  redundant sender field, and proves `before_agent_run` blocks before any final
+  Agent model request;
+- centralizes canonical JSON ordering, invalid-value policy, newline handling,
+  equality, and checksums so identities cannot drift with locale or subsystem;
+- corrects stable-release documentation, v2 protocol authority, exact CLI
+  options, package boundaries, and the completed 0.2 implementation history.
+
 ## [0.2.0] - 2026-08-20
 
 - replaces the never-activated v1 protocol with one closed v2 Contract Set;
@@ -12,6 +27,9 @@ Versioning; cognitive contract namespaces remain independently versioned.
   Generation/Projection identity, activation evidence, and instance cutover;
 - preserves Evidence media and explicit year/month/day/instant precision without
   retaining a v1 reader or package export.
+- adds persistent Candidate confirmation and single-use Approval Receipt state
+  across restart, serializes exact publication consumption, and recovers
+  idempotently around Authority Git commits without exposing channel metadata.
 - compiles one immutable Active Run Binding from the active Pointer, Activation
   Receipt, Generation, Host/config identity, and State View for each eligible
   private Run; removes inline static Binding configuration and fails closed in
@@ -32,6 +50,9 @@ Versioning; cognitive contract namespaces remain independently versioned.
   next-Eligible-Run consumption, plus fail-closed recovery and drift gates.
 - adds a public de-identified CangHai Instance Test Pack that the public Runner
   executes without exposing private instance state.
+- adds startup, sync, drift-triggered, and periodic reconciliation health checks;
+  recovered compatibility replaces stale or duplicate reason codes before new
+  Eligible Runs reopen, while unresolved health keeps `enforce` fail closed.
 
 ## [0.1.0] - 2026-08-13
 
@@ -47,6 +68,7 @@ First stable technical release of Stella Runtime V1.
   recovery, restart continuity, upgrade, rollback, integrity, and public-data
   boundaries using synthetic fixtures only.
 
-[Unreleased]: https://github.com/tower1229/Stella-Runtime/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tower1229/Stella-Runtime/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/tower1229/Stella-Runtime/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/tower1229/Stella-Runtime/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tower1229/Stella-Runtime/releases/tag/v0.1.0

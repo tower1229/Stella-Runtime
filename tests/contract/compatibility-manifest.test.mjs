@@ -14,7 +14,7 @@ test("compatibility is declared for one channel and exact host version", async (
     manifest.schemaVersion,
     "cognitive-runtime.openclaw-compatibility/v2",
   );
-  assert.equal(manifest.packageVersion, "0.2.0");
+  assert.equal(manifest.packageVersion, "0.2.1");
   assert.equal(manifest.hosts.length, 1);
   assert.equal(manifest.hosts[0].releaseChannel, "extended-stable");
   assert.equal(manifest.hosts[0].openclawVersion, "2026.6.34");
@@ -37,6 +37,16 @@ test("compatibility is declared for one channel and exact host version", async (
   assert.equal(
     manifest.hosts[0].capabilityExpectations.typedHooks.status,
     "required",
+  );
+  assert.deepEqual(
+    manifest.hosts[0].capabilityExpectations.typedHooks.hooks,
+    [
+      "before_agent_run",
+      "before_prompt_build",
+      "after_tool_call",
+      "before_agent_finalize",
+      "agent_end",
+    ],
   );
   assert.equal(
     manifest.hosts[0].capabilityExpectations.runContextRoundTrip.status,

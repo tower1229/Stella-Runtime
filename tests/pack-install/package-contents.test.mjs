@@ -24,7 +24,7 @@ test("npm tarball contains only allowlisted and non-sensitive public assets", as
   );
   const [pack] = JSON.parse(stdout);
   assert.equal(pack.name, "@tower1229/stella-cognitive-runtime");
-  assert.equal(pack.version, "0.2.0");
+  assert.equal(pack.version, "0.2.1");
   const paths = pack.files.map((file) => file.path);
   const allowed = [
     "LICENSE",

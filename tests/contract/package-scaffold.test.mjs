@@ -10,7 +10,7 @@ test("package exposes only built JavaScript to OpenClaw", async () => {
   assert.equal(packageJson.name, "@tower1229/stella-cognitive-runtime");
   assert.equal(packageJson.license, "MIT");
   assert.equal(packageJson.engines.node, "^22.19.0 || ^24.0.0");
-  assert.equal(packageJson.version, "0.2.0");
+  assert.equal(packageJson.version, "0.2.1");
   assert.deepEqual(packageJson.publishConfig, {
     access: "public",
     provenance: true,
@@ -59,7 +59,7 @@ test("plugin manifest declares a strict config and packaged Skill", async () => 
   );
 
   assert.equal(manifest.id, "cognitive-runtime");
-  assert.equal(manifest.version, "0.2.0");
+  assert.equal(manifest.version, "0.2.1");
   assert.equal(manifest.configSchema.type, "object");
   assert.equal(manifest.configSchema.additionalProperties, false);
   assert.equal("binding" in manifest.configSchema.properties.runtime.properties, false);
@@ -83,10 +83,10 @@ test("every public release surface carries the source package version", async ()
     "utf8",
   );
 
-  assert.equal(packageJson.version, "0.2.0");
+  assert.equal(packageJson.version, "0.2.1");
   assert.equal(packageLock.version, packageJson.version);
   assert.equal(packageLock.packages[""].version, packageJson.version);
   assert.equal(manifest.version, packageJson.version);
   assert.equal(compatibility.packageVersion, packageJson.version);
-  assert.match(skill, /^\s+package_version: 0\.2\.0$/m);
+  assert.match(skill, /^\s+package_version: 0\.2\.1$/m);
 });
