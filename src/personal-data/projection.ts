@@ -142,7 +142,7 @@ export interface RuntimeIdentitySourcePolicy {
   readonly sourceReferenceId: string;
   readonly authorityRecordKind: "cognitive" | "personal_model";
   readonly dataClasses: readonly RuntimeIdentitySourceDataClass[];
-  readonly allowedEntryIds: readonly string[];
+  readonly allowedEntryIds: readonly RuntimeIdentityEntryId[];
   readonly sensitivity: "projection_safe";
 }
 
@@ -465,6 +465,10 @@ const FITNESS_BACKGROUND_IDS = {
   mobility_constraints: "fitness-mobility-constraints",
   training_experience: "fitness-training-experience",
 } as const satisfies Readonly<Record<StableFitnessBackgroundKind, string>>;
+
+export type RuntimeIdentityEntryId =
+  | (typeof IDENTITY_FIELDS)[number][1]
+  | (typeof FITNESS_BACKGROUND_IDS)[keyof typeof FITNESS_BACKGROUND_IDS];
 
 const RUNTIME_IDENTITY_ENTRY_CATEGORIES = new Map<string, ProjectionCategory>([
   ...IDENTITY_FIELDS.map(([, id]) => [id, "identity"] as const),

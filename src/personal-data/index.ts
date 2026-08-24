@@ -36,6 +36,7 @@ export type {
   ProjectionSourceReference,
   RuntimeIdentityContextInput,
   RuntimeIdentityContextValue,
+  RuntimeIdentityEntryId,
   RuntimeIdentityProjectionPublication,
   RuntimeIdentitySourceDataClass,
   RuntimeIdentitySourcePolicy,
