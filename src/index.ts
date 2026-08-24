@@ -122,7 +122,6 @@ export type {
   RunScratchSnapshot,
 } from "./core/index.js";
 export {
-  buildProjectionPublication,
   canonicalizeProjectionPayload,
   jcsCanonicalJson,
   resolvePersonalDataLocator,

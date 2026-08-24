@@ -22,6 +22,13 @@ An instance-neutral, versioned schema in the `cognitive-runtime.<contract>/v2`
 namespace that defines inputs, outputs, identity, authority, or trace semantics.
 _Avoid_: Stella schema, private data format
 
+**Personal Data Exchange Contract**:
+A cross-product, versioned file contract in the `stella.<contract>/v1`
+namespace for locating one Personal Data Repository and exchanging bounded
+Runtime/Fitness projections. It is not part of the Cognitive Contract Set and
+does not embed either product's private storage model.
+_Avoid_: Cognitive Contract, mixed Contract Set, copied product configuration
+
 **Contract Set**:
 The coherent `/v2` collection of all public Runtime contracts used by one
 Runtime Package and Generation.

@@ -10,7 +10,6 @@ export {
 } from "./canonical.js";
 export type { ProjectionPayloadMediaType } from "./canonical.js";
 export {
-  buildProjectionPublication,
   runProjectionConsumerConformance,
   runProjectionProducerConformance,
 } from "./projection.js";
@@ -61,16 +60,11 @@ export interface ResolvePersonalDataLocatorOptions {
 }
 
 const readLocator = (apiConfig: unknown): StellaPersonalDataLocator => {
-  const locator = property(
-    property(
-      property(
-        property(property(apiConfig, "plugins"), "entries"),
-        PLUGIN_ID,
-      ),
-      "config",
-    ),
-    "stella",
-  );
+  const plugins = property(apiConfig, "plugins");
+  const entries = property(plugins, "entries");
+  const runtimeEntry = property(entries, PLUGIN_ID);
+  const runtimeConfig = property(runtimeEntry, "config");
+  const locator = property(runtimeConfig, "stella");
   if (!validateContract("personal-data-locator", locator).valid) {
     throw new Error("PERSONAL_DATA_LOCATOR_INVALID");
   }

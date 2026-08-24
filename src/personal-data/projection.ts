@@ -82,8 +82,11 @@ export interface BuildProjectionPublicationInput {
   readonly instanceId: string;
   readonly producerId: ProjectionParticipant;
   readonly consumerId: ProjectionParticipant;
-  readonly sourceRevision: string;
-  readonly sourceAsOf: string;
+  readonly canonicalSourceSnapshot: {
+    readonly revision: string;
+    readonly sourceAsOf: string;
+  };
+  readonly previousManifest: ProjectionManifest | null;
   readonly categories: readonly ProjectionCategory[];
   readonly sourceReferences: readonly ProjectionSourceReference[];
   readonly conflicts: readonly ProjectionConflict[];
@@ -169,21 +172,31 @@ const projectionRevisionFor = (seed: {
   }))
   .digest("hex")}`;
 
-const assertProjectionCollectionOrder = (manifest: ProjectionManifest): void => {
-  const ordered = {
-    categories: [...manifest.categories].sort(compare),
-    source_references: [...manifest.source_references]
+const normalizeProjectionCollections = (value: Pick<
+  ProjectionManifest,
+  | "categories"
+  | "source_references"
+  | "conflicts"
+  | "retractions"
+  | "capabilities"
+  | "payloads"
+>) => ({
+  categories: [...value.categories].sort(compare),
+  source_references: [...value.source_references]
       .sort((left, right) => compare(left.id, right.id) || compare(left.path, right.path)),
-    conflicts: [...manifest.conflicts]
+  conflicts: [...value.conflicts]
       .map((conflict) => ({
         ...conflict,
         source_reference_ids: [...conflict.source_reference_ids].sort(compare),
       }))
       .sort((left, right) => compare(left.id, right.id)),
-    retractions: [...manifest.retractions].sort((left, right) => compare(left.id, right.id)),
-    capabilities: [...manifest.capabilities].sort((left, right) => compare(left.id, right.id)),
-    payloads: [...manifest.payloads].sort((left, right) => compare(left.path, right.path)),
-  };
+  retractions: [...value.retractions].sort((left, right) => compare(left.id, right.id)),
+  capabilities: [...value.capabilities].sort((left, right) => compare(left.id, right.id)),
+  payloads: [...value.payloads].sort((left, right) => compare(left.path, right.path)),
+});
+
+const assertProjectionCollectionOrder = (manifest: ProjectionManifest): void => {
+  const ordered = normalizeProjectionCollections(manifest);
   for (const key of Object.keys(ordered) as (keyof typeof ordered)[]) {
     if (jcsCanonicalJson(manifest[key]) !== jcsCanonicalJson(ordered[key])) {
       throw new Error("PROJECTION_COLLECTION_ORDER_INVALID");
@@ -191,7 +204,31 @@ const assertProjectionCollectionOrder = (manifest: ProjectionManifest): void => 
   }
 };
 
-export function buildProjectionPublication(
+const normalizeIdentityContext = (
+  value: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> => {
+  const categories = value.categories as readonly string[];
+  const entries = value.entries as readonly Readonly<Record<string, unknown>>[];
+  return {
+    ...value,
+    categories: [...categories].sort(compare),
+    entries: entries
+      .map((entry) => ({
+        ...entry,
+        id: entry["id"],
+        category: entry["category"],
+        source_reference_ids: [
+          ...(entry.source_reference_ids as readonly string[]),
+        ].sort(compare),
+      }))
+      .sort((left, right) =>
+        compare(String(left.category), String(right.category))
+        || compare(String(left.id), String(right.id)),
+      ),
+  };
+};
+
+export function runProjectionProducerConformance(
   input: BuildProjectionPublicationInput,
 ): ProjectionPublication {
   assertUnique(input.payloads, ({ path }) => path, "PROJECTION_PAYLOAD_PATH_DUPLICATE");
@@ -202,8 +239,10 @@ export function buildProjectionPublication(
   assertUnique(input.capabilities, ({ id }) => id, "PROJECTION_CAPABILITY_DUPLICATE");
   assertUnique(input.categories, (category) => category, "PROJECTION_CATEGORY_DUPLICATE");
 
+  const { revision: sourceRevision, sourceAsOf } = input.canonicalSourceSnapshot;
   const payloads = input.payloads
     .map(({ path, mediaType, value }) => {
+      let canonicalValue = value;
       if (
         mediaType === "application/json"
         && typeof value === "object"
@@ -219,13 +258,14 @@ export function buildProjectionPublication(
           identity.instance_id !== input.instanceId
           || identity.producer_id !== input.producerId
           || identity.consumer_id !== input.consumerId
-          || identity.source_revision !== input.sourceRevision
-          || identity.as_of !== input.sourceAsOf
+          || identity.source_revision !== sourceRevision
+          || identity.as_of !== sourceAsOf
         ) {
           throw new Error("IDENTITY_CONTEXT_SOURCE_MISMATCH");
         }
+        canonicalValue = normalizeIdentityContext(identity);
       }
-      const bytes = canonicalizeProjectionPayload(value, mediaType);
+      const bytes = canonicalizeProjectionPayload(canonicalValue, mediaType);
       return {
         path,
         mediaType,
@@ -235,42 +275,29 @@ export function buildProjectionPublication(
     })
     .sort((left, right) => compare(left.path, right.path));
 
-  const categories = [...input.categories].sort(compare);
-  const sourceReferences = input.sourceReferences
-    .map((reference) => ({ ...reference }))
-    .sort((left, right) => compare(left.id, right.id) || compare(left.path, right.path));
-  const conflicts = input.conflicts
-    .map((conflict) => ({
-      ...conflict,
-      source_reference_ids: [...conflict.source_reference_ids].sort(compare),
-    }))
-    .sort((left, right) => compare(left.id, right.id));
-  const retractions = input.retractions
-    .map((retraction) => ({ ...retraction }))
-    .sort((left, right) => compare(left.id, right.id));
-  const capabilities = input.capabilities
-    .map((capability) => ({ ...capability }))
-    .sort((left, right) => compare(left.id, right.id));
   const payloadMetadata = payloads.map((payload) => ({
     path: payload.path,
     media_type: payload.mediaType,
     byte_length: payload.bytes.byteLength,
     checksum: payload.checksum,
   }));
+  const normalized = normalizeProjectionCollections({
+    categories: input.categories,
+    source_references: input.sourceReferences,
+    conflicts: input.conflicts,
+    retractions: input.retractions,
+    capabilities: input.capabilities,
+    payloads: payloadMetadata,
+  });
   const revisionSeed = {
     instance_id: input.instanceId,
     producer_id: input.producerId,
     consumer_id: input.consumerId,
     source: {
-      revision: input.sourceRevision,
-      as_of: input.sourceAsOf,
+      revision: sourceRevision,
+      as_of: sourceAsOf,
     },
-    categories,
-    source_references: sourceReferences,
-    conflicts,
-    retractions,
-    capabilities,
-    payloads: payloadMetadata,
+    ...normalized,
   };
   const projectionRevision = projectionRevisionFor(revisionSeed);
   const manifest: ProjectionManifest = {
@@ -280,21 +307,25 @@ export function buildProjectionPublication(
     consumer_id: input.consumerId,
     projection_revision: projectionRevision,
     source: {
-      revision: input.sourceRevision,
-      as_of: input.sourceAsOf,
+      revision: sourceRevision,
+      as_of: sourceAsOf,
     },
-    categories,
-    source_references: sourceReferences,
-    conflicts,
-    retractions,
-    capabilities,
-    payloads: payloadMetadata,
+    ...normalized,
     generated_at: input.generatedAt,
   };
   if (!validateContract("context-projection-manifest", manifest).valid) {
     throw new Error("PROJECTION_MANIFEST_INVALID");
   }
   const manifestBytes = Buffer.from(jcsCanonicalJson(manifest), "utf8");
+  if (
+    input.previousManifest?.source.revision === sourceRevision
+    && (
+      input.previousManifest.source.as_of !== sourceAsOf
+      || input.previousManifest.projection_revision !== projectionRevision
+    )
+  ) {
+    throw new Error("PROJECTION_SOURCE_NONDETERMINISTIC");
+  }
   return {
     projectionRevision,
     manifest,
@@ -302,12 +333,6 @@ export function buildProjectionPublication(
     manifestChecksum: checksum(manifestBytes),
     payloads,
   };
-}
-
-export function runProjectionProducerConformance(
-  input: BuildProjectionPublicationInput,
-): ProjectionPublication {
-  return buildProjectionPublication(input);
 }
 
 const decodeUtf8 = (bytes: Uint8Array, reason: string): string => {
@@ -444,7 +469,34 @@ export async function runProjectionConsumerConformance(
       throw new Error("PROJECTION_PAYLOAD_CHECKSUM_MISMATCH");
     }
     if (metadata.media_type === "application/json") {
-      parseJcsDocument(bytes, "PROJECTION_PAYLOAD");
+      const payloadValue = parseJcsDocument(bytes, "PROJECTION_PAYLOAD");
+      if (
+        typeof payloadValue === "object"
+        && payloadValue !== null
+        && !Array.isArray(payloadValue)
+        && (payloadValue as Readonly<Record<string, unknown>>).schema_version
+          === "stella.identity-context/v1"
+      ) {
+        if (!validateContract("identity-context", payloadValue).valid) {
+          throw new Error("IDENTITY_CONTEXT_INVALID");
+        }
+        const identity = payloadValue as Readonly<Record<string, unknown>>;
+        if (
+          identity.instance_id !== options.instanceId
+          || identity.producer_id !== options.producerId
+          || identity.consumer_id !== options.consumerId
+          || identity.source_revision !== manifest.source.revision
+          || identity.as_of !== manifest.source.as_of
+        ) {
+          throw new Error("IDENTITY_CONTEXT_SOURCE_MISMATCH");
+        }
+        if (
+          jcsCanonicalJson(normalizeIdentityContext(identity))
+          !== decodeUtf8(bytes, "PROJECTION_PAYLOAD_UTF8_INVALID")
+        ) {
+          throw new Error("PROJECTION_COLLECTION_ORDER_INVALID");
+        }
+      }
     } else {
       const text = decodeUtf8(bytes, "PROJECTION_PAYLOAD_UTF8_INVALID");
       if (!canonicalizeProjectionPayload(text, metadata.media_type).equals(bytes)) {

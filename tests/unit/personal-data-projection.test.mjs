@@ -4,10 +4,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
-  buildProjectionPublication,
   canonicalizeProjectionPayload,
   jcsCanonicalJson,
   runProjectionConsumerConformance,
+  runProjectionProducerConformance,
+  validateContract,
 } from "../../dist/index.js";
 
 const sha256 = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -21,12 +22,12 @@ test("published conformance vectors pin canonical bytes and the required negativ
   const text = canonicalizeProjectionPayload(vectors.text.input, "text/markdown");
   assert.equal(jcs.toString("utf8"), vectors.jcs.expected_utf8);
   assert.equal(sha256(jcs), vectors.jcs.expected_sha256);
+  const numbers = Buffer.from(jcsCanonicalJson(vectors.jcs_numbers_escaping.input), "utf8");
+  assert.equal(numbers.toString("utf8"), vectors.jcs_numbers_escaping.expected_utf8);
+  assert.equal(sha256(numbers), vectors.jcs_numbers_escaping.expected_sha256);
   assert.equal(text.toString("utf8"), vectors.text.expected_utf8);
   assert.equal(sha256(text), vectors.text.expected_sha256);
-  assert.deepEqual(vectors.scenarios, [
-    "jcs_numbers_escaping",
-    "unicode_nfc",
-    "crlf_input",
+  assert.deepEqual(vectors.cases.map(({ id }) => id), [
     "array_sorting",
     "duplicate_path",
     "unknown_field",
@@ -35,6 +36,34 @@ test("published conformance vectors pin canonical bytes and the required negativ
     "symlink_path_escape",
     "stale_tuple_mismatch",
   ]);
+  for (const vector of vectors.cases.filter(({ fixture }) => fixture !== undefined)) {
+    const fixture = JSON.parse(await readFile(
+      new URL(`../fixtures/${vector.fixture}`, import.meta.url),
+      "utf8",
+    ));
+    assert.equal(validateContract(vector.contract, fixture).valid, vector.expected_valid);
+  }
+  const duplicate = vectors.cases.find(({ id }) => id === "duplicate_path");
+  assert.throws(() => runProjectionProducerConformance(publicationInput({
+    payloads: duplicate.input.payload_paths.map((path) => ({
+      ...publicationInput().payloads[0],
+      path,
+    })),
+  })), new RegExp(duplicate.expected_reason));
+  const sorting = vectors.cases.find(({ id }) => id === "array_sorting");
+  const sorted = runProjectionProducerConformance(publicationInput({
+    categories: sorting.input.categories,
+    capabilities: sorting.input.capability_ids.map((id) => ({ id, state: "available" })),
+  }));
+  assert.deepEqual(sorted.manifest.categories, sorting.expected.categories);
+  assert.deepEqual(
+    sorted.manifest.capabilities.map(({ id }) => id),
+    sorting.expected.capability_ids,
+  );
+  assert.deepEqual(
+    JSON.parse(sorted.payloads[0].bytes.toString("utf8")).entries.map(({ id }) => id),
+    sorting.expected.identity_entry_ids,
+  );
 });
 
 test("JCS and text payload canonicalization freeze exact final bytes", () => {
@@ -92,7 +121,7 @@ const consumerPort = (publication, pointers) => {
 };
 
 test("consumer conformance double-reads the pointer and enforces active/stale policy", async () => {
-  const publication = buildProjectionPublication(publicationInput());
+  const publication = runProjectionProducerConformance(publicationInput());
   const active = pointerBytes(publication);
   const consumed = await runProjectionConsumerConformance({
     instanceId: "instance-synthetic",
@@ -166,8 +195,11 @@ const publicationInput = (overrides = {}) => ({
   instanceId: "instance-synthetic",
   producerId: "stella-runtime",
   consumerId: "stella-fitness",
-  sourceRevision: "source-synthetic-1",
-  sourceAsOf: "2026-08-24T00:00:00Z",
+  canonicalSourceSnapshot: {
+    revision: "source-synthetic-1",
+    sourceAsOf: "2026-08-24T00:00:00Z",
+  },
+  previousManifest: null,
   categories: ["identity", "background"],
   sourceReferences: [
     {
@@ -194,7 +226,20 @@ const publicationInput = (overrides = {}) => ({
       source_revision: "source-synthetic-1",
       as_of: "2026-08-24T00:00:00Z",
       categories: ["background", "identity"],
-      entries: [],
+      entries: [
+        {
+          id: "z-entry",
+          category: "identity",
+          content: "Stella",
+          source_reference_ids: ["source-z", "source-a"],
+        },
+        {
+          id: "a-entry",
+          category: "background",
+          content: "zh-CN",
+          source_reference_ids: ["source-user"],
+        },
+      ],
     },
   }],
   generatedAt: "2026-08-24T00:01:00Z",
@@ -202,8 +247,9 @@ const publicationInput = (overrides = {}) => ({
 });
 
 test("producer conformance derives stable revisions from source_as_of and final payload bytes", () => {
-  const first = buildProjectionPublication(publicationInput());
-  const laterPublication = buildProjectionPublication(publicationInput({
+  const first = runProjectionProducerConformance(publicationInput());
+  const laterPublication = runProjectionProducerConformance(publicationInput({
+    previousManifest: first.manifest,
     generatedAt: "2026-08-24T12:00:00Z",
     categories: ["background", "identity"],
     capabilities: [
@@ -220,9 +266,17 @@ test("producer conformance derives stable revisions from source_as_of and final 
     "background_context",
     "identity_context",
   ]);
+  const identity = JSON.parse(first.payloads[0].bytes.toString("utf8"));
+  assert.deepEqual(identity.categories, ["background", "identity"]);
+  assert.deepEqual(identity.entries.map(({ id }) => id), ["a-entry", "z-entry"]);
+  assert.deepEqual(identity.entries[1].source_reference_ids, ["source-a", "source-z"]);
 
-  const changedSource = buildProjectionPublication(publicationInput({
-    sourceRevision: "source-synthetic-2",
+  const changedSource = runProjectionProducerConformance(publicationInput({
+    previousManifest: first.manifest,
+    canonicalSourceSnapshot: {
+      revision: "source-synthetic-2",
+      sourceAsOf: "2026-08-24T00:00:00Z",
+    },
     payloads: [{
       ...publicationInput().payloads[0],
       value: {
@@ -232,7 +286,21 @@ test("producer conformance derives stable revisions from source_as_of and final 
     }],
   }));
   assert.notEqual(changedSource.projectionRevision, first.projectionRevision);
-  assert.throws(() => buildProjectionPublication(publicationInput({
+  assert.throws(() => runProjectionProducerConformance(publicationInput({
     payloads: [publicationInput().payloads[0], publicationInput().payloads[0]],
   })), /PROJECTION_PAYLOAD_PATH_DUPLICATE/);
+  assert.throws(() => runProjectionProducerConformance(publicationInput({
+    previousManifest: first.manifest,
+    canonicalSourceSnapshot: {
+      revision: "source-synthetic-1",
+      sourceAsOf: "2026-08-24T00:00:01Z",
+    },
+    payloads: [{
+      ...publicationInput().payloads[0],
+      value: {
+        ...publicationInput().payloads[0].value,
+        as_of: "2026-08-24T00:00:01Z",
+      },
+    }],
+  })), /PROJECTION_SOURCE_NONDETERMINISTIC/);
 });
