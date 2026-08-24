@@ -10,6 +10,7 @@ export {
 } from "./canonical.js";
 export type { ProjectionPayloadMediaType } from "./canonical.js";
 export {
+  ProjectionDeterminismLedger,
   runProjectionConsumerConformance,
   runProjectionProducerConformance,
 } from "./projection.js";

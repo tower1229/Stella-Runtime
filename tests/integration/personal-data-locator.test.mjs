@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -67,6 +67,11 @@ test("locator resolves only the fixed Personal Data layout from public api.confi
 });
 
 test("locator fails closed on instance mismatch, unsafe permissions, traversal, and symlinks", async (t) => {
+  const vectors = JSON.parse(await readFile(
+    new URL("../fixtures/projection-conformance/vectors.json", import.meta.url),
+    "utf8",
+  ));
+  const symlinkVector = vectors.cases.find(({ id }) => id === "symlink_path_escape");
   const root = await realpath(await mkdtemp(join(tmpdir(), "stella-locator-negative-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   const repository = await createLayout(root);
@@ -94,11 +99,12 @@ test("locator fails closed on instance mismatch, unsafe permissions, traversal, 
     runtimeInstanceId: "instance-synthetic",
   }), /PERSONAL_DATA_PATH_NOT_CANONICAL/);
 
-  const external = await createLayout(join(root, "external"));
-  const linked = join(root, "linked-personal-data");
+  const external = await createLayout(join(root, "outside"));
+  assert.equal(external, join(root, symlinkVector.input.link_target));
+  const linked = join(root, symlinkVector.input.link_name);
   await symlink(external, linked, "dir");
   await assert.rejects(resolvePersonalDataLocator({
     apiConfig: hostConfig(linked),
     runtimeInstanceId: "instance-synthetic",
-  }), /PERSONAL_DATA_SYMLINK_FORBIDDEN/);
+  }), new RegExp(symlinkVector.expected_reason));
 });

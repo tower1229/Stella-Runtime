@@ -60,14 +60,13 @@
     },
     {
       "id": "symlink_path_escape",
-      "input": { "repository": "/synthetic/link", "link_target": "/synthetic/outside" },
+      "input": { "link_name": "linked-personal-data", "link_target": "outside/personal-data" },
       "expected_reason": "PERSONAL_DATA_SYMLINK_FORBIDDEN"
     },
     {
       "id": "stale_tuple_mismatch",
-      "fixture": "contracts/invalid/context-projection-pointer-stale-tuple.json",
-      "contract": "context-projection-pointer",
-      "expected_valid": false
+      "input": { "pointer_source_revision": "source-synthetic-mismatch" },
+      "expected_reason": "PROJECTION_VERIFICATION_TUPLE_MISMATCH"
     }
   ]
 }

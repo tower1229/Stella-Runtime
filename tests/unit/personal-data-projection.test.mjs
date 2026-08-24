@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   canonicalizeProjectionPayload,
   jcsCanonicalJson,
+  ProjectionDeterminismLedger,
   runProjectionConsumerConformance,
   runProjectionProducerConformance,
   validateContract,
@@ -121,6 +122,10 @@ const consumerPort = (publication, pointers) => {
 };
 
 test("consumer conformance double-reads the pointer and enforces active/stale policy", async () => {
+  const vectors = JSON.parse(await readFile(
+    new URL("../fixtures/projection-conformance/vectors.json", import.meta.url),
+    "utf8",
+  ));
   const publication = runProjectionProducerConformance(publicationInput());
   const active = pointerBytes(publication);
   const consumed = await runProjectionConsumerConformance({
@@ -181,7 +186,11 @@ test("consumer conformance double-reads the pointer and enforces active/stale po
   }), /PROJECTION_NOT_CONSUMABLE/);
 
   const damagedPort = consumerPort(publication, [active]);
-  damagedPort.readPayload = async () => Buffer.from("{}", "utf8");
+  const checksumMismatch = vectors.cases.find(({ id }) => id === "checksum_mismatch");
+  damagedPort.readPayload = async () => Buffer.from(
+    checksumMismatch.input.actual_utf8,
+    "utf8",
+  );
   await assert.rejects(runProjectionConsumerConformance({
     instanceId: "instance-synthetic",
     producerId: "stella-runtime",
@@ -189,6 +198,18 @@ test("consumer conformance double-reads the pointer and enforces active/stale po
     purpose: "identity_background",
     port: damagedPort,
   }), /PROJECTION_PAYLOAD_CHECKSUM_MISMATCH/);
+
+  const staleMismatch = vectors.cases.find(({ id }) => id === "stale_tuple_mismatch");
+  const mismatchedPointer = pointerBytes(publication, {
+    source_revision: staleMismatch.input.pointer_source_revision,
+  });
+  await assert.rejects(runProjectionConsumerConformance({
+    instanceId: "instance-synthetic",
+    producerId: "stella-runtime",
+    consumerId: "stella-fitness",
+    purpose: "identity_background",
+    port: consumerPort(publication, [mismatchedPointer]),
+  }), new RegExp(staleMismatch.expected_reason));
 });
 
 const publicationInput = (overrides = {}) => ({
@@ -199,7 +220,7 @@ const publicationInput = (overrides = {}) => ({
     revision: "source-synthetic-1",
     sourceAsOf: "2026-08-24T00:00:00Z",
   },
-  previousManifest: null,
+  determinismLedger: new ProjectionDeterminismLedger(),
   categories: ["identity", "background"],
   sourceReferences: [
     {
@@ -247,9 +268,10 @@ const publicationInput = (overrides = {}) => ({
 });
 
 test("producer conformance derives stable revisions from source_as_of and final payload bytes", () => {
-  const first = runProjectionProducerConformance(publicationInput());
+  const determinismLedger = new ProjectionDeterminismLedger();
+  const first = runProjectionProducerConformance(publicationInput({ determinismLedger }));
   const laterPublication = runProjectionProducerConformance(publicationInput({
-    previousManifest: first.manifest,
+    determinismLedger,
     generatedAt: "2026-08-24T12:00:00Z",
     categories: ["background", "identity"],
     capabilities: [
@@ -272,7 +294,7 @@ test("producer conformance derives stable revisions from source_as_of and final 
   assert.deepEqual(identity.entries[1].source_reference_ids, ["source-a", "source-z"]);
 
   const changedSource = runProjectionProducerConformance(publicationInput({
-    previousManifest: first.manifest,
+    determinismLedger,
     canonicalSourceSnapshot: {
       revision: "source-synthetic-2",
       sourceAsOf: "2026-08-24T00:00:00Z",
@@ -290,7 +312,26 @@ test("producer conformance derives stable revisions from source_as_of and final 
     payloads: [publicationInput().payloads[0], publicationInput().payloads[0]],
   })), /PROJECTION_PAYLOAD_PATH_DUPLICATE/);
   assert.throws(() => runProjectionProducerConformance(publicationInput({
-    previousManifest: first.manifest,
+    determinismLedger,
+    canonicalSourceSnapshot: {
+      revision: "source-synthetic-1",
+      sourceAsOf: "2026-08-24T00:00:01Z",
+    },
+    payloads: [{
+      ...publicationInput().payloads[0],
+      value: {
+        ...publicationInput().payloads[0].value,
+        as_of: "2026-08-24T00:00:01Z",
+      },
+    }],
+  })), /PROJECTION_SOURCE_NONDETERMINISTIC/);
+
+  const restoredLedger = new ProjectionDeterminismLedger([
+    first.manifest,
+    changedSource.manifest,
+  ]);
+  assert.throws(() => runProjectionProducerConformance(publicationInput({
+    determinismLedger: restoredLedger,
     canonicalSourceSnapshot: {
       revision: "source-synthetic-1",
       sourceAsOf: "2026-08-24T00:00:01Z",

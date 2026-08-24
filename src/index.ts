@@ -124,6 +124,7 @@ export type {
 export {
   canonicalizeProjectionPayload,
   jcsCanonicalJson,
+  ProjectionDeterminismLedger,
   resolvePersonalDataLocator,
   runProjectionConsumerConformance,
   runProjectionProducerConformance,

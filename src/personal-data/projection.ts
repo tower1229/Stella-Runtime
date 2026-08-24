@@ -86,7 +86,7 @@ export interface BuildProjectionPublicationInput {
     readonly revision: string;
     readonly sourceAsOf: string;
   };
-  readonly previousManifest: ProjectionManifest | null;
+  readonly determinismLedger: ProjectionDeterminismLedger;
   readonly categories: readonly ProjectionCategory[];
   readonly sourceReferences: readonly ProjectionSourceReference[];
   readonly conflicts: readonly ProjectionConflict[];
@@ -102,6 +102,43 @@ export interface ProjectionPublication {
   readonly manifestBytes: Buffer;
   readonly manifestChecksum: string;
   readonly payloads: readonly ProjectionPayloadArtifact[];
+}
+
+interface ProjectionDeterminismBinding {
+  readonly sourceRevision: string;
+  readonly sourceAsOf: string;
+  readonly projectionRevision: string;
+  readonly payloadChecksums: readonly {
+    readonly path: string;
+    readonly checksum: string;
+  }[];
+}
+
+export class ProjectionDeterminismLedger {
+  readonly #bindings = new Map<string, string>();
+
+  constructor(manifests: readonly ProjectionManifest[] = []) {
+    for (const manifest of manifests) {
+      this.claim({
+        sourceRevision: manifest.source.revision,
+        sourceAsOf: manifest.source.as_of,
+        projectionRevision: manifest.projection_revision,
+        payloadChecksums: manifest.payloads.map(({ path, checksum: value }) => ({
+          path,
+          checksum: value,
+        })),
+      });
+    }
+  }
+
+  claim(binding: ProjectionDeterminismBinding): void {
+    const fingerprint = jcsCanonicalJson(binding);
+    const existing = this.#bindings.get(binding.sourceRevision);
+    if (existing !== undefined && existing !== fingerprint) {
+      throw new Error("PROJECTION_SOURCE_NONDETERMINISTIC");
+    }
+    this.#bindings.set(binding.sourceRevision, fingerprint);
+  }
 }
 
 export type ProjectionConsumptionPurpose =
@@ -228,6 +265,43 @@ const normalizeIdentityContext = (
   };
 };
 
+interface IdentityContextExpectation {
+  readonly instanceId: string;
+  readonly producerId: ProjectionParticipant;
+  readonly consumerId: ProjectionParticipant;
+  readonly sourceRevision: string;
+  readonly sourceAsOf: string;
+}
+
+const validateAndNormalizeIdentityContext = (
+  value: unknown,
+  expected: IdentityContextExpectation,
+): Readonly<Record<string, unknown>> | null => {
+  if (
+    typeof value !== "object"
+    || value === null
+    || Array.isArray(value)
+    || (value as Readonly<Record<string, unknown>>).schema_version
+      !== "stella.identity-context/v1"
+  ) {
+    return null;
+  }
+  if (!validateContract("identity-context", value).valid) {
+    throw new Error("IDENTITY_CONTEXT_INVALID");
+  }
+  const identity = value as Readonly<Record<string, unknown>>;
+  if (
+    identity.instance_id !== expected.instanceId
+    || identity.producer_id !== expected.producerId
+    || identity.consumer_id !== expected.consumerId
+    || identity.source_revision !== expected.sourceRevision
+    || identity.as_of !== expected.sourceAsOf
+  ) {
+    throw new Error("IDENTITY_CONTEXT_SOURCE_MISMATCH");
+  }
+  return normalizeIdentityContext(identity);
+};
+
 export function runProjectionProducerConformance(
   input: BuildProjectionPublicationInput,
 ): ProjectionPublication {
@@ -242,29 +316,16 @@ export function runProjectionProducerConformance(
   const { revision: sourceRevision, sourceAsOf } = input.canonicalSourceSnapshot;
   const payloads = input.payloads
     .map(({ path, mediaType, value }) => {
-      let canonicalValue = value;
-      if (
-        mediaType === "application/json"
-        && typeof value === "object"
-        && value !== null
-        && "schema_version" in value
-        && (value as Readonly<Record<string, unknown>>).schema_version === "stella.identity-context/v1"
-      ) {
-        if (!validateContract("identity-context", value).valid) {
-          throw new Error("IDENTITY_CONTEXT_INVALID");
-        }
-        const identity = value as Readonly<Record<string, unknown>>;
-        if (
-          identity.instance_id !== input.instanceId
-          || identity.producer_id !== input.producerId
-          || identity.consumer_id !== input.consumerId
-          || identity.source_revision !== sourceRevision
-          || identity.as_of !== sourceAsOf
-        ) {
-          throw new Error("IDENTITY_CONTEXT_SOURCE_MISMATCH");
-        }
-        canonicalValue = normalizeIdentityContext(identity);
-      }
+      const identity = mediaType === "application/json"
+        ? validateAndNormalizeIdentityContext(value, {
+            instanceId: input.instanceId,
+            producerId: input.producerId,
+            consumerId: input.consumerId,
+            sourceRevision,
+            sourceAsOf,
+          })
+        : null;
+      const canonicalValue = identity ?? value;
       const bytes = canonicalizeProjectionPayload(canonicalValue, mediaType);
       return {
         path,
@@ -317,15 +378,15 @@ export function runProjectionProducerConformance(
     throw new Error("PROJECTION_MANIFEST_INVALID");
   }
   const manifestBytes = Buffer.from(jcsCanonicalJson(manifest), "utf8");
-  if (
-    input.previousManifest?.source.revision === sourceRevision
-    && (
-      input.previousManifest.source.as_of !== sourceAsOf
-      || input.previousManifest.projection_revision !== projectionRevision
-    )
-  ) {
-    throw new Error("PROJECTION_SOURCE_NONDETERMINISTIC");
-  }
+  input.determinismLedger.claim({
+    sourceRevision,
+    sourceAsOf,
+    projectionRevision,
+    payloadChecksums: normalized.payloads.map(({ path, checksum: value }) => ({
+      path,
+      checksum: value,
+    })),
+  });
   return {
     projectionRevision,
     manifest,
@@ -470,28 +531,16 @@ export async function runProjectionConsumerConformance(
     }
     if (metadata.media_type === "application/json") {
       const payloadValue = parseJcsDocument(bytes, "PROJECTION_PAYLOAD");
-      if (
-        typeof payloadValue === "object"
-        && payloadValue !== null
-        && !Array.isArray(payloadValue)
-        && (payloadValue as Readonly<Record<string, unknown>>).schema_version
-          === "stella.identity-context/v1"
-      ) {
-        if (!validateContract("identity-context", payloadValue).valid) {
-          throw new Error("IDENTITY_CONTEXT_INVALID");
-        }
-        const identity = payloadValue as Readonly<Record<string, unknown>>;
+      const identity = validateAndNormalizeIdentityContext(payloadValue, {
+        instanceId: options.instanceId,
+        producerId: options.producerId,
+        consumerId: options.consumerId,
+        sourceRevision: manifest.source.revision,
+        sourceAsOf: manifest.source.as_of,
+      });
+      if (identity !== null) {
         if (
-          identity.instance_id !== options.instanceId
-          || identity.producer_id !== options.producerId
-          || identity.consumer_id !== options.consumerId
-          || identity.source_revision !== manifest.source.revision
-          || identity.as_of !== manifest.source.as_of
-        ) {
-          throw new Error("IDENTITY_CONTEXT_SOURCE_MISMATCH");
-        }
-        if (
-          jcsCanonicalJson(normalizeIdentityContext(identity))
+          jcsCanonicalJson(identity)
           !== decodeUtf8(bytes, "PROJECTION_PAYLOAD_UTF8_INVALID")
         ) {
           throw new Error("PROJECTION_COLLECTION_ORDER_INVALID");
