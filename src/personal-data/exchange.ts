@@ -19,6 +19,7 @@ import type { PersonalDataLayout } from "./index.js";
 import { jcsCanonicalJson } from "./canonical.js";
 import {
   runProjectionConsumerConformance,
+  assertRuntimeIdentityContextPolicy,
   type ConsumedProjection,
   type ProjectionConsumptionPurpose,
   type ProjectionManifest,
@@ -63,7 +64,6 @@ export interface ProjectionPublishResult {
 
 export interface CollectOrphanRevisionsOptions {
   readonly gracePeriodMs: number;
-  readonly lastVerifiedRevisions?: readonly string[];
 }
 
 export interface ProjectionCollectionResult {
@@ -86,11 +86,19 @@ export interface ProjectionRecoveryResult {
   readonly reasonCode: string;
 }
 
-interface ProjectionLockRecord {
+interface ProjectionLockRecordBase {
   readonly schema_version: "stella.projection-publish-lock/v1";
-  readonly operation: "collect" | "publish";
   readonly instance_id: string;
   readonly owner: ProjectionLockOwner;
+}
+
+interface ProjectionCollectionLockRecord extends ProjectionLockRecordBase {
+  readonly operation: "collect";
+  readonly phase: "acquired";
+}
+
+interface ProjectionPublishLockRecord extends ProjectionLockRecordBase {
+  readonly operation: "publish";
   readonly phase: ProjectionLockPhase;
   readonly target: {
     readonly projection_revision: string;
@@ -102,28 +110,29 @@ interface ProjectionLockRecord {
   };
 }
 
+type ProjectionLockRecord = ProjectionCollectionLockRecord | ProjectionPublishLockRecord;
+
 interface VerifiedRevision {
   readonly manifest: ProjectionManifest;
   readonly manifestChecksum: string;
 }
 
+interface ProjectionSourceBinding {
+  readonly schema_version: "stella.projection-source-binding/v1";
+  readonly instance_id: string;
+  readonly source_revision: string;
+  readonly source_as_of: string;
+  readonly projection_revision: string;
+}
+
 const LOCK_DIRECTORY = ".publish-lock";
 const LOCK_RECORD = "owner.json";
+const RUNTIME_METADATA_DIRECTORY = ".runtime";
+const SOURCE_BINDINGS_DIRECTORY = "source-bindings";
+const RETENTION_FILE = "last-verified.json";
 const MAX_POINTER_BYTES = 64 * 1024;
 const MAX_PROJECTION_FILE_BYTES = 1024 * 1024;
 const POINTER_RETRY_LIMIT = 3;
-const RUNTIME_IDENTITY_FIELDS = new Set([
-  "communication-preferences",
-  "fitness-equipment-access",
-  "fitness-injury-constraints",
-  "fitness-mobility-constraints",
-  "fitness-training-experience",
-  "language",
-  "preferred-name",
-  "stella-identity",
-  "stella-persona",
-  "timezone",
-]);
 
 const checksum = (bytes: Uint8Array): string =>
   `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -302,17 +311,7 @@ const assertRuntimeIdentityPayload = (publication: ProjectionPublication): void 
   if (!validateContract("identity-context", value).valid || !isRecord(value)) {
     throw new Error("IDENTITY_CONTEXT_PAYLOAD_INVALID");
   }
-  const entries = value.entries;
-  if (!Array.isArray(entries)) throw new Error("IDENTITY_CONTEXT_PAYLOAD_INVALID");
-  for (const entry of entries) {
-    if (!isRecord(entry) || !RUNTIME_IDENTITY_FIELDS.has(String(entry.id))) {
-      throw new Error("IDENTITY_CONTEXT_FIELD_NOT_ALLOWLISTED");
-    }
-    const isBackground = String(entry.id).startsWith("fitness-");
-    if (entry.category !== (isBackground ? "background" : "identity")) {
-      throw new Error("IDENTITY_CONTEXT_FIELD_NOT_ALLOWLISTED");
-    }
-  }
+  assertRuntimeIdentityContextPolicy(value, publication.manifest.source_references);
 };
 
 const verifyRevision = async (
@@ -364,7 +363,17 @@ const parseLockRecord = (value: unknown): ProjectionLockRecord => {
     || typeof value.owner.hostname !== "string"
     || typeof value.owner.started_at !== "string"
     || typeof value.owner.lease_expires_at !== "string"
-    || !["acquired", "temporary_revision_complete", "revision_committed", "active_committed"]
+  ) {
+    throw new Error("PROJECTION_LOCK_RECORD_INVALID");
+  }
+  if (value.operation === "collect") {
+    if (value.phase !== "acquired" || "target" in value) {
+      throw new Error("PROJECTION_LOCK_RECORD_INVALID");
+    }
+    return value as unknown as ProjectionCollectionLockRecord;
+  }
+  if (
+    !["acquired", "temporary_revision_complete", "revision_committed", "active_committed"]
       .includes(String(value.phase))
     || !isRecord(value.target)
     || typeof value.target.projection_revision !== "string"
@@ -404,6 +413,21 @@ export class FileProjectionExchange {
     if (options.layout.locator.instance_id !== options.instanceId) {
       throw new Error("PROJECTION_EXCHANGE_INSTANCE_MISMATCH");
     }
+    const repository = options.layout.locator.personal_data_repository;
+    const expectedStellaRoot = join(repository, "stella");
+    if (
+      options.layout.repository !== repository
+      || options.layout.stellaRoot !== expectedStellaRoot
+      || options.layout.authority !== join(expectedStellaRoot, "authority")
+      || options.layout.authorityRelativeRoot !== "stella/authority"
+      || options.layout.fitness !== join(expectedStellaRoot, "fitness")
+      || options.layout.projections.fitness
+        !== join(expectedStellaRoot, "projections", "fitness")
+      || options.layout.projections.stella
+        !== join(expectedStellaRoot, "projections", "stella")
+    ) {
+      throw new Error("PROJECTION_EXCHANGE_LOCATOR_MISMATCH");
+    }
     this.#layout = options.layout;
     this.#instanceId = options.instanceId;
     this.#ownerId = options.ownerId;
@@ -413,6 +437,72 @@ export class FileProjectionExchange {
     this.#ownerStatus = options.ownerStatus ?? defaultOwnerStatus;
   }
 
+  async #runtimeMetadataDirectory(): Promise<string> {
+    const directory = join(
+      this.#layout.projections.fitness,
+      RUNTIME_METADATA_DIRECTORY,
+    );
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await chmod(directory, 0o700);
+    return directory;
+  }
+
+  async #claimSourceBinding(publication: ProjectionPublication): Promise<void> {
+    const metadataDirectory = await this.#runtimeMetadataDirectory();
+    const bindingsDirectory = join(metadataDirectory, SOURCE_BINDINGS_DIRECTORY);
+    await mkdir(bindingsDirectory, { recursive: true, mode: 0o700 });
+    await chmod(bindingsDirectory, 0o700);
+    const binding: ProjectionSourceBinding = {
+      schema_version: "stella.projection-source-binding/v1",
+      instance_id: this.#instanceId,
+      source_revision: publication.manifest.source.revision,
+      source_as_of: publication.manifest.source.as_of,
+      projection_revision: publication.projectionRevision,
+    };
+    const bindingName = createHash("sha256")
+      .update(publication.manifest.source.revision)
+      .digest("hex");
+    const bindingPath = join(bindingsDirectory, `${bindingName}.json`);
+    let existing: unknown = null;
+    try {
+      const bytes = await readSecureFile(
+        bindingsDirectory,
+        bindingPath,
+        MAX_POINTER_BYTES,
+      );
+      existing = JSON.parse(bytes.toString("utf8")) as unknown;
+    } catch (error: unknown) {
+      if (errorCode(error) !== "ENOENT") throw error;
+    }
+    if (existing !== null) {
+      if (jcsCanonicalJson(existing) !== jcsCanonicalJson(binding)) {
+        throw new Error("PROJECTION_SOURCE_NONDETERMINISTIC");
+      }
+      return;
+    }
+
+    const revisions = join(this.#layout.projections.fitness, "revisions");
+    for (const revision of await readdir(revisions)) {
+      if (!/^projection-[a-f0-9]{64}$/u.test(revision)) continue;
+      const verified = await verifyRevision(
+        join(revisions, revision),
+        this.#instanceId,
+        "stella-runtime",
+        "stella-fitness",
+      );
+      if (
+        verified.manifest.source.revision === binding.source_revision
+        && (
+          verified.manifest.source.as_of !== binding.source_as_of
+          || verified.manifest.projection_revision !== binding.projection_revision
+        )
+      ) {
+        throw new Error("PROJECTION_SOURCE_NONDETERMINISTIC");
+      }
+    }
+    await atomicWriteFile(bindingPath, jcsCanonicalJson(binding));
+  }
+
   async #writeLock(record: ProjectionLockRecord): Promise<void> {
     await atomicWriteFile(
       join(this.#layout.projections.fitness, LOCK_DIRECTORY, LOCK_RECORD),
@@ -420,7 +510,9 @@ export class FileProjectionExchange {
     );
   }
 
-  async #acquireLock(publication: ProjectionPublication): Promise<ProjectionLockRecord> {
+  async #acquireLock(
+    publication: ProjectionPublication,
+  ): Promise<ProjectionPublishLockRecord> {
     const root = this.#layout.projections.fitness;
     const lockDirectory = join(root, LOCK_DIRECTORY);
     try {
@@ -435,7 +527,7 @@ export class FileProjectionExchange {
     ).toISOString();
     const temporaryDirectory = `.tmp-${this.#ownerId}-${randomUUID()}`;
     const pointer = pointerFor(publication.manifest, publication.manifestChecksum, startedAt);
-    const record: ProjectionLockRecord = {
+    const record: ProjectionPublishLockRecord = {
       schema_version: "stella.projection-publish-lock/v1",
       operation: "publish",
       instance_id: this.#instanceId,
@@ -466,7 +558,7 @@ export class FileProjectionExchange {
     }
   }
 
-  async #acquireCollectionLock(): Promise<ProjectionLockRecord> {
+  async #acquireCollectionLock(): Promise<ProjectionCollectionLockRecord> {
     const root = this.#layout.projections.fitness;
     const lockDirectory = join(root, LOCK_DIRECTORY);
     try {
@@ -476,7 +568,7 @@ export class FileProjectionExchange {
       throw error;
     }
     const startedAt = this.#now();
-    const record: ProjectionLockRecord = {
+    const record: ProjectionCollectionLockRecord = {
       schema_version: "stella.projection-publish-lock/v1",
       operation: "collect",
       instance_id: this.#instanceId,
@@ -490,14 +582,6 @@ export class FileProjectionExchange {
         ).toISOString(),
       },
       phase: "acquired",
-      target: {
-        projection_revision: `projection-${"0".repeat(64)}`,
-        source_revision: "maintenance",
-        as_of: startedAt,
-        manifest_checksum: `sha256:${"0".repeat(64)}`,
-        temporary_directory: `.tmp-collection-${this.#ownerId}-${randomUUID()}`,
-        pointer: {},
-      },
     };
     try {
       await this.#writeLock(record);
@@ -510,7 +594,7 @@ export class FileProjectionExchange {
   }
 
   async #commitRevision(
-    record: ProjectionLockRecord,
+    record: ProjectionPublishLockRecord,
     temporary: string,
   ): Promise<{ readonly verified: VerifiedRevision; readonly reused: boolean }> {
     const revisions = join(this.#layout.projections.fitness, "revisions");
@@ -569,6 +653,7 @@ export class FileProjectionExchange {
     }
     await syncDirectory(temporary);
     await verifyRevision(temporary, this.#instanceId, "stella-runtime", "stella-fitness");
+    await this.#claimSourceBinding(publication);
     record = { ...record, phase: "temporary_revision_complete" };
     await this.#writeLock(record);
     await this.#failpoint("after_temporary_revision_complete");
@@ -652,6 +737,14 @@ export class FileProjectionExchange {
     if (record.instance_id !== this.#instanceId) {
       return { outcome: "degraded", ...diagnostic, reasonCode: "PROJECTION_LOCK_INSTANCE_MISMATCH" };
     }
+    const recoveryTime = Date.parse(this.#now());
+    const leaseExpiry = Date.parse(record.owner.lease_expires_at);
+    if (!Number.isFinite(recoveryTime) || !Number.isFinite(leaseExpiry)) {
+      return { outcome: "degraded", ...diagnostic, reasonCode: "PROJECTION_LEASE_INVALID" };
+    }
+    if (recoveryTime <= leaseExpiry) {
+      return { outcome: "degraded", ...diagnostic, reasonCode: "PROJECTION_LEASE_ACTIVE" };
+    }
     const ownerStatus = await this.#ownerStatus(record.owner);
     if (ownerStatus !== "dead") {
       return {
@@ -662,6 +755,18 @@ export class FileProjectionExchange {
           : "PROJECTION_OWNER_VALIDITY_UNCERTAIN",
       };
     }
+    const revalidatedRecord = await this.#readLock();
+    if (
+      revalidatedRecord === null
+      || jcsCanonicalJson(revalidatedRecord) !== jcsCanonicalJson(record)
+    ) {
+      return {
+        outcome: "degraded",
+        ...diagnostic,
+        reasonCode: "PROJECTION_LOCK_CHANGED",
+      };
+    }
+    record = revalidatedRecord;
 
     if (record.operation === "collect") {
       await rm(join(this.#layout.projections.fitness, LOCK_DIRECTORY), {
@@ -790,7 +895,7 @@ export class FileProjectionExchange {
     const revisions = join(root, "revisions");
     await mkdir(revisions, { recursive: true, mode: 0o700 });
     await this.#acquireCollectionLock();
-    const protectedRevisions = new Set(options.lastVerifiedRevisions ?? []);
+    const protectedRevisions = new Set<string>();
     try {
       let pointerValue: unknown = null;
       try {
@@ -821,6 +926,8 @@ export class FileProjectionExchange {
           protectedRevisions.add(pointerValue.last_verified_revision);
         }
       }
+      const retainedRevision = await this.#readLastVerifiedRevision();
+      if (retainedRevision !== null) protectedRevisions.add(retainedRevision);
 
       const removedRevisions: string[] = [];
       const gracePeriodRevisions: string[] = [];
@@ -857,6 +964,49 @@ export class FileProjectionExchange {
     } catch (error: unknown) {
       throw new Error("PROJECTION_COLLECTION_FAILED", { cause: error });
     }
+  }
+
+  async #readLastVerifiedRevision(): Promise<string | null> {
+    const metadataDirectory = await this.#runtimeMetadataDirectory();
+    try {
+      const bytes = await readSecureFile(
+        metadataDirectory,
+        join(metadataDirectory, RETENTION_FILE),
+        MAX_POINTER_BYTES,
+      );
+      const value = JSON.parse(bytes.toString("utf8")) as unknown;
+      if (
+        !isRecord(value)
+        || value.schema_version !== "stella.projection-retention/v1"
+        || value.instance_id !== this.#instanceId
+        || typeof value.last_verified_revision !== "string"
+        || !/^projection-[a-f0-9]{64}$/u.test(value.last_verified_revision)
+      ) {
+        throw new Error("PROJECTION_RETENTION_INVALID");
+      }
+      return value.last_verified_revision;
+    } catch (error: unknown) {
+      if (errorCode(error) === "ENOENT") return null;
+      throw error;
+    }
+  }
+
+  async recordLastVerifiedRevision(projectionRevision: string): Promise<void> {
+    if (!/^projection-[a-f0-9]{64}$/u.test(projectionRevision)) {
+      throw new Error("PROJECTION_RETENTION_REVISION_INVALID");
+    }
+    await verifyRevision(
+      join(this.#layout.projections.fitness, "revisions", projectionRevision),
+      this.#instanceId,
+      "stella-runtime",
+      "stella-fitness",
+    );
+    const metadataDirectory = await this.#runtimeMetadataDirectory();
+    await atomicWriteFile(join(metadataDirectory, RETENTION_FILE), jcsCanonicalJson({
+      schema_version: "stella.projection-retention/v1",
+      instance_id: this.#instanceId,
+      last_verified_revision: projectionRevision,
+    }));
   }
 
   async #consume(

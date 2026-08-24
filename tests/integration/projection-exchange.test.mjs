@@ -54,13 +54,16 @@ const createPersonalDataLayout = async (t) => {
   };
 };
 
-const runtimePublication = (sourceRevision = "authority-revision-1") => runProjectionProducerConformance({
+const runtimePublication = (
+  sourceRevision = "authority-revision-1",
+  sourceAsOf = "2026-08-24T00:00:00Z",
+) => runProjectionProducerConformance({
   instanceId: "instance-synthetic",
   producerId: "stella-runtime",
   consumerId: "stella-fitness",
   canonicalSourceSnapshot: {
     revision: sourceRevision,
-    sourceAsOf: "2026-08-24T00:00:00Z",
+    sourceAsOf,
   },
   determinismLedger: new ProjectionDeterminismLedger(),
   categories: ["identity", "background"],
@@ -85,7 +88,7 @@ const runtimePublication = (sourceRevision = "authority-revision-1") => runProje
       producer_id: "stella-runtime",
       consumer_id: "stella-fitness",
       source_revision: sourceRevision,
-      as_of: "2026-08-24T00:00:00Z",
+      as_of: sourceAsOf,
       categories: ["identity", "background"],
       entries: [{
         id: "language",
@@ -313,6 +316,28 @@ test("same deterministic revision is verified and reused without rewriting gener
   assert.equal(consumed.manifest.generated_at, first.manifest.generated_at);
 });
 
+test("persistent source binding rejects a fresh-ledger retry with changed source_as_of", async (t) => {
+  const layout = await createPersonalDataLayout(t);
+  const exchange = new FileProjectionExchange({
+    layout,
+    instanceId: "instance-synthetic",
+    ownerId: "runtime-process-1",
+    now: () => "2026-08-24T00:02:00Z",
+  });
+  await exchange.publishIdentityProjection(runtimePublication(
+    "authority-revision-bound",
+    "2026-08-24T00:00:00Z",
+  ));
+
+  await assert.rejects(
+    () => exchange.publishIdentityProjection(runtimePublication(
+      "authority-revision-bound",
+      "2026-08-24T00:00:01Z",
+    )),
+    /PROJECTION_SOURCE_NONDETERMINISTIC/,
+  );
+});
+
 test("Runtime publisher rejects non-allowlisted identity payload fields", async (t) => {
   const layout = await createPersonalDataLayout(t);
   const exchange = new FileProjectionExchange({
@@ -361,6 +386,95 @@ test("Runtime publisher rejects non-allowlisted identity payload fields", async 
     () => exchange.publishIdentityProjection(unsafe),
     /IDENTITY_CONTEXT_FIELD_NOT_ALLOWLISTED/,
   );
+
+  const sensitive = runProjectionProducerConformance({
+    instanceId: "instance-synthetic",
+    producerId: "stella-runtime",
+    consumerId: "stella-fitness",
+    canonicalSourceSnapshot: {
+      revision: "authority-revision-sensitive",
+      sourceAsOf: "2026-08-24T00:00:00Z",
+    },
+    determinismLedger: new ProjectionDeterminismLedger(),
+    categories: ["identity"],
+    sourceReferences: base.manifest.source_references.map((reference) => ({
+      ...reference,
+      revision: "authority-revision-sensitive",
+    })),
+    conflicts: [],
+    retractions: [],
+    capabilities: [{ id: "identity_context", state: "available" }],
+    payloads: [{
+      path: "payloads/identity-context.json",
+      mediaType: "application/json",
+      value: {
+        ...identity,
+        source_revision: "authority-revision-sensitive",
+        categories: ["identity"],
+        entries: [{
+          id: "preferred-name",
+          category: "identity",
+          content: "API key secret must be used",
+          source_reference_ids: ["source-user"],
+        }],
+      },
+    }],
+    generatedAt: "2026-08-24T00:01:00Z",
+  });
+  await assert.rejects(
+    () => exchange.publishIdentityProjection(sensitive),
+    /IDENTITY_CONTEXT_SENSITIVE_CONTENT_FORBIDDEN/,
+  );
+});
+
+test("projection recovery requires an expired lease and an unchanged exact lock", async (t) => {
+  const leaseLayout = await createPersonalDataLayout(t);
+  const publication = runtimePublication();
+  const crashBeforePayload = new FileProjectionExchange({
+    layout: leaseLayout,
+    instanceId: "instance-synthetic",
+    ownerId: "crashed-runtime",
+    now: () => "2026-08-24T00:02:00Z",
+    failpoint(point) {
+      if (point === "before_payload_write") throw new Error("CRASH");
+    },
+  });
+  await assert.rejects(() => crashBeforePayload.publishIdentityProjection(publication), /CRASH/);
+  const early = new FileProjectionExchange({
+    layout: leaseLayout,
+    instanceId: "instance-synthetic",
+    ownerId: "early-recoverer",
+    now: () => "2026-08-24T00:03:00Z",
+    ownerStatus: () => "dead",
+  });
+  assert.equal((await early.recoverPublication()).reasonCode, "PROJECTION_LEASE_ACTIVE");
+
+  const changed = new FileProjectionExchange({
+    layout: leaseLayout,
+    instanceId: "instance-synthetic",
+    ownerId: "changed-recoverer",
+    now: () => "2026-08-24T00:10:00Z",
+    async ownerStatus() {
+      const lockPath = join(leaseLayout.projections.fitness, ".publish-lock", "owner.json");
+      const lock = JSON.parse(await readFile(lockPath, "utf8"));
+      lock.owner.id = "replacement-owner";
+      await writeFile(lockPath, jcsCanonicalJson(lock), { mode: 0o600 });
+      return "dead";
+    },
+  });
+  assert.equal((await changed.recoverPublication()).reasonCode, "PROJECTION_LOCK_CHANGED");
+});
+
+test("projection exchange rejects a layout inconsistent with its locator", async (t) => {
+  const layout = await createPersonalDataLayout(t);
+  assert.throws(() => new FileProjectionExchange({
+    layout: {
+      ...layout,
+      projections: { ...layout.projections, fitness: layout.projections.stella },
+    },
+    instanceId: "instance-synthetic",
+    ownerId: "runtime-process-1",
+  }), /PROJECTION_EXCHANGE_LOCATOR_MISMATCH/);
 });
 
 test("Runtime read-only consumes Fitness active/stale and rejects blocked projections", async (t) => {
@@ -455,10 +569,10 @@ test("orphan collection preserves active, last verified, and grace-period revisi
   await utimes(join(revisions, active.projectionRevision), old, old);
   const withinGrace = new Date("2026-08-24T11:30:00Z");
   await utimes(join(revisions, recent.projectionRevision), withinGrace, withinGrace);
+  await exchange.recordLastVerifiedRevision(lastVerified.projectionRevision);
 
   const result = await exchange.collectOrphanRevisions({
     gracePeriodMs: 60 * 60 * 1000,
-    lastVerifiedRevisions: [lastVerified.projectionRevision],
   });
 
   assert.deepEqual(result.removedRevisions, [orphan.projectionRevision]);

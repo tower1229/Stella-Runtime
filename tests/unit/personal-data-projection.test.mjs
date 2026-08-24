@@ -74,6 +74,25 @@ test("Runtime identity builder exposes only allowlisted stable identity and fitn
       timezone: { content: "Shanghai", sourceReferenceIds: ["source-identity"] },
     },
   }), /IDENTITY_CONTEXT_TIMEZONE_INVALID/);
+
+  assert.throws(() => buildRuntimeIdentityProjection({
+    instanceId: "instance-synthetic",
+    canonicalSourceSnapshot: {
+      revision: "source-synthetic-identity",
+      sourceAsOf: "2026-08-24T00:00:00Z",
+    },
+    generatedAt: "2026-08-24T00:01:00Z",
+    determinismLedger: new ProjectionDeterminismLedger(),
+    sourceReferences: [{
+      id: "source-agents",
+      path: "identity/AGENTS.md",
+      revision: "source-synthetic-identity",
+      checksum: `sha256:${"a".repeat(64)}`,
+    }],
+    context: {
+      preferredName: { content: "Stella", sourceReferenceIds: ["source-agents"] },
+    },
+  }), /IDENTITY_CONTEXT_SOURCE_PATH_FORBIDDEN/);
 });
 
 const sha256 = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;

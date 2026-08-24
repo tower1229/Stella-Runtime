@@ -449,6 +449,63 @@ const FITNESS_BACKGROUND_IDS = {
   training_experience: "fitness-training-experience",
 } as const satisfies Readonly<Record<StableFitnessBackgroundKind, string>>;
 
+const RUNTIME_IDENTITY_ENTRY_CATEGORIES = new Map<string, ProjectionCategory>([
+  ...IDENTITY_FIELDS.map(([, id]) => [id, "identity"] as const),
+  ...Object.values(FITNESS_BACKGROUND_IDS).map((id) => [id, "background"] as const),
+]);
+
+export const runtimeIdentityContextCategoryForEntryId = (
+  id: string,
+): ProjectionCategory | null => RUNTIME_IDENTITY_ENTRY_CATEGORIES.get(id) ?? null;
+
+const RUNTIME_IDENTITY_SOURCE_PATH = /^(?:cognitive|identity|personal-model|semantic)\/[A-Za-z0-9._/-]+$/u;
+const SENSITIVE_IDENTITY_CONTENT = /(?:\b(?:agents|tools)\.md\b|\b(?:api[_ -]?key|password|secret|credential|access[_ -]?token)\b|\b(?:raw[_ -]?)?(?:session|transcript)\b|\b(?:sudo|administrator|permission|privilege)\b|(?:扩大|提升|授予|绕过).{0,8}(?:权限|访问))/iu;
+
+export const assertRuntimeIdentityContextPolicy = (
+  value: unknown,
+  sourceReferences: readonly ProjectionSourceReference[],
+): void => {
+  if (
+    typeof value !== "object"
+    || value === null
+    || Array.isArray(value)
+    || !validateContract("identity-context", value).valid
+  ) {
+    throw new Error("IDENTITY_CONTEXT_PAYLOAD_INVALID");
+  }
+  const context = value as Readonly<Record<string, unknown>>;
+  const referencesById = new Map(sourceReferences.map((reference) => [reference.id, reference]));
+  const usedReferenceIds = new Set<string>();
+  for (const entry of context.entries as readonly Readonly<Record<string, unknown>>[]) {
+    const category = runtimeIdentityContextCategoryForEntryId(String(entry.id));
+    if (category === null || entry.category !== category) {
+      throw new Error("IDENTITY_CONTEXT_FIELD_NOT_ALLOWLISTED");
+    }
+    const content = String(entry.content);
+    if (SENSITIVE_IDENTITY_CONTENT.test(content)) {
+      throw new Error("IDENTITY_CONTEXT_SENSITIVE_CONTENT_FORBIDDEN");
+    }
+    for (const sourceReferenceId of entry.source_reference_ids as readonly string[]) {
+      const reference = referencesById.get(sourceReferenceId);
+      if (reference === undefined) {
+        throw new Error("IDENTITY_CONTEXT_SOURCE_REFERENCE_UNKNOWN");
+      }
+      if (
+        !RUNTIME_IDENTITY_SOURCE_PATH.test(reference.path)
+        || /(?:^|\/)(?:AGENTS|TOOLS)\.md$/iu.test(reference.path)
+        || /(?:^|\/)(?:secrets?|sessions?|transcripts?|credentials?)(?:\/|$)/iu
+          .test(reference.path)
+      ) {
+        throw new Error("IDENTITY_CONTEXT_SOURCE_PATH_FORBIDDEN");
+      }
+      usedReferenceIds.add(sourceReferenceId);
+    }
+  }
+  if (usedReferenceIds.size !== sourceReferences.length) {
+    throw new Error("IDENTITY_CONTEXT_SOURCE_REFERENCE_UNUSED");
+  }
+};
+
 const assertContextValue = (
   value: RuntimeIdentityContextValue,
   sourceReferenceIds: ReadonlySet<string>,
@@ -516,6 +573,17 @@ export function buildRuntimeIdentityProjection(
   if (identityEntries.length > 0) {
     capabilities.push({ id: "identity_context", state: "available" });
   }
+  const identityContext = {
+    schema_version: "stella.identity-context/v1",
+    instance_id: input.instanceId,
+    producer_id: "stella-runtime",
+    consumer_id: "stella-fitness",
+    source_revision: input.canonicalSourceSnapshot.revision,
+    as_of: input.canonicalSourceSnapshot.sourceAsOf,
+    categories,
+    entries,
+  } as const;
+  assertRuntimeIdentityContextPolicy(identityContext, input.sourceReferences);
   return runProjectionProducerConformance({
     instanceId: input.instanceId,
     producerId: "stella-runtime",
@@ -530,16 +598,7 @@ export function buildRuntimeIdentityProjection(
     payloads: [{
       path: "payloads/identity-context.json",
       mediaType: "application/json",
-      value: {
-        schema_version: "stella.identity-context/v1",
-        instance_id: input.instanceId,
-        producer_id: "stella-runtime",
-        consumer_id: "stella-fitness",
-        source_revision: input.canonicalSourceSnapshot.revision,
-        as_of: input.canonicalSourceSnapshot.sourceAsOf,
-        categories,
-        entries,
-      },
+      value: identityContext,
     }],
     generatedAt: input.generatedAt,
   });
