@@ -19,6 +19,20 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "stella": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schema_version", "instance_id", "personal_data_repository"],
+        "properties": {
+          "schema_version": { "const": "stella.personal-data-locator/v1" },
+          "instance_id": { "$ref": "#/$defs/id" },
+          "personal_data_repository": {
+            "type": "string",
+            "minLength": 2,
+            "pattern": "^(?:/|[A-Za-z]:[\\\\/])"
+          }
+        }
+      },
       "runtime": {
         "type": "object",
         "additionalProperties": false,

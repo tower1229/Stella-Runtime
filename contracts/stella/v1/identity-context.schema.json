@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stella.identity-context/v1",
+  "title": "Stella Identity Context",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "instance_id", "producer_id", "consumer_id", "source_revision", "as_of", "categories", "entries"],
+  "properties": {
+    "schema_version": { "const": "stella.identity-context/v1" },
+    "instance_id": { "$ref": "#/$defs/id" },
+    "producer_id": { "const": "stella-runtime" },
+    "consumer_id": { "const": "stella-fitness" },
+    "source_revision": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$" },
+    "as_of": { "type": "string", "format": "date-time" },
+    "categories": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": { "enum": ["background", "identity"] }
+    },
+    "entries": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "category", "content", "source_reference_ids"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "category": { "enum": ["background", "identity"] },
+        "content": { "type": "string", "minLength": 1, "maxLength": 8192 },
+        "source_reference_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    }
+  }
+}

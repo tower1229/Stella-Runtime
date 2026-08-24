@@ -1,0 +1,25 @@
+{
+  "synthetic": true,
+  "jcs": {
+    "input": { "z": 1, "a": "值" },
+    "expected_utf8": "{\"a\":\"值\",\"z\":1}",
+    "expected_sha256": "sha256:c77a8490196d3eb09139ccbeef4e455f975aae33d1147cd30f6134e6b7cbdfb5"
+  },
+  "text": {
+    "input": "Café\r\nline two\r\n",
+    "expected_utf8": "Café\nline two\n",
+    "expected_sha256": "sha256:866bdf925217d71cf2b1e323e89708f5239d01c8ab10e633f5adaae3ace1c55e"
+  },
+  "scenarios": [
+    "jcs_numbers_escaping",
+    "unicode_nfc",
+    "crlf_input",
+    "array_sorting",
+    "duplicate_path",
+    "unknown_field",
+    "checksum_mismatch",
+    "oversize",
+    "symlink_path_escape",
+    "stale_tuple_mismatch"
+  ]
+}

@@ -19,8 +19,13 @@ test("package exposes only built JavaScript to OpenClaw", async () => {
   assert.equal(packageJson.exports["."].import, "./dist/index.js");
   assert.equal(packageJson.exports["."].types, "./dist/index.d.ts");
   assert.equal(packageJson.exports["./contracts/v2/*"], "./contracts/v2/*");
+  assert.equal(
+    packageJson.exports["./contracts/stella/v1/*"],
+    "./contracts/stella/v1/*",
+  );
   assert.equal("./contracts/v1/*" in packageJson.exports, false);
   assert.equal(packageJson.files.includes("contracts/v2"), true);
+  assert.equal(packageJson.files.includes("contracts/stella/v1"), true);
   assert.equal(packageJson.files.includes("contracts/v1"), false);
   assert.deepEqual(packageJson.exports["./test-runner"], {
     types: "./dist/testing/runner.d.ts",
@@ -38,6 +43,9 @@ test("public entry does not expose SQLite storage paths", async () => {
   assert.equal(typeof publicEntry.runReleaseConformance, "function");
   assert.equal(typeof publicEntry.createReleaseProvenance, "function");
   assert.equal(typeof publicEntry.rehearseRecoveryTransport, "function");
+  assert.equal(typeof publicEntry.resolvePersonalDataLocator, "function");
+  assert.equal(typeof publicEntry.runProjectionProducerConformance, "function");
+  assert.equal(typeof publicEntry.runProjectionConsumerConformance, "function");
   assert.equal(typeof publicEntry.createStateManagementPort, "function");
   assert.equal(typeof publicEntry.createExactStateImportPolicy, "function");
   assert.equal(typeof publicEntry.validateAuthoritySource, "function");
@@ -62,6 +70,14 @@ test("plugin manifest declares a strict config and packaged Skill", async () => 
   assert.equal(manifest.version, "0.2.1");
   assert.equal(manifest.configSchema.type, "object");
   assert.equal(manifest.configSchema.additionalProperties, false);
+  assert.deepEqual(
+    manifest.configSchema.properties.stella.required,
+    ["schema_version", "instance_id", "personal_data_repository"],
+  );
+  assert.equal(
+    manifest.configSchema.properties.stella.properties.schema_version.const,
+    "stella.personal-data-locator/v1",
+  );
   assert.equal("binding" in manifest.configSchema.properties.runtime.properties, false);
   assert.deepEqual(
     manifest.configSchema.properties.runtime.required,

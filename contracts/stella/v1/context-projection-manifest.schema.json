@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stella.context-projection-manifest/v1",
+  "title": "Stella Context Projection Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "instance_id", "producer_id", "consumer_id", "projection_revision", "source", "categories", "source_references", "conflicts", "retractions", "capabilities", "payloads", "generated_at"],
+  "properties": {
+    "schema_version": { "const": "stella.context-projection-manifest/v1" },
+    "instance_id": { "$ref": "#/$defs/id" },
+    "producer_id": { "enum": ["stella-runtime", "stella-fitness"] },
+    "consumer_id": { "enum": ["stella-fitness", "stella-runtime"] },
+    "projection_revision": { "$ref": "#/$defs/projectionRevision" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision", "as_of"],
+      "properties": {
+        "revision": { "$ref": "#/$defs/sourceRevision" },
+        "as_of": { "type": "string", "format": "date-time" }
+      }
+    },
+    "categories": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "enum": ["background", "fitness_history", "identity"] }
+    },
+    "source_references": {
+      "type": "array",
+      "maxItems": 512,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/sourceReference" }
+    },
+    "conflicts": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/conflict" }
+    },
+    "retractions": {
+      "type": "array",
+      "maxItems": 512,
+      "items": { "$ref": "#/$defs/retraction" }
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": { "$ref": "#/$defs/capability" }
+    },
+    "payloads": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/payload" }
+    },
+    "generated_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [{ "$ref": "#/$defs/allowedPair" }],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "sourceRevision": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$" },
+    "projectionRevision": { "type": "string", "pattern": "^projection-[a-f0-9]{64}$" },
+    "checksum": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "relativePath": { "type": "string", "maxLength": 512, "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$" },
+    "sourceReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "revision", "checksum"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "revision": { "$ref": "#/$defs/sourceRevision" },
+        "checksum": { "$ref": "#/$defs/checksum" }
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source_reference_ids", "summary"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "source_reference_ids": { "type": "array", "minItems": 2, "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 1024 }
+      }
+    },
+    "retraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source_reference_id", "retracted_revision"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "source_reference_id": { "$ref": "#/$defs/id" },
+        "retracted_revision": { "$ref": "#/$defs/projectionRevision" }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "state"],
+      "properties": {
+        "id": { "enum": ["background_context", "fitness_history_context", "identity_context", "material_identity_update", "current_fitness_state"] },
+        "state": { "enum": ["available", "degraded", "unavailable"] }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "media_type", "byte_length", "checksum"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "media_type": { "enum": ["application/json", "text/markdown"] },
+        "byte_length": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+        "checksum": { "$ref": "#/$defs/checksum" }
+      }
+    },
+    "allowedPair": {
+      "oneOf": [
+        { "properties": { "producer_id": { "const": "stella-runtime" }, "consumer_id": { "const": "stella-fitness" }, "categories": { "items": { "enum": ["background", "identity"] } }, "capabilities": { "items": { "properties": { "id": { "enum": ["background_context", "identity_context", "material_identity_update"] } } } } }, "required": ["producer_id", "consumer_id"] },
+        { "properties": { "producer_id": { "const": "stella-fitness" }, "consumer_id": { "const": "stella-runtime" }, "categories": { "items": { "const": "fitness_history" } }, "capabilities": { "items": { "properties": { "id": { "enum": ["fitness_history_context", "current_fitness_state"] } } } } }, "required": ["producer_id", "consumer_id"] }
+      ]
+    }
+  }
+}

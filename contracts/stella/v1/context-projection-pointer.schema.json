@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stella.context-projection-pointer/v1",
+  "title": "Stella Context Projection Pointer",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "instance_id", "producer_id", "consumer_id", "status", "pointer_revision", "source_revision", "changed_at"],
+  "properties": {
+    "schema_version": { "const": "stella.context-projection-pointer/v1" },
+    "instance_id": { "$ref": "#/$defs/id" },
+    "producer_id": { "enum": ["stella-runtime", "stella-fitness"] },
+    "consumer_id": { "enum": ["stella-fitness", "stella-runtime"] },
+    "status": { "enum": ["active", "stale", "blocked", "revoked"] },
+    "pointer_revision": { "$ref": "#/$defs/pointerRevision" },
+    "projection_revision": { "$ref": "#/$defs/projectionRevision" },
+    "last_verified_revision": { "$ref": "#/$defs/projectionRevision" },
+    "manifest_checksum": { "$ref": "#/$defs/checksum" },
+    "source_revision": { "$ref": "#/$defs/sourceRevision" },
+    "as_of": { "type": "string", "format": "date-time" },
+    "changed_at": { "type": "string", "format": "date-time" },
+    "reason_codes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" }
+    }
+  },
+  "allOf": [
+    { "$ref": "#/$defs/allowedPair" },
+    {
+      "if": { "properties": { "status": { "const": "active" } }, "required": ["status"] },
+      "then": {
+        "required": ["projection_revision", "manifest_checksum", "as_of"],
+        "not": { "anyOf": [{ "required": ["last_verified_revision"] }, { "required": ["reason_codes"] }] }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "stale" } }, "required": ["status"] },
+      "then": {
+        "required": ["last_verified_revision", "manifest_checksum", "as_of", "reason_codes"],
+        "not": { "required": ["projection_revision"] }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "enum": ["blocked", "revoked"] } }, "required": ["status"] },
+      "then": {
+        "required": ["reason_codes"],
+        "not": {
+          "anyOf": [
+            { "required": ["projection_revision"] },
+            { "required": ["last_verified_revision"] },
+            { "required": ["manifest_checksum"] },
+            { "required": ["as_of"] }
+          ]
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "sourceRevision": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$" },
+    "pointerRevision": { "type": "string", "pattern": "^pointer-[a-f0-9]{64}$" },
+    "projectionRevision": { "type": "string", "pattern": "^projection-[a-f0-9]{64}$" },
+    "checksum": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "allowedPair": {
+      "oneOf": [
+        { "properties": { "producer_id": { "const": "stella-runtime" }, "consumer_id": { "const": "stella-fitness" } }, "required": ["producer_id", "consumer_id"] },
+        { "properties": { "producer_id": { "const": "stella-fitness" }, "consumer_id": { "const": "stella-runtime" } }, "required": ["producer_id", "consumer_id"] }
+      ]
+    }
+  }
+}

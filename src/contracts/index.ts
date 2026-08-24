@@ -33,6 +33,10 @@ export type { ActiveGenerationPointer } from "./generated/active-generation-poin
 export type { ActivationReceipt } from "./generated/activation-receipt.schema.js";
 export type { InstanceRuntimeConfig } from "./generated/instance-runtime-config.schema.js";
 export type { InstanceCutoverPlan } from "./generated/instance-cutover-plan.schema.js";
+export type { StellaPersonalDataLocator } from "./generated/personal-data-locator.schema.js";
+export type { StellaContextProjectionPointer } from "./generated/context-projection-pointer.schema.js";
+export type { StellaContextProjectionManifest } from "./generated/context-projection-manifest.schema.js";
+export type { StellaIdentityContext } from "./generated/identity-context.schema.js";
 
 const contractNames = [
   "evidence",
@@ -65,6 +69,10 @@ const contractNames = [
   "activation-receipt",
   "instance-runtime-config",
   "instance-cutover-plan",
+  "personal-data-locator",
+  "context-projection-pointer",
+  "context-projection-manifest",
+  "identity-context",
 ] as const;
 
 export type ContractName = (typeof contractNames)[number];
@@ -96,7 +104,15 @@ const ajv = addFormats(
 
 const schemas = new Map<ContractName, object>();
 for (const name of contractNames) {
-  const schema = require(`../../contracts/v2/${name}.schema.json`) as object;
+  const contractRoot = [
+    "personal-data-locator",
+    "context-projection-pointer",
+    "context-projection-manifest",
+    "identity-context",
+  ].includes(name)
+    ? "../../contracts/stella/v1"
+    : "../../contracts/v2";
+  const schema = require(`${contractRoot}/${name}.schema.json`) as object;
   schemas.set(name, schema);
   ajv.addSchema(schema);
 }

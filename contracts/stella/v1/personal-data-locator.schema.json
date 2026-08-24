@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stella.personal-data-locator/v1",
+  "title": "Stella Personal Data Locator",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "instance_id", "personal_data_repository"],
+  "properties": {
+    "schema_version": { "const": "stella.personal-data-locator/v1" },
+    "instance_id": { "$ref": "#/$defs/id" },
+    "personal_data_repository": {
+      "type": "string",
+      "minLength": 2,
+      "pattern": "^(?:/|[A-Za-z]:[\\\\/])"
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" }
+  }
+}
