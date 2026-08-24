@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
@@ -19,9 +19,16 @@ import {
   prepareStateImportManifest,
 } from "../../dist/state/management.js";
 import {
+  commitSyntheticPersonalDataRepository,
   commitSyntheticAuthority,
   writeSyntheticAuthority,
 } from "../helpers/synthetic-authority.mjs";
+import {
+  jcsCanonicalJson,
+  loadMaintenanceGate,
+  ProjectionDeterminismLedger,
+  runProjectionProducerConformance,
+} from "../../dist/index.js";
 
 class FakeCommand {
   children = new Map();
@@ -508,6 +515,206 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
   assert.match(nextRun.prependContext, /Synthetic claims can be tested\./);
   assert.equal(generation.children.has("activate"), false);
   assert.equal(generation.children.has("rebuild"), false);
+});
+
+test("OpenClaw sync consumes configured Fitness projection and gates domain drift", async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "stella-openclaw-domain-v3-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repository = join(root, "personal-data");
+  const authorityDirectory = join(repository, "stella", "authority");
+  const fitnessDirectory = join(repository, "stella", "fitness");
+  const projectionRoot = join(repository, "stella", "projections");
+  const fitnessProjectionRoot = join(projectionRoot, "fitness");
+  const stellaProjectionRoot = join(projectionRoot, "stella");
+  await writeSyntheticAuthority(authorityDirectory);
+  for (const directory of [
+    repository,
+    join(repository, "stella"),
+    authorityDirectory,
+    fitnessDirectory,
+    projectionRoot,
+    fitnessProjectionRoot,
+    stellaProjectionRoot,
+  ]) {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await chmod(directory, 0o700);
+  }
+  await writeFile(join(repository, ".gitignore"), "stella/projections/\n");
+  const sourceRevision = await commitSyntheticPersonalDataRepository(repository);
+  const publication = runProjectionProducerConformance({
+    instanceId: "instance-synthetic",
+    producerId: "stella-fitness",
+    consumerId: "stella-runtime",
+    canonicalSourceSnapshot: {
+      revision: "fitness-f1",
+      sourceAsOf: "2026-08-24T00:00:00Z",
+    },
+    determinismLedger: new ProjectionDeterminismLedger(),
+    categories: ["fitness_history"],
+    sourceReferences: [],
+    conflicts: [],
+    retractions: [],
+    capabilities: [{ id: "fitness_history_context", state: "available" }],
+    payloads: [{
+      path: "payloads/history.md",
+      mediaType: "text/markdown",
+      value: "# Fitness history\n\nSynthetic session.\n",
+    }],
+    generatedAt: "2026-08-24T00:01:00Z",
+  });
+  const revisionRoot = join(
+    stellaProjectionRoot,
+    "revisions",
+    publication.projectionRevision,
+  );
+  await mkdir(join(revisionRoot, "payloads"), { recursive: true, mode: 0o700 });
+  await chmod(join(stellaProjectionRoot, "revisions"), 0o700);
+  await chmod(revisionRoot, 0o700);
+  await chmod(join(revisionRoot, "payloads"), 0o700);
+  await writeFile(join(revisionRoot, "manifest.json"), publication.manifestBytes, { mode: 0o600 });
+  await writeFile(
+    join(revisionRoot, publication.payloads[0].path),
+    publication.payloads[0].bytes,
+    { mode: 0o600 },
+  );
+  const domainPointer = {
+    schema_version: "stella.context-projection-pointer/v1",
+    instance_id: "instance-synthetic",
+    producer_id: "stella-fitness",
+    consumer_id: "stella-runtime",
+    status: "active",
+    pointer_revision: `pointer-${"2".repeat(64)}`,
+    projection_revision: publication.projectionRevision,
+    manifest_checksum: publication.manifestChecksum,
+    source_revision: publication.manifest.source.revision,
+    as_of: publication.manifest.source.as_of,
+    changed_at: "2026-08-24T00:02:00Z",
+  };
+  await writeFile(
+    join(stellaProjectionRoot, "active.json"),
+    jcsCanonicalJson(domainPointer),
+    { mode: 0o600 },
+  );
+
+  const runtimeStorage = join(root, "runtime");
+  const generationStorage = join(root, "generation-state", "generations");
+  const runtimeConfig = {
+    schema_version: "cognitive-runtime.instance-runtime-config/v2",
+    instance_id: "instance-synthetic",
+    mode: "enforce",
+    runtime_storage: runtimeStorage,
+    generation_storage: generationStorage,
+    host: { agent_id: "main", eligible_scope: ["private_main_session"] },
+    authority_owner: { provider: "telegram", actor_id: "owner-synthetic" },
+    limits: { max_active_runs: 4, drain_timeout_ms: 30_000 },
+    adapters: { authority_checkout: authorityDirectory, host_retrieval: "openclaw-memory" },
+  };
+  const state = createStateManagementPort({
+    stateRoot: runtimeStorage,
+    instanceId: runtimeConfig.instance_id,
+  });
+  await state.initialize();
+  state.close();
+  const hostConfig = {
+    plugins: {
+      entries: {
+        "cognitive-runtime": {
+          config: {
+            stella: {
+              schema_version: "stella.personal-data-locator/v1",
+              instance_id: "instance-synthetic",
+              personal_data_repository: repository,
+            },
+          },
+        },
+      },
+    },
+  };
+  const program = new FakeCommand();
+  const hooks = new Map();
+  const api = {
+    version: "0.2.1-test",
+    pluginConfig: { runtime: runtimeConfig },
+    runtime: {
+      version: "2026.6.34",
+      config: { current: () => hostConfig },
+      llm: { complete: async () => ({ text: JSON.stringify({
+        memory_route: "none",
+        state_refs: [],
+        governing: null,
+        frameworks: { primary: null, secondary: null },
+        retrieval_plan: [],
+        confidence: 1,
+        reason_codes: ["SYNTHETIC_ROUTE"],
+      }) }) },
+    },
+    on(name, handler) { hooks.set(name, handler); },
+    cognitiveRuntimeHostTransition: {
+      async capture() { return {}; },
+      async applyTarget() {},
+      async verifyTarget(target) {
+        return {
+          deepStatus: "pass",
+          generationId: target.syncGeneration,
+          sourceRevision: target.sourceRevision,
+          projectionChecksum: target.projectionChecksum,
+          hostConfigChecksum: target.hostConfigChecksum,
+          searchSentinelChecksum: `sha256:${"3".repeat(64)}`,
+          getSentinelChecksum: `sha256:${"4".repeat(64)}`,
+        };
+      },
+      async restore() {},
+      async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
+    },
+    registerCli(registrar) { return registrar({ program }); },
+  };
+  await plugin.register(api);
+  const output = [];
+  const originalLog = console.log;
+  console.log = (value) => output.push(JSON.parse(value));
+  try {
+    await program.children.get("cognitive").children.get("sync").handler({
+      revision: sourceRevision,
+      json: true,
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  const pointer = JSON.parse(await readFile(join(runtimeStorage, "active-generation.json"), "utf8"));
+  assert.equal(pointer.schema_version, "cognitive-runtime.active-generation-pointer/v3");
+  assert.equal(pointer.domains[0].projection_revision, publication.projectionRevision);
+
+  const context = {
+    runId: "run-domain-v3",
+    sessionKey: "agent:main:telegram:direct:owner-synthetic",
+    agentId: "main",
+    trigger: "user",
+    messageProvider: "telegram",
+    senderId: "owner-synthetic",
+    chatId: "owner-synthetic",
+  };
+  await hooks.get("before_prompt_build")({ prompt: "Use context", messages: [] }, context);
+  await writeFile(join(stellaProjectionRoot, "active.json"), jcsCanonicalJson({
+    schema_version: "stella.context-projection-pointer/v1",
+    instance_id: "instance-synthetic",
+    producer_id: "stella-fitness",
+    consumer_id: "stella-runtime",
+    status: "blocked",
+    pointer_revision: `pointer-${"5".repeat(64)}`,
+    source_revision: "fitness-f2",
+    changed_at: "2026-08-24T00:03:00Z",
+    reason_codes: ["CORRECTION_PENDING"],
+  }), { mode: 0o600 });
+  const barrier = await hooks.get("before_agent_run")(
+    { prompt: "Use context", messages: [] },
+    context,
+  );
+  assert.equal(barrier.outcome, "block");
+  assert.equal(barrier.metadata.reasonCode, "ACTIVE_DOMAIN_PROJECTION_UNAVAILABLE");
+  assert.equal(
+    (await loadMaintenanceGate(runtimeStorage))?.targetSourceRevision,
+    sourceRevision,
+  );
 });
 
 test("OpenClaw registration does not use rejected host paths", async () => {

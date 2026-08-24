@@ -305,9 +305,16 @@ Projection identity, Active Generation pointers, Activation Receipts, Instance
 Runtime Config, and Instance Cutover Plans. Each schema has a
 `cognitive-runtime.<contract>/v2` identity and rejects unknown top-level fields.
 
+Composite Generations use the separate `generation-manifest/v3`,
+`activation-receipt/v3`, and `active-generation-pointer/v3` envelopes. They
+retain the v2 Contract Set for Authority artifacts while binding the normalized
+Authority revision/checksum and the sorted, verified domain projection tuples.
+The published v2 schemas and `generation-builder/v2` identity remain unchanged.
+
 ## 13. Contract evolution
 
-Schemas under `contracts/v2` are the executable authority. V1 was never formally
+Schemas under `contracts/v2` and the additive composite envelopes under
+`contracts/v3` are executable authority. V1 was never formally
 activated and has no reader, alias, or parallel public path. A future change that alters
 meaning, required fields, accepted values, identity, authority role, or state
 transition requires a new compatible schema revision or contract namespace,

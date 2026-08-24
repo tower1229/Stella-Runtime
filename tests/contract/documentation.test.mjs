@@ -51,7 +51,7 @@ test("public documentation covers install, configuration, CLI, data, operations,
   assert.match(support, /engines.*package-install boundary.*not.*compatibility/is);
   assert.match(support, /extended-stable.*2026\.6\.34/is);
   assert.match(support, /consumer product acceptance/i);
-  assert.match(changelog, /## \[Unreleased\]\s*\n\s*## \[0\.2\.1\] - 2026-08-21/);
+  assert.match(changelog, /## \[Unreleased\].*composite Generation Manifest.*## \[0\.2\.1\] - 2026-08-21/is);
   assert.match(changelog, /\[Unreleased\]: .*\/compare\/v0\.2\.1\.\.\.HEAD/);
   assert.match(changelog, /\[0\.2\.1\]: .*\/compare\/v0\.2\.0\.\.\.v0\.2\.1/);
   assert.match(changelog, /\[0\.2\.0\]: .*\/compare\/v0\.1\.0\.\.\.v0\.2\.0/);

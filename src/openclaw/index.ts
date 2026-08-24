@@ -13,10 +13,23 @@ import type {
 } from "../contracts/index.js";
 import {
   buildGeneration,
+  generationDomainIdentity,
   showGeneration,
   validateAuthoritySource,
 } from "../generation/index.js";
-import type { BootstrapTarget } from "../generation/index.js";
+import type {
+  BootstrapTarget,
+  GenerationDomainIdentity,
+  GenerationDomainProjectionInput,
+} from "../generation/index.js";
+import {
+  FileProjectionExchange,
+  resolvePersonalDataLocator,
+} from "../personal-data/index.js";
+import {
+  FileBindingCompiler,
+  validateGenerationDomainsCurrent,
+} from "../runtime/binding.js";
 import {
   inspectStoredGenerationStatus,
   loadActiveGenerationHealth,
@@ -81,6 +94,14 @@ interface RecoveryPluginConfig {
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const hasStellaLocator = (apiConfig: unknown): boolean => {
+  if (!isRecord(apiConfig)) return false;
+  const plugins = apiConfig.plugins;
+  if (!isRecord(plugins) || !isRecord(plugins.entries)) return false;
+  const entry = plugins.entries["cognitive-runtime"];
+  return isRecord(entry) && isRecord(entry.config) && entry.config.stella !== undefined;
+};
 
 const execFileAsync = promisify(execFile);
 
@@ -272,6 +293,29 @@ const plugin = {
   register(api: CognitiveRuntimePluginApi): void {
     const packageVersion = api.version ?? "0.0.0";
     const runtimeConfig = readRuntimeConfig(api.pluginConfig);
+    const readFitnessDomain = async (): Promise<GenerationDomainProjectionInput | null> => {
+      if (runtimeConfig === null || api.runtime.config === undefined) return null;
+      const apiConfig = api.runtime.config.current();
+      if (!hasStellaLocator(apiConfig)) return null;
+      const layout = await resolvePersonalDataLocator({
+        apiConfig,
+        runtimeInstanceId: runtimeConfig.instance_id,
+      });
+      const projection = await new FileProjectionExchange({
+        layout,
+        instanceId: runtimeConfig.instance_id,
+        ownerId: "runtime-generation-consumer",
+      }).readStellaProjection("fitness_history");
+      return { domainId: "fitness", projection };
+    };
+    const domainProjectionReader = {
+      async read(domainId: string): Promise<GenerationDomainIdentity> {
+        if (domainId !== "fitness") throw new Error("ACTIVE_DOMAIN_PROJECTION_UNAVAILABLE");
+        const domain = await readFitnessDomain();
+        if (domain === null) throw new Error("ACTIVE_DOMAIN_PROJECTION_UNAVAILABLE");
+        return generationDomainIdentity(domain.domainId, domain.projection);
+      },
+    };
     if (runtimeConfig !== null) {
       configureOpenClawCandidateAdmissionPersistence(runtimeConfig.runtime_storage);
     }
@@ -365,6 +409,18 @@ const plugin = {
               });
             },
           },
+          domainProjection: {
+            verify: async (active) => {
+              if (
+                active.manifest.schema_version
+                !== "cognitive-runtime.generation-manifest/v3"
+              ) return;
+              await validateGenerationDomainsCurrent(
+                active.manifest.domains,
+                domainProjectionReader,
+              );
+            },
+          },
           ...(api.cognitiveRuntimePublicCorpusHealth === undefined ? {} : {
             publicCorpus: api.cognitiveRuntimePublicCorpusHealth,
           }),
@@ -379,6 +435,7 @@ const plugin = {
     let runtimeController: RuntimeHookController | null = null;
     if (runtimeConfig !== null) {
       runtimeController = registerRuntimeHooks(api, runtimeConfig, {
+        bindingCompiler: new FileBindingCompiler({ domainProjectionReader }),
         ...(healthMonitor === null ? {} : { healthGate: healthMonitor }),
         recordProvenance: async (overlay) => {
           const store = new SqliteProvenanceStore({
@@ -420,6 +477,7 @@ const plugin = {
           nodeVersion: process.versions.node,
           host: hostTransition,
           runs: runtimeController,
+          domainProjectionReader,
           ...(healthMonitor === null ? {} : { lifecycle: healthMonitor }),
         }).then(async () => {
           await healthMonitor?.reconcile("startup");
@@ -452,6 +510,11 @@ const plugin = {
         nodeVersion: process.versions.node,
         host: hostTransition,
         runs: runtimeController,
+        domainProjectionReader,
+        ...await (async () => {
+          const domain = await readFitnessDomain();
+          return domain === null ? {} : { domainProjections: [domain] };
+        })(),
         ...(healthMonitor === null ? {} : { lifecycle: healthMonitor }),
         ...(cutoverPlan === undefined ? {} : {
           cutover: {

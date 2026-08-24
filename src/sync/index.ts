@@ -11,7 +11,9 @@ import { DatabaseSync } from "node:sqlite";
 
 import type {
   ActivationReceipt,
+  ActivationReceiptV3,
   ActiveGenerationPointer,
+  ActiveGenerationPointerV3,
   InstanceRuntimeConfig,
 } from "../contracts/index.js";
 import { validateContract } from "../contracts/index.js";
@@ -34,12 +36,14 @@ import { canonicalJson as serializeCanonicalJson } from "../core/canonical-json.
 import {
   buildGeneration,
   verifyGeneration,
+  type GenerationDomainProjectionInput,
 } from "../generation/index.js";
 import {
   ACTIVATION_RECEIPTS_DIRECTORY,
   ACTIVE_GENERATION_POINTER_FILE,
   calculateRuntimeConfigIdentityChecksum,
   FileBindingCompiler,
+  type DomainProjectionReaderPort,
 } from "../runtime/binding.js";
 
 export const MAINTENANCE_GATE_FILE = "maintenance-gate.json";
@@ -48,6 +52,7 @@ export const SYNC_JOURNAL_FILE = "sync-journal.json";
 export interface MaintenanceGate {
   readonly targetSourceRevision: string;
   readonly closedAt: string;
+  readonly reasonCode?: "DOMAIN_PROJECTION_DRIFT";
 }
 
 export interface SyncTarget {
@@ -102,12 +107,27 @@ export interface SyncGenerationOptions {
   readonly runs: EligibleRunDrainPort;
   readonly now?: () => Date;
   readonly cutover?: CutoverExecutionOptions;
+  readonly domainProjections?: readonly GenerationDomainProjectionInput[];
+  readonly domainProjectionReader?: DomainProjectionReaderPort;
   readonly lifecycle?: {
     recordLifecycle(
       outcome: "pending_activation" | "activated" | "rollback_restored",
     ): void;
   };
 }
+
+type ActivationReceiptAny = ActivationReceipt | ActivationReceiptV3;
+type ActiveGenerationPointerAny = ActiveGenerationPointer | ActiveGenerationPointerV3;
+
+const activationReceiptContract = (value: unknown) =>
+  isRecord(value) && value.schema_version === "cognitive-runtime.activation-receipt/v3"
+    ? "activation-receipt-v3" as const
+    : "activation-receipt" as const;
+
+const activePointerContract = (value: unknown) =>
+  isRecord(value) && value.schema_version === "cognitive-runtime.active-generation-pointer/v3"
+    ? "active-generation-pointer-v3" as const
+    : "active-generation-pointer" as const;
 
 export interface SyncGenerationResult {
   readonly sourceRevision: string;
@@ -123,6 +143,7 @@ export interface SyncRecoveryOptions {
   readonly nodeVersion: string;
   readonly host: HostTransitionPort;
   readonly runs?: EligibleRunDrainPort;
+  readonly domainProjectionReader?: DomainProjectionReaderPort;
   readonly lifecycle?: {
     recordLifecycle(outcome: "rollback_restored"): void;
   };
@@ -229,13 +250,15 @@ export async function loadMaintenanceGate(
   if (
     !isRecord(value) ||
     typeof value.target_source_revision !== "string" ||
-    typeof value.closed_at !== "string"
+    typeof value.closed_at !== "string" ||
+    (value.reason_code !== undefined && value.reason_code !== "DOMAIN_PROJECTION_DRIFT")
   ) {
     throw new Error("MAINTENANCE_GATE_INVALID");
   }
   return {
     targetSourceRevision: value.target_source_revision,
     closedAt: value.closed_at,
+    ...(value.reason_code === undefined ? {} : { reasonCode: value.reason_code }),
   };
 }
 
@@ -245,7 +268,30 @@ const writeGate = async (
 ): Promise<void> => atomicWrite(join(runtimeStorage, MAINTENANCE_GATE_FILE), {
   target_source_revision: gate.targetSourceRevision,
   closed_at: gate.closedAt,
+  ...(gate.reasonCode === undefined ? {} : { reason_code: gate.reasonCode }),
 });
+
+export async function closeMaintenanceGate(
+  runtimeStorage: string,
+  targetSourceRevision?: string,
+  now: Date = new Date(),
+): Promise<MaintenanceGate> {
+  let revision = targetSourceRevision;
+  if (revision === undefined) {
+    const pointer = await readJson(join(resolve(runtimeStorage), ACTIVE_GENERATION_POINTER_FILE));
+    if (!isRecord(pointer) || typeof pointer.source_revision !== "string") {
+      throw new Error("MAINTENANCE_GATE_TARGET_INVALID");
+    }
+    revision = pointer.source_revision;
+  }
+  const gate = {
+    targetSourceRevision: revision,
+    closedAt: now.toISOString(),
+    reasonCode: "DOMAIN_PROJECTION_DRIFT" as const,
+  };
+  await writeGate(resolve(runtimeStorage), gate);
+  return gate;
+}
 
 const openGate = async (runtimeStorage: string): Promise<void> =>
   rm(join(runtimeStorage, MAINTENANCE_GATE_FILE), { force: true });
@@ -365,21 +411,25 @@ const activeTarget = async (options: SyncRecoveryOptions): Promise<SyncTarget> =
   const pointerValue = await loadOptionalPointer(options.config.runtime_storage);
   if (
     pointerValue === null ||
-    !validateContract("active-generation-pointer", pointerValue).valid
+    !validateContract(activePointerContract(pointerValue), pointerValue).valid
   ) {
     throw new Error("SYNC_PRIOR_POINTER_INVALID");
   }
-  const pointer = pointerValue as ActiveGenerationPointer;
+  const pointer = pointerValue as ActiveGenerationPointerAny;
   const receiptValue = await readJson(join(
     resolve(options.config.runtime_storage),
     ACTIVATION_RECEIPTS_DIRECTORY,
     `${pointer.activation_receipt_id}.json`,
   ));
-  if (!validateContract("activation-receipt", receiptValue).valid) {
+  if (!validateContract(activationReceiptContract(receiptValue), receiptValue).valid) {
     throw new Error("SYNC_PRIOR_RECEIPT_INVALID");
   }
-  const receipt = receiptValue as ActivationReceipt;
-  await new FileBindingCompiler().compile({
+  const receipt = receiptValue as ActivationReceiptAny;
+  await new FileBindingCompiler({
+    ...(options.domainProjectionReader === undefined ? {} : {
+      domainProjectionReader: options.domainProjectionReader,
+    }),
+  }).compile({
     config: options.config,
     hostVersion: options.hostVersion,
     nodeVersion: options.nodeVersion,
@@ -462,6 +512,10 @@ const recoverInterruptedSyncLocked = async (
     interrupted.phase === "completed"
   ) return;
   options.runs?.closeAdmission(interrupted.targetSourceRevision);
+  if (
+    interrupted.phase === "completed"
+    && gate?.reasonCode === "DOMAIN_PROJECTION_DRIFT"
+  ) return;
   try {
     if (interrupted.phase === "completed") {
       const target = await activeTarget(options);
@@ -518,6 +572,9 @@ const syncGenerationLocked = async (
     generationsDirectory: options.config.generation_storage,
     sourceRevision: options.sourceRevision,
     packageVersion: options.packageVersion,
+    ...(options.domainProjections === undefined ? {} : {
+      domainProjections: options.domainProjections,
+    }),
     ...(options.cutover === undefined ? {} : {
       bootstrapTargets: options.cutover.plan.bootstrap_targets,
     }),
@@ -606,12 +663,20 @@ const syncGenerationLocked = async (
     await writeJournal(runtimeStorage, journal);
 
     const receiptId = `activation-${built.syncGeneration.slice("generation-".length)}`;
-    const receipt: ActivationReceipt = {
-      schema_version: "cognitive-runtime.activation-receipt/v2",
+    const composite = verification.manifest.schema_version
+      === "cognitive-runtime.generation-manifest/v3";
+    const receipt = {
+      schema_version: composite
+        ? "cognitive-runtime.activation-receipt/v3"
+        : "cognitive-runtime.activation-receipt/v2",
       receipt_id: receiptId,
       instance_id: options.config.instance_id,
       generation_id: built.syncGeneration,
       source_revision: options.sourceRevision,
+      ...(composite ? {
+        authority: verification.manifest.authority,
+        domains: verification.manifest.domains,
+      } : {}),
       manifest_checksum: verification.manifestChecksum,
       projection_checksum: projection.checksum,
       host_config_checksum: target.hostConfigChecksum,
@@ -628,7 +693,10 @@ const syncGenerationLocked = async (
       node_version: options.nodeVersion,
       verified_at: now().toISOString(),
     };
-    if (!validateContract("activation-receipt", receipt).valid) {
+    if (!validateContract(
+      composite ? "activation-receipt-v3" : "activation-receipt",
+      receipt,
+    ).valid) {
       throw new Error("SYNC_ACTIVATION_RECEIPT_INVALID");
     }
     const receiptPath = join(
@@ -641,16 +709,25 @@ const syncGenerationLocked = async (
     await writeJournal(runtimeStorage, journal);
 
     const activatedAt = now().toISOString();
-    const pointer: ActiveGenerationPointer = {
-      schema_version: "cognitive-runtime.active-generation-pointer/v2",
+    const pointer = {
+      schema_version: composite
+        ? "cognitive-runtime.active-generation-pointer/v3"
+        : "cognitive-runtime.active-generation-pointer/v2",
       instance_id: options.config.instance_id,
       generation_id: built.syncGeneration,
       source_revision: options.sourceRevision,
+      ...(composite ? {
+        authority: verification.manifest.authority,
+        domains: verification.manifest.domains,
+      } : {}),
       manifest_checksum: verification.manifestChecksum,
       activation_receipt_id: receiptId,
       activated_at: activatedAt,
     };
-    if (!validateContract("active-generation-pointer", pointer).valid) {
+    if (!validateContract(
+      composite ? "active-generation-pointer-v3" : "active-generation-pointer",
+      pointer,
+    ).valid) {
       throw new Error("SYNC_ACTIVE_POINTER_INVALID");
     }
     const pointerPath = join(runtimeStorage, ACTIVE_GENERATION_POINTER_FILE);

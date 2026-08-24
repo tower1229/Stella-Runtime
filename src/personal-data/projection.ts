@@ -218,6 +218,9 @@ export interface ProjectionConsumerConformanceOptions {
 export interface ConsumedProjection {
   readonly status: "active" | "stale";
   readonly projectionRevision: string;
+  readonly pointerRevision: string;
+  readonly manifestChecksum: string;
+  readonly sourceRevision: string;
   readonly asOf: string;
   readonly manifest: ProjectionManifest;
   readonly payloads: readonly ProjectionPayloadArtifact[];
@@ -821,6 +824,9 @@ export async function runProjectionConsumerConformance(
   return {
     status: pointer.status as "active" | "stale",
     projectionRevision,
+    pointerRevision: pointer.pointer_revision as string,
+    manifestChecksum: pointer.manifest_checksum as string,
+    sourceRevision: pointer.source_revision as string,
     asOf: manifest.source.as_of,
     manifest,
     payloads,

@@ -31,9 +31,11 @@ import {
   type RegistryRole,
   type RouterRegistryEntry,
 } from "../router/index.js";
+import type { ConsumedProjection } from "../personal-data/projection.js";
 
 const CONTRACT_VERSION = "v2";
-const BUILDER_FORMAT_VERSION = "generation-builder/v2";
+const BUILDER_FORMAT_VERSION_V2 = "generation-builder/v2";
+const BUILDER_FORMAT_VERSION_V3 = "generation-builder/v3";
 const GENERATION_PATTERN = /^generation-[a-f0-9]{64}$/;
 const CHECKSUM_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SOURCE_REVISION_PATTERN = /^[a-f0-9]{40}$/;
@@ -88,15 +90,62 @@ export interface GenerationManifestFile {
   readonly dependencies: readonly string[];
 }
 
-export interface GenerationManifest {
+export interface GenerationManifestV2 {
   readonly schema_version: "cognitive-runtime.generation-manifest/v2";
   readonly contract_version: string;
-  readonly builder_format_version: typeof BUILDER_FORMAT_VERSION;
+  readonly builder_format_version: typeof BUILDER_FORMAT_VERSION_V2;
   readonly package_version: string;
   readonly source_revision: string;
   readonly sync_generation: string;
   readonly files: readonly GenerationManifestFile[];
 }
+
+export interface GenerationAuthorityInput {
+  readonly revision: string;
+  readonly checksum: string;
+}
+
+export interface GenerationDomainIdentity {
+  readonly domain_id: string;
+  readonly status: "active" | "stale";
+  readonly projection_revision: string;
+  readonly pointer_revision: string;
+  readonly manifest_checksum: string;
+  readonly source_revision: string;
+  readonly as_of: string;
+}
+
+export interface GenerationManifestV3 {
+  readonly schema_version: "cognitive-runtime.generation-manifest/v3";
+  readonly contract_version: string;
+  readonly builder_format_version: typeof BUILDER_FORMAT_VERSION_V3;
+  readonly package_version: string;
+  readonly source_revision: string;
+  readonly authority: GenerationAuthorityInput;
+  readonly domains: readonly GenerationDomainIdentity[];
+  readonly sync_generation: string;
+  readonly files: readonly GenerationManifestFile[];
+}
+
+export type GenerationManifest = GenerationManifestV2 | GenerationManifestV3;
+
+export interface GenerationDomainProjectionInput {
+  readonly domainId: string;
+  readonly projection: ConsumedProjection;
+}
+
+export const generationDomainIdentity = (
+  domainId: string,
+  projection: ConsumedProjection,
+): GenerationDomainIdentity => ({
+  domain_id: domainId,
+  status: projection.status,
+  projection_revision: projection.projectionRevision,
+  pointer_revision: projection.pointerRevision,
+  manifest_checksum: projection.manifestChecksum,
+  source_revision: projection.sourceRevision,
+  as_of: projection.asOf,
+});
 
 export interface GenerationBuildOptions {
   readonly authorityDirectory: string;
@@ -105,6 +154,7 @@ export interface GenerationBuildOptions {
   readonly sourceRevision: string;
   readonly packageVersion: string;
   readonly bootstrapTargets?: readonly BootstrapTarget[];
+  readonly domainProjections?: readonly GenerationDomainProjectionInput[];
 }
 
 export type BootstrapTarget = typeof BOOTSTRAP_TARGETS[number];
@@ -201,6 +251,21 @@ interface ViewProjectionPayload {
   readonly authority_revision: string;
   readonly active_governing_system: string | null;
   readonly record_refs: readonly string[];
+}
+
+interface EmbeddedDomainProjection {
+  readonly input: GenerationDomainIdentity;
+  readonly manifest: ConsumedProjection["manifest"];
+  readonly payloads: readonly {
+    readonly path: string;
+    readonly media_type: string;
+    readonly checksum: string;
+    readonly content_base64: string;
+  }[];
+}
+
+interface DomainProjectionsPayload {
+  readonly domains: readonly EmbeddedDomainProjection[];
 }
 
 export interface ActiveGeneration {
@@ -1021,6 +1086,65 @@ const viewProjectionPayload = (
   record_refs: records.map((record) => record.id),
 });
 
+const normalizedDomainProjections = (
+  values: readonly GenerationDomainProjectionInput[],
+): DomainProjectionsPayload => {
+  const domains = values.map(({ domainId, projection }) => {
+    if (!/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(domainId)) {
+      throw new Error("GENERATION_DOMAIN_ID_INVALID");
+    }
+    if (!validateContract("context-projection-manifest", projection.manifest).valid) {
+      throw new Error(`GENERATION_DOMAIN_MANIFEST_INVALID:${domainId}`);
+    }
+    const manifestBytes = serializeCanonicalJson(projection.manifest, {
+      invalidValueReason: "GENERATION_DOMAIN_MANIFEST_INVALID",
+    });
+    if (
+      checksum(manifestBytes) !== projection.manifestChecksum
+      || projection.manifest.projection_revision !== projection.projectionRevision
+      || projection.manifest.source.revision !== projection.sourceRevision
+      || projection.manifest.source.as_of !== projection.asOf
+    ) {
+      throw new Error(`GENERATION_DOMAIN_INPUT_MISMATCH:${domainId}`);
+    }
+    const payloads = projection.payloads
+      .map((payload) => {
+        const metadata = projection.manifest.payloads.find(({ path }) => path === payload.path);
+        if (
+          metadata === undefined
+          || metadata.media_type !== payload.mediaType
+          || metadata.checksum !== payload.checksum
+          || metadata.byte_length !== payload.bytes.byteLength
+          || checksum(payload.bytes) !== payload.checksum
+        ) {
+          throw new Error(`GENERATION_DOMAIN_PAYLOAD_INVALID:${domainId}:${payload.path}`);
+        }
+        return {
+          path: payload.path,
+          media_type: payload.mediaType,
+          checksum: payload.checksum,
+          content_base64: payload.bytes.toString("base64"),
+        };
+      })
+      .sort((left, right) => compareCanonicalStrings(left.path, right.path));
+    if (
+      payloads.length !== projection.manifest.payloads.length
+      || new Set(payloads.map(({ path }) => path)).size !== payloads.length
+    ) {
+      throw new Error(`GENERATION_DOMAIN_PAYLOAD_INVALID:${domainId}`);
+    }
+    const input = generationDomainIdentity(domainId, projection);
+    return { input, manifest: projection.manifest, payloads };
+  }).sort((left, right) => compareCanonicalStrings(
+    left.input.domain_id,
+    right.input.domain_id,
+  ));
+  if (new Set(domains.map(({ input }) => input.domain_id)).size !== domains.length) {
+    throw new Error("GENERATION_DOMAIN_ID_DUPLICATE");
+  }
+  return { domains };
+};
+
 export async function buildGeneration(
   options: GenerationBuildOptions,
 ): Promise<GenerationBuildResult> {
@@ -1038,16 +1162,32 @@ export async function buildGeneration(
   const records = authority.records
     .map(normalizedRecord)
     .sort((left, right) => compareCanonicalStrings(left.id, right.id));
-  const generationSeed = {
-    contract_set: CONTRACT_VERSION,
-    builder_format_version: BUILDER_FORMAT_VERSION,
-    source_revision: options.sourceRevision,
+  const authorityContent = {
     binding: {
       schema_version: "cognitive-runtime.cognitive-binding/v2",
       active_governing_system: authority.activeGoverningSystem,
     },
     records,
   };
+  const domainPayload = normalizedDomainProjections(options.domainProjections ?? []);
+  const composite = domainPayload.domains.length > 0;
+  const authorityInput: GenerationAuthorityInput = {
+    revision: options.sourceRevision,
+    checksum: checksum(canonicalJson(authorityContent)),
+  };
+  const generationSeed = composite
+    ? {
+        contract_set: CONTRACT_VERSION,
+        builder_format_version: BUILDER_FORMAT_VERSION_V3,
+        authority: { ...authorityInput, content: authorityContent },
+        domains: domainPayload.domains,
+      }
+    : {
+        contract_set: CONTRACT_VERSION,
+        builder_format_version: BUILDER_FORMAT_VERSION_V2,
+        source_revision: options.sourceRevision,
+        ...authorityContent,
+      };
   const syncGeneration = `generation-${checksum(canonicalJson(generationSeed)).slice("sha256:".length)}`;
   const metadata = {
     contractVersion: CONTRACT_VERSION,
@@ -1101,6 +1241,14 @@ export async function buildGeneration(
       writeArtifact(stagingDirectory, "projection-entries.json", artifact(metadata, projectionPayload), ["normalized-records.json", "registry.json"]),
       writeArtifact(stagingDirectory, "index-metadata.json", artifact(metadata, indexPayload), ["registry.json"]),
       writeArtifact(stagingDirectory, "view-projection.json", artifact(metadata, viewPayload), ["governing-digest.json", "index-metadata.json", "projection-entries.json", "registry.json"]),
+      ...(composite
+        ? [writeArtifact(
+            stagingDirectory,
+            "domain-projections.json",
+            artifact(metadata, domainPayload),
+            [],
+          )]
+        : []),
       ...projectionPayload.entries.map((entry) => writeTextArtifact(
         stagingDirectory,
         projectionDocumentPath(entry),
@@ -1108,16 +1256,30 @@ export async function buildGeneration(
         ["projection-entries.json"],
       )),
     ]);
-    const manifest: GenerationManifest = {
-      schema_version: "cognitive-runtime.generation-manifest/v2",
+    const commonManifest = {
       contract_version: CONTRACT_VERSION,
-      builder_format_version: BUILDER_FORMAT_VERSION,
       package_version: options.packageVersion,
       source_revision: options.sourceRevision,
       sync_generation: syncGeneration,
       files: files.sort((left, right) => compareCanonicalStrings(left.path, right.path)),
     };
-    const manifestValidation = validateContract("generation-manifest", manifest);
+    const manifest: GenerationManifest = composite
+      ? {
+          schema_version: "cognitive-runtime.generation-manifest/v3",
+          builder_format_version: BUILDER_FORMAT_VERSION_V3,
+          authority: authorityInput,
+          domains: domainPayload.domains.map(({ input }) => input),
+          ...commonManifest,
+        }
+      : {
+          schema_version: "cognitive-runtime.generation-manifest/v2",
+          builder_format_version: BUILDER_FORMAT_VERSION_V2,
+          ...commonManifest,
+        };
+    const manifestValidation = validateContract(
+      composite ? "generation-manifest-v3" : "generation-manifest",
+      manifest,
+    );
     if (!manifestValidation.valid) {
       throw new Error(`GENERATION_MANIFEST_INVALID:${manifestValidation.errors
         .map((error) => `${error.instancePath}:${error.keyword}:${error.message}`)
@@ -1176,7 +1338,11 @@ const parseManifest = (value: unknown): GenerationManifest => {
   if (!isRecord(value)) {
     throw new Error("GENERATION_MANIFEST_INVALID");
   }
-  const validation = validateContract("generation-manifest", value);
+  const v3 = value.schema_version === "cognitive-runtime.generation-manifest/v3";
+  const validation = validateContract(
+    v3 ? "generation-manifest-v3" : "generation-manifest",
+    value,
+  );
   if (!validation.valid) {
     throw new Error(`GENERATION_MANIFEST_INVALID:${validation.errors
       .map((error) => `${error.instancePath}:${error.keyword}`)
@@ -1200,17 +1366,51 @@ const parseManifest = (value: unknown): GenerationManifest => {
       dependencies: requireStringArray(item.dependencies, "GENERATION_MANIFEST_INVALID"),
     };
   });
-  return {
-    schema_version: "cognitive-runtime.generation-manifest/v2",
+  const common = {
     contract_version: requireString(value.contract_version, "GENERATION_MANIFEST_INVALID"),
-    builder_format_version: requireString(
-      value.builder_format_version,
-      "GENERATION_MANIFEST_INVALID",
-    ) as typeof BUILDER_FORMAT_VERSION,
     package_version: requireString(value.package_version, "GENERATION_MANIFEST_INVALID"),
     source_revision: requireString(value.source_revision, "GENERATION_MANIFEST_INVALID"),
     sync_generation: requireString(value.sync_generation, "GENERATION_MANIFEST_INVALID"),
     files,
+  };
+  if (!v3) {
+    return {
+      schema_version: "cognitive-runtime.generation-manifest/v2",
+      builder_format_version: BUILDER_FORMAT_VERSION_V2,
+      ...common,
+    };
+  }
+  const authority = value.authority;
+  const domains = value.domains;
+  if (!isRecord(authority) || !Array.isArray(domains)) {
+    throw new Error("GENERATION_MANIFEST_INVALID");
+  }
+  return {
+    schema_version: "cognitive-runtime.generation-manifest/v3",
+    builder_format_version: BUILDER_FORMAT_VERSION_V3,
+    authority: {
+      revision: requireString(authority.revision, "GENERATION_MANIFEST_INVALID"),
+      checksum: requireString(authority.checksum, "GENERATION_MANIFEST_INVALID"),
+    },
+    domains: domains.map((domain) => {
+      if (!isRecord(domain)) throw new Error("GENERATION_MANIFEST_INVALID");
+      return {
+        domain_id: requireString(domain.domain_id, "GENERATION_MANIFEST_INVALID"),
+        status: requireString(domain.status, "GENERATION_MANIFEST_INVALID") as "active" | "stale",
+        projection_revision: requireString(
+          domain.projection_revision,
+          "GENERATION_MANIFEST_INVALID",
+        ),
+        pointer_revision: requireString(domain.pointer_revision, "GENERATION_MANIFEST_INVALID"),
+        manifest_checksum: requireString(
+          domain.manifest_checksum,
+          "GENERATION_MANIFEST_INVALID",
+        ),
+        source_revision: requireString(domain.source_revision, "GENERATION_MANIFEST_INVALID"),
+        as_of: requireString(domain.as_of, "GENERATION_MANIFEST_INVALID"),
+      };
+    }),
+    ...common,
   };
 };
 
@@ -1339,6 +1539,9 @@ export async function verifyGeneration(
       "projection-entries.json",
       "registry.json",
       "view-projection.json",
+      ...(manifest.schema_version === "cognitive-runtime.generation-manifest/v3"
+        ? ["domain-projections.json"]
+        : []),
     ];
     for (const path of required) {
       if (!artifacts.has(path)) {
@@ -1399,16 +1602,110 @@ export async function verifyGeneration(
           return { valid: false, issues: [...new Set(issues)], manifest, manifestChecksum };
         }
         validateReferences(authorityRecords, activeGoverningSystem);
-        const expectedGeneration = `generation-${checksum(canonicalJson({
-          contract_set: manifest.contract_version,
-          builder_format_version: manifest.builder_format_version,
-          source_revision: manifest.source_revision,
+        const authorityContent = {
           binding: {
             schema_version: "cognitive-runtime.cognitive-binding/v2",
             active_governing_system: activeGoverningSystem,
           },
           records: normalizedRecords,
-        })).slice("sha256:".length)}`;
+        };
+        let identitySeed: unknown;
+        if (manifest.schema_version === "cognitive-runtime.generation-manifest/v3") {
+          const domainArtifact = artifacts.get("domain-projections.json");
+          const domainPayloadValue = domainArtifact?.payload;
+          if (!isRecord(domainPayloadValue) || !Array.isArray(domainPayloadValue.domains)) {
+            issues.push("GENERATION_DOMAIN_INPUT_INVALID");
+            identitySeed = null;
+          } else {
+            const embeddedDomains = domainPayloadValue.domains as readonly unknown[];
+            const embeddedInputs = embeddedDomains.map((domain) =>
+              isRecord(domain) ? domain.input : undefined,
+            );
+            if (
+              manifest.authority.revision !== manifest.source_revision
+              || manifest.authority.checksum !== checksum(canonicalJson(authorityContent))
+            ) {
+              issues.push("GENERATION_AUTHORITY_INPUT_MISMATCH");
+            }
+            if (canonicalJson(embeddedInputs) !== canonicalJson(manifest.domains)) {
+              issues.push("GENERATION_DOMAIN_INPUT_MISMATCH");
+            }
+            for (const value of embeddedDomains) {
+              if (!isRecord(value) || !isRecord(value.input) || !isRecord(value.manifest)
+                || !Array.isArray(value.payloads)) {
+                issues.push("GENERATION_DOMAIN_INPUT_INVALID");
+                continue;
+              }
+              const input = value.input;
+              const projectionManifest = value.manifest;
+              if (
+                !validateContract("context-projection-manifest", projectionManifest).valid
+                || checksum(serializeCanonicalJson(projectionManifest, {
+                  invalidValueReason: "GENERATION_DOMAIN_MANIFEST_INVALID",
+                })) !== input.manifest_checksum
+                || projectionManifest.projection_revision !== input.projection_revision
+                || !isRecord(projectionManifest.source)
+                || projectionManifest.source.revision !== input.source_revision
+                || projectionManifest.source.as_of !== input.as_of
+              ) {
+                issues.push("GENERATION_DOMAIN_MANIFEST_MISMATCH");
+                continue;
+              }
+              const metadata = Array.isArray(projectionManifest.payloads)
+                ? projectionManifest.payloads
+                : [];
+              const embeddedPaths = new Set<string>();
+              let payloadsValid = value.payloads.length === metadata.length;
+              for (const embeddedPayload of value.payloads) {
+                if (!isRecord(embeddedPayload)
+                  || typeof embeddedPayload.path !== "string"
+                  || typeof embeddedPayload.checksum !== "string"
+                  || typeof embeddedPayload.media_type !== "string"
+                  || typeof embeddedPayload.content_base64 !== "string") {
+                  payloadsValid = false;
+                  continue;
+                }
+                if (embeddedPaths.has(embeddedPayload.path)) payloadsValid = false;
+                embeddedPaths.add(embeddedPayload.path);
+                const bytes = Buffer.from(embeddedPayload.content_base64, "base64");
+                const expected = metadata.find((candidate) =>
+                  isRecord(candidate) && candidate.path === embeddedPayload.path);
+                if (
+                  !isRecord(expected)
+                  || expected.checksum !== embeddedPayload.checksum
+                  || expected.byte_length !== bytes.byteLength
+                  || expected.media_type !== embeddedPayload.media_type
+                  || checksum(bytes) !== embeddedPayload.checksum
+                ) {
+                  payloadsValid = false;
+                }
+              }
+              if (metadata.some((candidate) =>
+                !isRecord(candidate)
+                || typeof candidate.path !== "string"
+                || !embeddedPaths.has(candidate.path))) {
+                payloadsValid = false;
+              }
+              if (!payloadsValid) issues.push("GENERATION_DOMAIN_PAYLOAD_INVALID");
+            }
+            identitySeed = {
+              contract_set: manifest.contract_version,
+              builder_format_version: manifest.builder_format_version,
+              authority: { ...manifest.authority, content: authorityContent },
+              domains: embeddedDomains,
+            };
+          }
+        } else {
+          identitySeed = {
+            contract_set: manifest.contract_version,
+            builder_format_version: manifest.builder_format_version,
+            source_revision: manifest.source_revision,
+            ...authorityContent,
+          };
+        }
+        const expectedGeneration = identitySeed === null
+          ? null
+          : `generation-${checksum(canonicalJson(identitySeed)).slice("sha256:".length)}`;
         if (expectedGeneration !== manifest.sync_generation) {
           issues.push("GENERATION_IDENTITY_MISMATCH");
         }

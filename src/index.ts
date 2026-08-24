@@ -102,6 +102,9 @@ export type {
   ProjectionEntry,
   ActiveGenerationPointer,
   ActivationReceipt,
+  ActivationReceiptV3,
+  ActiveGenerationPointerV3,
+  GenerationManifestV3,
   InstanceRuntimeConfig,
   InstanceCutoverPlan,
   StellaPersonalDataLocator,
@@ -228,6 +231,7 @@ export type {
 } from "./conformance/index.js";
 export {
   buildGeneration,
+  generationDomainIdentity,
   loadActiveGeneration,
   showGeneration,
   validateAuthoritySource,
@@ -243,6 +247,10 @@ export type {
   GenerationBuildOptions,
   GenerationBuildResult,
   GenerationManifestFile,
+  GenerationAuthorityInput,
+  GenerationDomainIdentity,
+  GenerationDomainProjectionInput,
+  GenerationManifestV2,
   GenerationStatus,
   GenerationVerificationResult,
 } from "./generation/index.js";
@@ -335,13 +343,17 @@ export {
   ACTIVE_GENERATION_POINTER_FILE,
   calculateRuntimeConfigIdentityChecksum,
   FileBindingCompiler,
+  validateGenerationDomainsCurrent,
 } from "./runtime/binding.js";
 export type {
   ActiveRunBinding,
   BindingCompilerInput,
   BindingCompilerPort,
+  DomainProjectionReaderPort,
+  FileBindingCompilerOptions,
 } from "./runtime/binding.js";
 export {
+  closeMaintenanceGate,
   loadMaintenanceGate,
   MAINTENANCE_GATE_FILE,
   recoverInterruptedSync,

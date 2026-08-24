@@ -34,6 +34,7 @@ test("npm tarball contains only allowlisted and non-sensitive public assets", as
     "openclaw.plugin.json",
     "compatibility/",
     "contracts/v2/",
+    "contracts/v3/",
     "contracts/stella/v1/",
     "docs/CONFIGURATION.md",
     "docs/DATA-BOUNDARIES.md",
@@ -67,6 +68,9 @@ test("npm tarball contains only allowlisted and non-sensitive public assets", as
     true,
   );
   assert.equal(paths.includes("contracts/v2/release-pin.schema.json"), true);
+  assert.equal(paths.includes("contracts/v3/generation-manifest.schema.json"), true);
+  assert.equal(paths.includes("contracts/v3/activation-receipt.schema.json"), true);
+  assert.equal(paths.includes("contracts/v3/active-generation-pointer.schema.json"), true);
   assert.equal(
     paths.includes("contracts/stella/v1/context-projection-manifest.schema.json"),
     true,

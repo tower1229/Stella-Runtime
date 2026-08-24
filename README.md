@@ -51,7 +51,9 @@ Begin in `off`, configure the Instance Runtime Config and Git-external Runtime
 and Generation storage, then pass exact-host conformance before moving through
 `observe` to `enforce`. Active Run Bindings are compiled from the active Pointer,
 Activation Receipt, immutable Generation, and State View rather than inline
-configuration. See the [operations guide](docs/OPERATIONS.md).
+configuration. A configured verified domain projection upgrades this chain to
+the additive composite v3 Manifest/Receipt/Pointer without changing the
+published v2 Generation identity. See the [operations guide](docs/OPERATIONS.md).
 
 ## Configuration reference
 

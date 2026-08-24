@@ -5,6 +5,13 @@ Versioning; cognitive contract namespaces remain independently versioned.
 
 ## [Unreleased]
 
+- adds separate composite Generation Manifest, Activation Receipt, and Active
+  Generation Pointer v3 contracts that bind one Authority checksum and sorted
+  verified domain projection tuples without changing v2 identity semantics;
+- consumes the configured Fitness projection during sync and revalidates its
+  pointer at both Eligible Run barriers while retaining one pinned Generation
+  and State View per Run.
+
 ## [0.2.1] - 2026-08-21
 
 - adds a post-publish registry exact-host smoke that binds the installed npm

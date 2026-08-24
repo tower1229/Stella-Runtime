@@ -44,6 +44,9 @@ test("contract validator accepts independent positive fixtures", async () => {
     ["activation-receipt", "activation-receipt"],
     ["instance-runtime-config", "instance-runtime-config"],
     ["instance-cutover-plan", "instance-cutover-plan"],
+    ["generation-manifest-v3", "generation-manifest-v3"],
+    ["activation-receipt-v3", "activation-receipt-v3"],
+    ["active-generation-pointer-v3", "active-generation-pointer-v3"],
   ];
 
   for (const [contract, fixture] of cases) {
@@ -93,6 +96,9 @@ test("contract validator rejects independent negative fixtures", async () => {
     ["activation-receipt", "activation-receipt-extra-field"],
     ["instance-runtime-config", "instance-runtime-config-extra-field"],
     ["instance-cutover-plan", "instance-cutover-plan-extra-field"],
+    ["generation-manifest-v3", "generation-manifest-v3-unsorted-domains"],
+    ["activation-receipt-v3", "activation-receipt-v3-domain-tamper"],
+    ["active-generation-pointer-v3", "active-generation-pointer-v3-extra-field"],
   ];
 
   for (const [contract, fixture] of cases) {
@@ -116,6 +122,23 @@ test("public contracts form one closed v2 set", async () => {
   }
 
   await assert.rejects(readFile(new URL("../../contracts/v1/evidence.schema.json", import.meta.url)));
+});
+
+test("composite Generation contracts are published as a separate closed v3 set", async () => {
+  const { readdir } = await import("node:fs/promises");
+  const contractRoot = new URL("../../contracts/v3/", import.meta.url);
+  const names = await readdir(contractRoot);
+
+  assert.deepEqual(names.sort(), [
+    "activation-receipt.schema.json",
+    "active-generation-pointer.schema.json",
+    "generation-manifest.schema.json",
+  ]);
+  for (const name of names) {
+    const schema = JSON.parse(await readFile(new URL(name, contractRoot), "utf8"));
+    assert.match(schema.$id, /^cognitive-runtime\.[a-z0-9-]+\/v3$/);
+    assert.equal(schema.additionalProperties, false);
+  }
 });
 
 test("Evidence v2 preserves media and declared temporal precision", async () => {

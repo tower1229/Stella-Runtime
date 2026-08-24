@@ -16,6 +16,11 @@ import {
   FileBindingCompiler,
 } from "../../dist/runtime/binding.js";
 import { buildGeneration } from "../../dist/generation/index.js";
+import { loadMaintenanceGate, syncGeneration } from "../../dist/sync/index.js";
+import {
+  ProjectionDeterminismLedger,
+  runProjectionProducerConformance,
+} from "../../dist/personal-data/projection.js";
 import { createStateManagementPort } from "../../dist/state/management.js";
 import {
   provenanceDatabasePath,
@@ -29,6 +34,43 @@ import {
 
 const generation = `generation-${"a".repeat(64)}`;
 const nextGeneration = `generation-${"b".repeat(64)}`;
+
+const fitnessDomain = () => {
+  const publication = runProjectionProducerConformance({
+    instanceId: "instance-synthetic",
+    producerId: "stella-fitness",
+    consumerId: "stella-runtime",
+    canonicalSourceSnapshot: {
+      revision: "fitness-f1",
+      sourceAsOf: "2026-08-24T00:00:00Z",
+    },
+    determinismLedger: new ProjectionDeterminismLedger(),
+    categories: ["fitness_history"],
+    sourceReferences: [],
+    conflicts: [],
+    retractions: [],
+    capabilities: [{ id: "fitness_history_context", state: "available" }],
+    payloads: [{
+      path: "payloads/history.md",
+      mediaType: "text/markdown",
+      value: "# Fitness history\n\nSynthetic session.\n",
+    }],
+    generatedAt: "2026-08-24T00:01:00Z",
+  });
+  return {
+    domainId: "fitness",
+    projection: {
+      status: "active",
+      projectionRevision: publication.projectionRevision,
+      pointerRevision: `pointer-${"2".repeat(64)}`,
+      manifestChecksum: publication.manifestChecksum,
+      sourceRevision: publication.manifest.source.revision,
+      asOf: publication.manifest.source.as_of,
+      manifest: publication.manifest,
+      payloads: publication.payloads,
+    },
+  };
+};
 
 const config = (mode = "enforce", paths = {}) => readRuntimeConfig({
   runtime: {
@@ -101,7 +143,7 @@ const binding = (suffix = "one", generationId = generation) => {
   };
 };
 
-const createRuntime = ({ mode = "enforce", compile, complete, paths = {}, healthGate } = {}) => {
+const createRuntime = ({ mode = "enforce", compile, revalidate, complete, paths = {}, healthGate } = {}) => {
   const hooks = new Map();
   const logs = [];
   const calls = [];
@@ -119,7 +161,10 @@ const createRuntime = ({ mode = "enforce", compile, complete, paths = {}, health
     registerCli() {},
     logger: { info() {}, warn(message) { logs.push(JSON.parse(message)); } },
   }, config(mode, paths), {
-    bindingCompiler: { compile: compile ?? (async () => binding()) },
+    bindingCompiler: {
+      compile: compile ?? (async () => binding()),
+      ...(revalidate === undefined ? {} : { revalidate }),
+    },
     ...(healthGate === undefined ? {} : { healthGate }),
   });
   return { hooks, logs, calls, controller };
@@ -194,6 +239,62 @@ test("eligible Run compiles once and pins Generation and State View until cleanu
   assert.equal(runtime.controller.metrics().activeRuns, 1);
   assert.equal(runtime.controller.clearLifecycle("restart"), 1);
   assert.equal(runtime.controller.metrics().activeRuns, 0);
+});
+
+test("both Eligible Run hooks re-read domain pointers without replacing the pinned binding", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-domain-drift-gate-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const runtimeStorage = join(root, "runtime");
+  let compileCalls = 0;
+  let revalidateCalls = 0;
+  const pinned = {
+    ...binding("one"),
+    domainInputs: [{
+      domain_id: "fitness",
+      status: "active",
+      projection_revision: `projection-${"1".repeat(64)}`,
+      pointer_revision: `pointer-${"2".repeat(64)}`,
+      manifest_checksum: `sha256:${"3".repeat(64)}`,
+      source_revision: "fitness-f1",
+      as_of: "2026-08-24T00:00:00Z",
+    }],
+  };
+  let currentPointerRevision = pinned.domainInputs[0].pointer_revision;
+  const runtime = createRuntime({
+    paths: { runtimeStorage },
+    compile: async () => { compileCalls += 1; return pinned; },
+    revalidate: async (active) => {
+      revalidateCalls += 1;
+      if (active.domainInputs[0].pointer_revision !== currentPointerRevision) {
+        throw new Error("ACTIVE_DOMAIN_POINTER_DRIFT");
+      }
+    },
+  });
+
+  await runtime.hooks.get("before_prompt_build")(
+    { prompt: "first", messages: [] },
+    eligible("domain-pinned"),
+  );
+  currentPointerRevision = `pointer-${"4".repeat(64)}`;
+  const decision = await runtime.hooks.get("before_agent_run")(
+    { prompt: "first", messages: [] },
+    eligible("domain-pinned"),
+  );
+
+  assert.equal(compileCalls, 1);
+  assert.equal(revalidateCalls, 1);
+  assert.equal(decision.outcome, "block");
+  assert.equal(decision.metadata.reasonCode, "ACTIVE_DOMAIN_POINTER_DRIFT");
+  assert.equal(
+    (await loadMaintenanceGate(runtimeStorage))?.targetSourceRevision,
+    pinned.authorityRevision,
+  );
+  const nextDecision = await runtime.hooks.get("before_agent_run")(
+    { prompt: "next", messages: [] },
+    eligible("domain-next"),
+  );
+  assert.equal(nextDecision.outcome, "block");
+  assert.equal(nextDecision.metadata.reasonCode, "MAINTENANCE_GATE_CLOSED");
 });
 
 test("exact OpenClaw hook fields exclude callbacks, probes, shared chats, and other agents", async () => {
@@ -494,5 +595,99 @@ test("filesystem compiler validates Pointer, Receipt, Manifest, Host identity, a
       { prompt: "stale", messages: [] }, eligible("filesystem-stale"),
     ),
     /COGNITIVE_BINDING_REJECTED:ACTIVATION_CONFIG_IDENTITY_STALE/,
+  );
+});
+
+test("filesystem compiler negotiates v3 and fail-closes domain tuple drift", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-run-binding-v3-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const authorityDirectory = join(root, "authority");
+  const generationState = join(root, "generation-state");
+  const runtimeStorage = join(root, "runtime");
+  await writeSyntheticAuthority(authorityDirectory);
+  const sourceRevision = await commitSyntheticAuthority(authorityDirectory);
+  const runtimeConfig = config("enforce", {
+    runtimeStorage,
+    generationStorage: join(generationState, "generations"),
+  });
+  runtimeConfig.adapters.authority_checkout = authorityDirectory;
+  const state = createStateManagementPort({
+    stateRoot: runtimeStorage,
+    instanceId: "instance-synthetic",
+  });
+  await state.initialize();
+  state.close();
+  const domain = fitnessDomain();
+  const expected = {
+    domain_id: domain.domainId,
+    status: domain.projection.status,
+    projection_revision: domain.projection.projectionRevision,
+    pointer_revision: domain.projection.pointerRevision,
+    manifest_checksum: domain.projection.manifestChecksum,
+    source_revision: domain.projection.sourceRevision,
+    as_of: domain.projection.asOf,
+  };
+  const synced = await syncGeneration({
+    config: runtimeConfig,
+    sourceRevision,
+    packageVersion: "0.2.1-test",
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+    domainProjections: [domain],
+    host: {
+      async capture() { return {}; },
+      async applyTarget() {},
+      async verifyTarget(target) {
+        return {
+          deepStatus: "pass",
+          generationId: target.syncGeneration,
+          sourceRevision: target.sourceRevision,
+          projectionChecksum: target.projectionChecksum,
+          hostConfigChecksum: target.hostConfigChecksum,
+          searchSentinelChecksum: `sha256:${"3".repeat(64)}`,
+          getSentinelChecksum: `sha256:${"4".repeat(64)}`,
+        };
+      },
+      async restore() {},
+      async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
+    },
+    runs: {
+      closeAdmission() {},
+      openAdmission() {},
+      async drain() {},
+    },
+  });
+  let current = expected;
+  const compiler = new FileBindingCompiler({
+    domainProjectionReader: { async read() { return current; } },
+  });
+  const compiled = await compiler.compile({
+    config: runtimeConfig,
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+  });
+  assert.deepEqual(compiled.domainInputs, [expected]);
+
+  current = { ...expected, pointer_revision: `pointer-${"5".repeat(64)}` };
+  await assert.rejects(
+    compiler.revalidate(compiled, {
+      config: runtimeConfig,
+      hostVersion: "2026.6.34",
+      nodeVersion: process.versions.node,
+    }),
+    /ACTIVE_DOMAIN_POINTER_DRIFT/,
+  );
+
+  const receipt = JSON.parse(await readFile(synced.receiptPath, "utf8"));
+  receipt.domains[0].pointer_revision = `pointer-${"6".repeat(64)}`;
+  await writeFile(synced.receiptPath, JSON.stringify(receipt));
+  current = expected;
+  await assert.rejects(
+    compiler.compile({
+      config: runtimeConfig,
+      hostVersion: "2026.6.34",
+      nodeVersion: process.versions.node,
+    }),
+    /ACTIVE_DOMAIN_INPUT_MISMATCH/,
   );
 });

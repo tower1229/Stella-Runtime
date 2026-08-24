@@ -9,10 +9,13 @@ import {
   buildGeneration,
   calculateInstanceCutoverPlanChecksum,
   calculateRuntimeConfigIdentityChecksum,
+  closeMaintenanceGate,
   createStateManagementPort,
   loadMaintenanceGate,
   recoverInterruptedSync,
   syncGeneration,
+  ProjectionDeterminismLedger,
+  runProjectionProducerConformance,
 } from "../../dist/index.js";
 import {
   commitAuthorityChanges,
@@ -21,6 +24,36 @@ import {
 } from "../helpers/synthetic-authority.mjs";
 
 const checksum = (character) => `sha256:${character.repeat(64)}`;
+
+const fitnessDomain = (revision, content = "# Fitness history\n\nSynthetic session.\n") => {
+  const publication = runProjectionProducerConformance({
+    instanceId: "instance-synthetic",
+    producerId: "stella-fitness",
+    consumerId: "stella-runtime",
+    canonicalSourceSnapshot: { revision, sourceAsOf: "2026-08-24T00:00:00Z" },
+    determinismLedger: new ProjectionDeterminismLedger(),
+    categories: ["fitness_history"],
+    sourceReferences: [],
+    conflicts: [],
+    retractions: [],
+    capabilities: [{ id: "fitness_history_context", state: "available" }],
+    payloads: [{ path: "payloads/history.md", mediaType: "text/markdown", value: content }],
+    generatedAt: "2026-08-24T00:01:00Z",
+  });
+  return {
+    domainId: "fitness",
+    projection: {
+      status: "active",
+      projectionRevision: publication.projectionRevision,
+      pointerRevision: `pointer-${createHash("sha256").update(revision).digest("hex")}`,
+      manifestChecksum: publication.manifestChecksum,
+      sourceRevision: publication.manifest.source.revision,
+      asOf: publication.manifest.source.as_of,
+      manifest: publication.manifest,
+      payloads: publication.payloads,
+    },
+  };
+};
 
 const canghaiCutoverPlan = (sourceRevision) => {
   const plan = {
@@ -223,6 +256,74 @@ test("sync builds a missing committed target and exposes its Pointer only after 
   assert.equal(receipt.release_channel, "extended-stable");
   assert.equal(pointer.generation_id, result.syncGeneration);
   assert.equal(pointer.activation_receipt_id, receipt.receipt_id);
+});
+
+test("sync v3 repeats the exact Authority/domain tuple in Receipt and final Pointer", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-sync-v3-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = runtimeConfig(root);
+  await writeSyntheticAuthority(config.adapters.authority_checkout);
+  const sourceRevision = await commitSyntheticAuthority(config.adapters.authority_checkout);
+  const domain = fitnessDomain("fitness-f1");
+  const events = [];
+  const host = {
+    async capture() { events.push("capture"); return { config_revision: "prior" }; },
+    async applyTarget() { events.push("apply"); },
+    async verifyTarget(target) {
+      events.push("verify");
+      return {
+        deepStatus: "pass",
+        generationId: target.syncGeneration,
+        sourceRevision: target.sourceRevision,
+        projectionChecksum: target.projectionChecksum,
+        hostConfigChecksum: target.hostConfigChecksum,
+        searchSentinelChecksum: checksum("3"),
+        getSentinelChecksum: checksum("4"),
+      };
+    },
+    async restore() { events.push("restore"); },
+    async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
+  };
+  const runs = runPort(events);
+  const syncOptions = {
+    config,
+    sourceRevision,
+    packageVersion: "0.2.1-test",
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+    domainProjections: [domain],
+    host,
+    runs,
+  };
+  const result = await syncGeneration(syncOptions);
+  const receipt = JSON.parse(await readFile(result.receiptPath, "utf8"));
+  const pointer = JSON.parse(await readFile(result.pointerPath, "utf8"));
+  const manifest = JSON.parse(await readFile(join(
+    config.generation_storage,
+    result.syncGeneration,
+    "manifest.json",
+  ), "utf8"));
+
+  assert.equal(receipt.schema_version, "cognitive-runtime.activation-receipt/v3");
+  assert.equal(pointer.schema_version, "cognitive-runtime.active-generation-pointer/v3");
+  assert.deepEqual(receipt.authority, manifest.authority);
+  assert.deepEqual(pointer.authority, manifest.authority);
+  assert.deepEqual(receipt.domains, manifest.domains);
+  assert.deepEqual(pointer.domains, manifest.domains);
+  assert.equal(pointer.activation_receipt_id, receipt.receipt_id);
+  assert.deepEqual(events, [
+    "capture",
+    "close-admission",
+    "drain:30000",
+    "apply",
+    "verify",
+    "open-admission",
+  ]);
+
+  await closeMaintenanceGate(config.runtime_storage, sourceRevision);
+  const repaired = await syncGeneration(syncOptions);
+  assert.equal(repaired.reusedGeneration, true);
+  assert.equal(await loadMaintenanceGate(config.runtime_storage), null);
 });
 
 test("sync enforces the CangHai cutover contract before and inside one Activation Barrier", async (t) => {

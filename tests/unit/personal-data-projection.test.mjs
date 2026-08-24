@@ -264,6 +264,12 @@ test("consumer conformance double-reads the pointer and enforces active/stale po
   });
   assert.equal(consumed.status, "active");
   assert.equal(consumed.projectionRevision, publication.projectionRevision);
+  assert.equal(
+    consumed.pointerRevision,
+    "pointer-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  );
+  assert.equal(consumed.manifestChecksum, publication.manifestChecksum);
+  assert.equal(consumed.sourceRevision, publication.manifest.source.revision);
 
   const stale = pointerBytes(publication, {
     status: "stale",

@@ -31,8 +31,16 @@ _Avoid_: Cognitive Contract, mixed Contract Set, copied product configuration
 
 **Contract Set**:
 The coherent `/v2` collection of all public Runtime contracts used by one
-Runtime Package and Generation.
+Runtime Package and Generation. Composite Generations keep this Authority
+Contract Set unchanged and add `/v3` Generation Manifest, Activation Receipt,
+and Active Generation Pointer envelopes that bind verified domain projections.
 _Avoid_: mixed contract versions, compatibility bundle, per-instance schema set
+
+**Composite Generation Envelope**:
+The `/v3` activation and identity envelope around one `/v2` Authority Contract
+Set plus a sorted tuple of verified domain projection inputs. It does not create
+a second Authority Contract Set or reinterpret any `/v2` artifact.
+_Avoid_: Contract Set v3, mixed Authority schema, mutable domain overlay
 
 **Private Instance**:
 A deployment of the Cognitive Runtime bound to one private Agent's configuration,
@@ -322,7 +330,9 @@ _Avoid_: pointer update, background convergence, eventual activation
 
 **Maintenance Gate**:
 The durable fail-closed state checked before Run Binding while an Activation
-Barrier or its recovery is incomplete.
+Barrier or its recovery is incomplete, or while verified domain input drift is
+quarantined pending a corrective sync. A drift quarantine does not turn a
+completed Sync Journal back into an interrupted Barrier.
 _Avoid_: CLI process lock, operator convention, Gateway shutdown
 
 **Sync Journal**:

@@ -4,7 +4,9 @@ import { join, resolve } from "node:path";
 
 import type {
   ActivationReceipt,
+  ActivationReceiptV3,
   ActiveGenerationPointer,
+  ActiveGenerationPointerV3,
   InstanceRuntimeConfig,
   StateView,
 } from "../contracts/index.js";
@@ -12,6 +14,10 @@ import { validateContract } from "../contracts/index.js";
 import { resolveCompatibilityMatrixRow } from "../compatibility/index.js";
 import { canonicalJson as serializeCanonicalJson } from "../core/canonical-json.js";
 import { verifyGeneration } from "../generation/index.js";
+import type {
+  GenerationAuthorityInput,
+  GenerationDomainIdentity,
+} from "../generation/index.js";
 import type { ExplicitContextBinding } from "../packet/index.js";
 import {
   calculateRegistryChecksum,
@@ -31,6 +37,7 @@ export interface ActiveRunBinding {
   readonly registry: RouterRegistry;
   readonly context: Omit<ExplicitContextBinding, "currentInput" | "retrievalInstructions">;
   readonly activationReceiptId: string;
+  readonly domainInputs?: readonly GenerationDomainIdentity[];
 }
 
 export interface BindingCompilerInput {
@@ -41,7 +48,38 @@ export interface BindingCompilerInput {
 
 export interface BindingCompilerPort {
   compile(input: BindingCompilerInput): Promise<ActiveRunBinding>;
+  revalidate?(binding: ActiveRunBinding, input: BindingCompilerInput): Promise<void>;
 }
+
+export interface DomainProjectionReaderPort {
+  read(domainId: string): Promise<GenerationDomainIdentity>;
+}
+
+export interface FileBindingCompilerOptions {
+  readonly domainProjectionReader?: DomainProjectionReaderPort;
+}
+
+export async function validateGenerationDomainsCurrent(
+  domains: readonly GenerationDomainIdentity[],
+  reader: DomainProjectionReaderPort | undefined,
+): Promise<void> {
+  if (domains.length === 0) return;
+  if (reader === undefined) throw new Error("ACTIVE_DOMAIN_PROJECTION_UNAVAILABLE");
+  for (const expected of domains) {
+    let current: GenerationDomainIdentity;
+    try {
+      current = await reader.read(expected.domain_id);
+    } catch (error: unknown) {
+      throw new Error("ACTIVE_DOMAIN_PROJECTION_UNAVAILABLE", { cause: error });
+    }
+    if (canonicalJson(current) !== canonicalJson(expected)) {
+      throw new Error("ACTIVE_DOMAIN_POINTER_DRIFT");
+    }
+  }
+}
+
+type ActiveGenerationPointerAny = ActiveGenerationPointer | ActiveGenerationPointerV3;
+type ActivationReceiptAny = ActivationReceipt | ActivationReceiptV3;
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -74,7 +112,12 @@ const readManifestedJson = async (
 };
 
 const assertContract = (
-  name: "active-generation-pointer" | "activation-receipt" | "state-view",
+  name:
+    | "active-generation-pointer"
+    | "active-generation-pointer-v3"
+    | "activation-receipt"
+    | "activation-receipt-v3"
+    | "state-view",
   value: unknown,
   reason: string,
 ): void => {
@@ -195,8 +238,8 @@ export const calculateRuntimeConfigIdentityChecksum = (
 }));
 
 const validateActivationChain = (input: {
-  readonly pointer: ActiveGenerationPointer;
-  readonly receipt: ActivationReceipt;
+  readonly pointer: ActiveGenerationPointerAny;
+  readonly receipt: ActivationReceiptAny;
   readonly manifestChecksum: string;
   readonly projectionChecksum: string;
   readonly config: InstanceRuntimeConfig;
@@ -205,6 +248,8 @@ const validateActivationChain = (input: {
   readonly releaseChannel: string;
   readonly manifestGeneration: string;
   readonly manifestRevision: string;
+  readonly manifestAuthority?: GenerationAuthorityInput;
+  readonly manifestDomains?: readonly GenerationDomainIdentity[];
 }): void => {
   const { pointer, receipt } = input;
   if (pointer.instance_id !== input.config.instance_id || receipt.instance_id !== input.config.instance_id) {
@@ -239,9 +284,39 @@ const validateActivationChain = (input: {
   if (receipt.release_channel !== input.releaseChannel) {
     throw new Error("ACTIVATION_HOST_IDENTITY_STALE");
   }
+  const pointerV3 = pointer.schema_version === "cognitive-runtime.active-generation-pointer/v3";
+  const receiptV3 = receipt.schema_version === "cognitive-runtime.activation-receipt/v3";
+  if (pointerV3 !== receiptV3 || pointerV3 !== (input.manifestAuthority !== undefined)) {
+    throw new Error("ACTIVE_BINDING_GENERATION_MISMATCH");
+  }
+  if (pointerV3 && receiptV3 && input.manifestAuthority !== undefined
+    && input.manifestDomains !== undefined) {
+    if (
+      canonicalJson(pointer.authority) !== canonicalJson(input.manifestAuthority)
+      || canonicalJson(receipt.authority) !== canonicalJson(input.manifestAuthority)
+      || canonicalJson(pointer.domains) !== canonicalJson(input.manifestDomains)
+      || canonicalJson(receipt.domains) !== canonicalJson(input.manifestDomains)
+      || input.manifestAuthority.revision !== input.manifestRevision
+    ) {
+      throw new Error("ACTIVE_DOMAIN_INPUT_MISMATCH");
+    }
+  }
 };
 
 export class FileBindingCompiler implements BindingCompilerPort {
+  readonly #domainProjectionReader: DomainProjectionReaderPort | undefined;
+
+  constructor(options: FileBindingCompilerOptions = {}) {
+    this.#domainProjectionReader = options.domainProjectionReader;
+  }
+
+  async revalidate(binding: ActiveRunBinding, _input: BindingCompilerInput): Promise<void> {
+    await validateGenerationDomainsCurrent(
+      binding.domainInputs ?? [],
+      this.#domainProjectionReader,
+    );
+  }
+
   async compile(input: BindingCompilerInput): Promise<ActiveRunBinding> {
     const matrixRow = await resolveCompatibilityMatrixRow({
       openclawVersion: input.hostVersion,
@@ -256,8 +331,14 @@ export class FileBindingCompiler implements BindingCompilerPort {
       if (isRecord(error) && error.code === "ENOENT") throw new Error("ACTIVE_GENERATION_POINTER_MISSING");
       throw error;
     }
-    assertContract("active-generation-pointer", pointerValue, "ACTIVE_GENERATION_POINTER_INVALID");
-    const pointer = pointerValue as ActiveGenerationPointer;
+    const pointerV3 = isRecord(pointerValue)
+      && pointerValue.schema_version === "cognitive-runtime.active-generation-pointer/v3";
+    assertContract(
+      pointerV3 ? "active-generation-pointer-v3" : "active-generation-pointer",
+      pointerValue,
+      "ACTIVE_GENERATION_POINTER_INVALID",
+    );
+    const pointer = pointerValue as ActiveGenerationPointerAny;
     const receiptValue = await readJson(join(
       runtimeStorage,
       ACTIVATION_RECEIPTS_DIRECTORY,
@@ -266,8 +347,14 @@ export class FileBindingCompiler implements BindingCompilerPort {
       if (isRecord(error) && error.code === "ENOENT") throw new Error("ACTIVATION_RECEIPT_MISSING");
       throw error;
     });
-    assertContract("activation-receipt", receiptValue, "ACTIVATION_RECEIPT_INVALID");
-    const receipt = receiptValue as ActivationReceipt;
+    const receiptV3 = isRecord(receiptValue)
+      && receiptValue.schema_version === "cognitive-runtime.activation-receipt/v3";
+    assertContract(
+      receiptV3 ? "activation-receipt-v3" : "activation-receipt",
+      receiptValue,
+      "ACTIVATION_RECEIPT_INVALID",
+    );
+    const receipt = receiptValue as ActivationReceiptAny;
 
     const generationDirectory = join(generationStorage, pointer.generation_id);
     const verification = await verifyGeneration(generationDirectory);
@@ -293,7 +380,18 @@ export class FileBindingCompiler implements BindingCompilerPort {
       releaseChannel: matrixRow.releaseChannel,
       manifestGeneration: verification.manifest.sync_generation,
       manifestRevision: verification.manifest.source_revision,
+      ...(verification.manifest.schema_version === "cognitive-runtime.generation-manifest/v3"
+        ? {
+            manifestAuthority: verification.manifest.authority,
+            manifestDomains: verification.manifest.domains,
+          }
+        : {}),
     });
+    const domainInputs = verification.manifest.schema_version
+      === "cognitive-runtime.generation-manifest/v3"
+      ? verification.manifest.domains
+      : [];
+    await validateGenerationDomainsCurrent(domainInputs, this.#domainProjectionReader);
 
     const [registryValue, projectionValue, governingValue] = await Promise.all([
       readManifestedJson(
@@ -412,6 +510,7 @@ export class FileBindingCompiler implements BindingCompilerPort {
         frameworks: versionedForRole("ordinary_framework"),
       },
       activationReceiptId: receipt.receipt_id,
+      domainInputs,
     });
   }
 }

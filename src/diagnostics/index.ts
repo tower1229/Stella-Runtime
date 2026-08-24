@@ -6,20 +6,28 @@ import { promisify } from "node:util";
 
 import type {
   ActivationReceipt,
+  ActivationReceiptV3,
   ActiveGenerationPointer,
+  ActiveGenerationPointerV3,
   InstanceRuntimeConfig,
 } from "../contracts/index.js";
 import { atomicWriteFile } from "../core/persistence.js";
+import { canonicalJson } from "../core/canonical-json.js";
 import { validateContract } from "../contracts/index.js";
 import { verifyGeneration } from "../generation/index.js";
+import type { GenerationManifest } from "../generation/index.js";
 import { resolveCompatibilityMatrixRow } from "../compatibility/index.js";
 import {
   ACTIVATION_RECEIPTS_DIRECTORY,
   ACTIVE_GENERATION_POINTER_FILE,
   calculateRuntimeConfigIdentityChecksum,
 } from "../runtime/binding.js";
+import { closeMaintenanceGate } from "../sync/index.js";
 
 const execFileAsync = promisify(execFile);
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 export const RUNTIME_HEALTH_FILE = "runtime-health.json";
 
@@ -34,6 +42,7 @@ export const DRIFT_REASON_CODES = {
   publicCorpusUnhealthy: "PUBLIC_CORPUS_UNHEALTHY",
   activeGenerationUnavailable: "ACTIVE_GENERATION_UNAVAILABLE",
   reconciliationMissing: "HEALTH_RECONCILIATION_MISSING",
+  domainProjectionDrift: "DOMAIN_PROJECTION_DRIFT",
 } as const;
 
 export type DriftReasonCode = typeof DRIFT_REASON_CODES[keyof typeof DRIFT_REASON_CODES];
@@ -47,16 +56,9 @@ export type LifecycleOutcome =
   | "gated";
 
 export interface ActiveGenerationHealthSnapshot {
-  readonly pointer: ActiveGenerationPointer;
-  readonly receipt: ActivationReceipt;
-  readonly manifest: {
-    readonly sync_generation: string;
-    readonly source_revision: string;
-    readonly files: readonly {
-      readonly path: string;
-      readonly checksum: string;
-    }[];
-  };
+  readonly pointer: ActiveGenerationPointer | ActiveGenerationPointerV3;
+  readonly receipt: ActivationReceipt | ActivationReceiptV3;
+  readonly manifest: GenerationManifest;
 }
 
 export interface ReceiptValidity {
@@ -121,16 +123,26 @@ export const loadActiveGenerationHealth = async (
     config.runtime_storage,
     ACTIVE_GENERATION_POINTER_FILE,
   ));
-  if (!validateContract("active-generation-pointer", pointerValue).valid) {
+  const pointerV3 = isRecord(pointerValue)
+    && pointerValue.schema_version === "cognitive-runtime.active-generation-pointer/v3";
+  if (!validateContract(
+    pointerV3 ? "active-generation-pointer-v3" : "active-generation-pointer",
+    pointerValue,
+  ).valid) {
     throw new Error("ACTIVE_GENERATION_POINTER_INVALID");
   }
-  const pointer = pointerValue as ActiveGenerationPointer;
+  const pointer = pointerValue as ActiveGenerationPointer | ActiveGenerationPointerV3;
   const receiptValue = await loadJson(join(
     config.runtime_storage,
     ACTIVATION_RECEIPTS_DIRECTORY,
     `${pointer.activation_receipt_id}.json`,
   ));
-  if (!validateContract("activation-receipt", receiptValue).valid) {
+  const receiptV3 = isRecord(receiptValue)
+    && receiptValue.schema_version === "cognitive-runtime.activation-receipt/v3";
+  if (!validateContract(
+    receiptV3 ? "activation-receipt-v3" : "activation-receipt",
+    receiptValue,
+  ).valid) {
     throw new Error("ACTIVATION_RECEIPT_INVALID");
   }
   const verified = await verifyGeneration(join(
@@ -145,7 +157,7 @@ export const loadActiveGenerationHealth = async (
   }
   return {
     pointer,
-    receipt: receiptValue as ActivationReceipt,
+    receipt: receiptValue as ActivationReceipt | ActivationReceiptV3,
     manifest: verified.manifest,
   };
 };
@@ -186,7 +198,16 @@ export const validateActiveReceipt = async (
     receipt.host_config_checksum === calculateRuntimeConfigIdentityChecksum(config) &&
     receipt.release_channel === matrixRow.releaseChannel &&
     receipt.openclaw_version === hostVersion &&
-    receipt.node_version === nodeVersion;
+    receipt.node_version === nodeVersion &&
+    (active.manifest.schema_version === "cognitive-runtime.generation-manifest/v3"
+      ? pointer.schema_version === "cognitive-runtime.active-generation-pointer/v3"
+        && receipt.schema_version === "cognitive-runtime.activation-receipt/v3"
+        && canonicalJson(pointer.authority) === canonicalJson(active.manifest.authority)
+        && canonicalJson(receipt.authority) === canonicalJson(active.manifest.authority)
+        && canonicalJson(pointer.domains) === canonicalJson(active.manifest.domains)
+        && canonicalJson(receipt.domains) === canonicalJson(active.manifest.domains)
+      : pointer.schema_version === "cognitive-runtime.active-generation-pointer/v2"
+        && receipt.schema_version === "cognitive-runtime.activation-receipt/v2");
   if (valid) return { valid: true, reasonCodes: [] };
   const configDrift = receipt.host_config_checksum !==
     calculateRuntimeConfigIdentityChecksum(config);
@@ -209,16 +230,18 @@ export const inspectStoredGenerationStatus = async (input: {
   readonly hostVersion: string;
   readonly nodeVersion: string;
 }): Promise<GenerationOperationalStatus> => {
-  let pointer: ActiveGenerationPointer;
+  let pointer: ActiveGenerationPointer | ActiveGenerationPointerV3;
   try {
     const value = await loadJson(join(
       input.config.runtime_storage,
       ACTIVE_GENERATION_POINTER_FILE,
     ));
-    if (!validateContract("active-generation-pointer", value).valid) {
+    const v3 = isRecord(value)
+      && value.schema_version === "cognitive-runtime.active-generation-pointer/v3";
+    if (!validateContract(v3 ? "active-generation-pointer-v3" : "active-generation-pointer", value).valid) {
       throw new Error("ACTIVE_GENERATION_POINTER_INVALID");
     }
-    pointer = value as ActiveGenerationPointer;
+    pointer = value as ActiveGenerationPointer | ActiveGenerationPointerV3;
   } catch {
     return {
       status: "degraded",
@@ -302,6 +325,9 @@ export interface RuntimeHealthOptions {
   };
   readonly configIdentity: { verify(): Promise<boolean | ReceiptValidity> };
   readonly retrieval: { verify(active: ActiveGenerationHealthSnapshot): Promise<void> };
+  readonly domainProjection?: {
+    verify(active: ActiveGenerationHealthSnapshot): Promise<void>;
+  };
   readonly publicCorpus?: { verify(): Promise<{ readonly adapterId: string }> };
   readonly active: { load(): Promise<ActiveGenerationHealthSnapshot> };
   readonly now?: () => string;
@@ -335,6 +361,9 @@ export interface LifecycleTrace {
 
 const reasonForError = (error: unknown): DriftReasonCode => {
   const message = error instanceof Error ? error.message : String(error);
+  if (/DOMAIN_(?:PROJECTION|POINTER|INPUT)/.test(message)) {
+    return DRIFT_REASON_CODES.domainProjectionDrift;
+  }
   if (/ACTIVATION_(RECEIPT|.*IDENTITY)|RECEIPT/.test(message)) {
     return DRIFT_REASON_CODES.staleReceipt;
   }
@@ -466,6 +495,16 @@ export class RuntimeHealthMonitor {
         if (active === null) throw new Error("ACTIVE_GENERATION_UNAVAILABLE");
         await this.#options.retrieval.verify(active);
       }, DRIFT_REASON_CODES.indexDrift),
+      this.#check("domain_projection", async () => {
+        if (
+          active?.manifest.schema_version
+          !== "cognitive-runtime.generation-manifest/v3"
+        ) return;
+        if (this.#options.domainProjection === undefined) {
+          throw new Error("DOMAIN_PROJECTION_VERIFIER_UNAVAILABLE");
+        }
+        await this.#options.domainProjection.verify(active);
+      }, DRIFT_REASON_CODES.domainProjectionDrift),
       this.#check("public_corpus", async () => {
         const adapterId = this.#options.config.adapters.public_corpus;
         if (adapterId === undefined) return;
@@ -503,6 +542,14 @@ export class RuntimeHealthMonitor {
       reasonCodes,
       checkedAt: this.#options.now?.() ?? new Date().toISOString(),
     };
+    if (reasonCodes.includes(DRIFT_REASON_CODES.domainProjectionDrift)) {
+      const active = await this.#options.active.load();
+      await closeMaintenanceGate(
+        this.#options.config.runtime_storage,
+        active.manifest.source_revision,
+        new Date(receipt.checkedAt),
+      );
+    }
     await atomicWriteFile(
       join(this.#options.config.runtime_storage, RUNTIME_HEALTH_FILE),
       `${JSON.stringify(receipt)}\n`,

@@ -11,6 +11,7 @@
     "dist",
     "compatibility",
     "contracts/v2",
+    "contracts/v3",
     "contracts/stella/v1",
     "docs/CONFIGURATION.md",
     "docs/DATA-BOUNDARIES.md",
@@ -30,6 +31,7 @@
     },
     "./compatibility": "./compatibility/openclaw.json",
     "./contracts/v2/*": "./contracts/v2/*",
+    "./contracts/v3/*": "./contracts/v3/*",
     "./contracts/stella/v1/*": "./contracts/stella/v1/*",
     "./test-runner": {
       "types": "./dist/testing/runner.d.ts",
@@ -55,7 +57,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && cp -R src/contracts/generated dist/contracts/",
-    "generate:contracts": "json2ts -i contracts/v2 -o src/contracts/generated --cwd contracts/v2 --unknownAny --bannerComment '/* Generated from contracts/v2. Do not edit directly. */' && json2ts -i contracts/stella/v1 -o src/contracts/generated --cwd contracts/stella/v1 --unknownAny --bannerComment '/* Generated from contracts/stella/v1. Do not edit directly. */'",
+    "generate:contracts": "json2ts -i contracts/v2 -o src/contracts/generated --cwd contracts/v2 --unknownAny --bannerComment '/* Generated from contracts/v2. Do not edit directly. */' && json2ts -i contracts/v3 -o src/contracts/generated/v3 --cwd contracts/v3 --unknownAny --bannerComment '/* Generated from contracts/v3. Do not edit directly. */' && json2ts -i contracts/stella/v1 -o src/contracts/generated --cwd contracts/stella/v1 --unknownAny --bannerComment '/* Generated from contracts/stella/v1. Do not edit directly. */'",
     "check:generated": "npm run generate:contracts && git diff --exit-code -- src/contracts/generated",
     "lint": "npm run check:generated && git diff --check",
     "typecheck": "tsc --noEmit",

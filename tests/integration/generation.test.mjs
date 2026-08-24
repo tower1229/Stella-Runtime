@@ -14,6 +14,10 @@ import {
   verifyGeneration,
 } from "../../dist/generation/index.js";
 import {
+  ProjectionDeterminismLedger,
+  runProjectionProducerConformance,
+} from "../../dist/personal-data/projection.js";
+import {
   commitAuthorityPathTraversalTree,
   commitAuthorityChanges,
   commitSyntheticPersonalDataRepository,
@@ -31,6 +35,43 @@ const canonicalize = (value) => {
 const canonicalJson = (value) => `${JSON.stringify(canonicalize(value))}\n`;
 const checksum = (value) =>
   `sha256:${createHash("sha256").update(value).digest("hex")}`;
+
+const fitnessProjection = (revision, content) => {
+  const publication = runProjectionProducerConformance({
+    instanceId: "instance-synthetic",
+    producerId: "stella-fitness",
+    consumerId: "stella-runtime",
+    canonicalSourceSnapshot: {
+      revision,
+      sourceAsOf: "2026-08-24T00:00:00Z",
+    },
+    determinismLedger: new ProjectionDeterminismLedger(),
+    categories: ["fitness_history"],
+    sourceReferences: [],
+    conflicts: [],
+    retractions: [],
+    capabilities: [{ id: "fitness_history_context", state: "available" }],
+    payloads: [{
+      path: "payloads/history.md",
+      mediaType: "text/markdown",
+      value: content,
+    }],
+    generatedAt: "2026-08-24T00:01:00Z",
+  });
+  return {
+    domainId: "fitness",
+    projection: {
+      status: "active",
+      projectionRevision: publication.projectionRevision,
+      pointerRevision: `pointer-${createHash("sha256").update(revision).digest("hex")}`,
+      manifestChecksum: publication.manifestChecksum,
+      sourceRevision: publication.manifest.source.revision,
+      asOf: publication.manifest.source.as_of,
+      manifest: publication.manifest,
+      payloads: publication.payloads,
+    },
+  };
+};
 
 test("validate reads one exact clean committed Authority revision without mutation", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-generation-validate-"));
@@ -379,6 +420,168 @@ test("build reuses one immutable full-hash Generation and renders bound projecti
   const tampered = await verifyGeneration(first.generationDirectory);
   assert.equal(tampered.valid, false);
   assert.ok(tampered.issues.includes("GENERATION_UNMANIFESTED_FILE:rogue.md"));
+});
+
+test("v3 Generation identity binds complete Authority and verified domain inputs", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-generation-build-v3-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const authorityDirectory = join(root, "authority");
+  const stateDirectory = join(root, "state");
+  await writeSyntheticAuthority(authorityDirectory);
+  const sourceRevision = await commitSyntheticAuthority(authorityDirectory);
+  const f1 = fitnessProjection("fitness-f1", "# Fitness history\n\nSession F1.\n");
+  const f2 = fitnessProjection("fitness-f2", "# Fitness history\n\nSession F2.\n");
+
+  const first = await buildGeneration({
+    authorityDirectory,
+    stateDirectory,
+    sourceRevision,
+    packageVersion: "0.2.1-first",
+    domainProjections: [f1],
+  });
+  const repeated = await buildGeneration({
+    authorityDirectory,
+    stateDirectory,
+    sourceRevision,
+    packageVersion: "0.2.1-republished",
+    domainProjections: [f1],
+  });
+  const changed = await buildGeneration({
+    authorityDirectory,
+    stateDirectory,
+    sourceRevision,
+    packageVersion: "0.2.1-first",
+    domainProjections: [f2],
+  });
+  const relocatedAuthority = join(root, "relocated-authority");
+  await cp(authorityDirectory, relocatedAuthority, { recursive: true });
+  const relocated = await buildGeneration({
+    authorityDirectory: relocatedAuthority,
+    stateDirectory: join(root, "relocated-state"),
+    sourceRevision,
+    packageVersion: "0.2.1-relocated",
+    domainProjections: [f1],
+  });
+  const multiple = await buildGeneration({
+    authorityDirectory,
+    stateDirectory,
+    sourceRevision,
+    packageVersion: "0.2.1-multiple",
+    domainProjections: [f1, { ...f1, domainId: "alpha" }],
+  });
+
+  assert.equal(first.manifest.schema_version, "cognitive-runtime.generation-manifest/v3");
+  assert.equal(first.manifest.builder_format_version, "generation-builder/v3");
+  assert.equal(first.manifest.authority.revision, sourceRevision);
+  assert.match(first.manifest.authority.checksum, /^sha256:[a-f0-9]{64}$/);
+  assert.deepEqual(first.manifest.domains, [{
+    domain_id: "fitness",
+    status: "active",
+    projection_revision: f1.projection.projectionRevision,
+    pointer_revision: f1.projection.pointerRevision,
+    manifest_checksum: f1.projection.manifestChecksum,
+    source_revision: f1.projection.sourceRevision,
+    as_of: f1.projection.asOf,
+  }]);
+  assert.equal(repeated.syncGeneration, first.syncGeneration);
+  assert.equal(repeated.reused, true);
+  assert.equal(relocated.syncGeneration, first.syncGeneration);
+  assert.notEqual(changed.syncGeneration, first.syncGeneration);
+  assert.deepEqual(multiple.manifest.domains.map(({ domain_id }) => domain_id), [
+    "alpha",
+    "fitness",
+  ]);
+  assert.ok(first.manifest.files.some(({ path }) => path === "domain-projections.json"));
+  assert.match(first.syncGeneration, /^generation-[a-f0-9]{64}$/);
+  assert.equal((await verifyGeneration(first.generationDirectory)).valid, true);
+
+  const domainArtifactPath = join(first.generationDirectory, "domain-projections.json");
+  const originalDomainArtifact = JSON.parse(await readFile(domainArtifactPath, "utf8"));
+  const normalized = JSON.parse(await readFile(
+    join(first.generationDirectory, "normalized-records.json"),
+    "utf8",
+  ));
+  const view = JSON.parse(await readFile(
+    join(first.generationDirectory, "view-projection.json"),
+    "utf8",
+  ));
+  const identityOracle = {
+    contract_set: first.manifest.contract_version,
+    builder_format_version: first.manifest.builder_format_version,
+    authority: {
+      ...first.manifest.authority,
+      content: {
+        binding: {
+          schema_version: "cognitive-runtime.cognitive-binding/v2",
+          active_governing_system: view.payload.active_governing_system,
+        },
+        records: normalized.payload.records,
+      },
+    },
+    domains: originalDomainArtifact.payload.domains,
+  };
+  assert.equal(
+    first.syncGeneration,
+    `generation-${checksum(canonicalJson(identityOracle)).slice("sha256:".length)}`,
+  );
+  for (const [field, mutate] of [
+    ["authority revision", (seed) => { seed.authority.revision = "b".repeat(40); }],
+    ["authority checksum", (seed) => { seed.authority.checksum = `sha256:${"b".repeat(64)}`; }],
+    ["authority body", (seed) => { seed.authority.content.records[0].body += " changed"; }],
+    ["authority frontmatter", (seed) => { seed.authority.content.records[0].frontmatter.entity_version = "changed"; }],
+    ["authority sections", (seed) => { seed.authority.content.records[0].sections[0].content += " changed"; }],
+    ["domain id", (seed) => { seed.domains[0].input.domain_id = "fitness-other"; }],
+    ["domain status", (seed) => { seed.domains[0].input.status = "stale"; }],
+    ["projection revision", (seed) => { seed.domains[0].input.projection_revision = `projection-${"b".repeat(64)}`; }],
+    ["pointer revision", (seed) => { seed.domains[0].input.pointer_revision = `pointer-${"b".repeat(64)}`; }],
+    ["manifest checksum", (seed) => { seed.domains[0].input.manifest_checksum = `sha256:${"b".repeat(64)}`; }],
+    ["source revision", (seed) => { seed.domains[0].input.source_revision = "fitness-other"; }],
+    ["as of", (seed) => { seed.domains[0].input.as_of = "2026-08-25T00:00:00Z"; }],
+    ["domain manifest", (seed) => { seed.domains[0].manifest.generated_at = "2026-08-25T00:01:00Z"; }],
+    ["domain payload", (seed) => { seed.domains[0].payloads[0].content_base64 += "AA=="; }],
+  ]) {
+    const changedSeed = structuredClone(identityOracle);
+    mutate(changedSeed);
+    assert.notEqual(
+      `generation-${checksum(canonicalJson(changedSeed)).slice("sha256:".length)}`,
+      first.syncGeneration,
+      field,
+    );
+  }
+
+  for (const [name, mutate] of [
+    ["missing", (domains) => { domains[0].payloads = []; }],
+    ["duplicate", (domains) => { domains[0].payloads.push(domains[0].payloads[0]); }],
+  ]) {
+    const tamperDirectory = join(root, `tampered-${name}`, first.syncGeneration);
+    await cp(first.generationDirectory, tamperDirectory, { recursive: true });
+    const path = join(tamperDirectory, "domain-projections.json");
+    const artifact = JSON.parse(await readFile(path, "utf8"));
+    mutate(artifact.payload.domains);
+    artifact.content_checksum = checksum(canonicalJson(artifact.payload));
+    const artifactContent = canonicalJson(artifact);
+    await writeFile(path, artifactContent);
+    const manifestPath = join(tamperDirectory, "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.files.find(({ path: filePath }) => filePath === "domain-projections.json").checksum =
+      checksum(artifactContent);
+    await writeFile(manifestPath, canonicalJson(manifest));
+    const verification = await verifyGeneration(tamperDirectory);
+    assert.equal(verification.valid, false);
+    assert.ok(
+      verification.issues.includes("GENERATION_DOMAIN_PAYLOAD_INVALID"),
+      `${name}: ${JSON.stringify(verification.issues)}`,
+    );
+  }
+
+  const domainArtifact = JSON.parse(await readFile(domainArtifactPath, "utf8"));
+  domainArtifact.payload.domains[0].input.pointer_revision = `pointer-${"f".repeat(64)}`;
+  await writeFile(domainArtifactPath, canonicalJson(domainArtifact));
+  const tampered = await verifyGeneration(first.generationDirectory);
+  assert.equal(tampered.valid, false);
+  assert.ok(tampered.issues.some((issue) =>
+    issue === "FILE_CHECKSUM_MISMATCH:domain-projections.json"
+    || issue === "GENERATION_DOMAIN_INPUT_MISMATCH"));
 });
 
 test("one authority revision activates one internally consistent generation", async (t) => {

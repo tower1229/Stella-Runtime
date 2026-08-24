@@ -13,6 +13,7 @@ import {
 import {
   calculateRuntimeConfigIdentityChecksum,
 } from "../../dist/runtime/binding.js";
+import { loadMaintenanceGate } from "../../dist/sync/index.js";
 
 const generation = `generation-${"a".repeat(64)}`;
 const manifestChecksum = `sha256:${"1".repeat(64)}`;
@@ -175,8 +176,64 @@ test("full self-check separates Authority input validation from environment heal
     ["host_capabilities", "pass"],
     ["config_identity", "pass"],
     ["index_retrieval", "pass"],
+    ["domain_projection", "pass"],
     ["public_corpus", "pass"],
   ]);
+});
+
+test("v3 diagnostics report live domain projection drift separately", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-diagnostics-v3-domain-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(config(root).runtime_storage, { recursive: true });
+  const authority = {
+    revision: "a".repeat(40),
+    checksum: `sha256:${"6".repeat(64)}`,
+  };
+  const domains = [{
+    domain_id: "fitness",
+    status: "active",
+    projection_revision: `projection-${"7".repeat(64)}`,
+    pointer_revision: `pointer-${"8".repeat(64)}`,
+    manifest_checksum: `sha256:${"9".repeat(64)}`,
+    source_revision: "fitness-f1",
+    as_of: "2026-08-24T00:00:00Z",
+  }];
+  const activeV3 = {
+    pointer: { ...active.pointer, schema_version: "cognitive-runtime.active-generation-pointer/v3", authority, domains },
+    receipt: { ...active.receipt, schema_version: "cognitive-runtime.activation-receipt/v3", authority, domains },
+    manifest: {
+      ...active.manifest,
+      schema_version: "cognitive-runtime.generation-manifest/v3",
+      builder_format_version: "generation-builder/v3",
+      authority,
+      domains,
+      sync_generation: generation,
+    },
+  };
+  const monitor = new RuntimeHealthMonitor({
+    config: config(root),
+    hostVersion: "2026.6.34",
+    nodeVersion: "24.18.0",
+    pluginDiscovered: () => true,
+    authority: { validate: async () => ({ sourceRevision: "a".repeat(40) }) },
+    configIdentity: { verify: async () => true },
+    retrieval: { verify: async () => undefined },
+    domainProjection: { verify: async () => { throw new Error("DOMAIN_PROJECTION_DRIFT"); } },
+    active: { load: async () => activeV3 },
+  });
+
+  const result = await monitor.selfCheck();
+  assert.deepEqual(
+    result.environment.checks.find(({ id }) => id === "domain_projection"),
+    { id: "domain_projection", status: "fail", reasonCodes: ["DOMAIN_PROJECTION_DRIFT"] },
+  );
+  assert.ok(result.reasonCodes.includes("DOMAIN_PROJECTION_DRIFT"));
+  const reconciliation = await monitor.reconcile("detected_drift");
+  assert.equal(reconciliation.status, "fail");
+  assert.equal(
+    (await loadMaintenanceGate(config(root).runtime_storage))?.targetSourceRevision,
+    activeV3.manifest.source_revision,
+  );
 });
 
 test("self-check rejects an engine-compatible Node version absent from the matrix", async (t) => {

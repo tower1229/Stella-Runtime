@@ -179,6 +179,9 @@ test("Runtime atomically publishes one immutable fitness revision and consumes o
   const consumed = await exchange.readFitnessProjection("identity_background");
   assert.equal(consumed.status, "active");
   assert.equal(consumed.projectionRevision, publication.projectionRevision);
+  assert.equal(consumed.pointerRevision, pointer.pointer_revision);
+  assert.equal(consumed.manifestChecksum, publication.manifestChecksum);
+  assert.equal(consumed.sourceRevision, publication.manifest.source.revision);
   assert.deepEqual(consumed.payloads[0].bytes, publication.payloads[0].bytes);
 });
 

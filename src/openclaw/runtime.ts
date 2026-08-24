@@ -25,7 +25,7 @@ import {
   type ActiveRunBinding,
   type BindingCompilerPort,
 } from "../runtime/binding.js";
-import { loadMaintenanceGate } from "../sync/index.js";
+import { closeMaintenanceGate, loadMaintenanceGate } from "../sync/index.js";
 
 const ROUTER_TIMEOUT_MS = 10_000;
 const ROUTER_MAX_TOKENS = 512;
@@ -44,6 +44,9 @@ const BINDING_FAILURE_REASONS = [
   "ACTIVE_GENERATION_INVALID",
   "ACTIVE_GENERATION_POINTER_INVALID",
   "ACTIVE_GENERATION_POINTER_MISSING",
+  "ACTIVE_DOMAIN_POINTER_DRIFT",
+  "ACTIVE_DOMAIN_PROJECTION_UNAVAILABLE",
+  "ACTIVE_DOMAIN_INPUT_MISMATCH",
   "ACTIVE_GOVERNING_CHECKSUM_MISMATCH",
   "ACTIVE_GOVERNING_INVALID",
   "ACTIVE_MANIFEST_CHECKSUM_MISMATCH",
@@ -61,10 +64,17 @@ const BINDING_FAILURE_REASONS = [
   "STATE_VIEW_REGISTRY_ID_COLLISION",
 ] as const;
 
+const DOMAIN_BINDING_FAILURE_REASONS = [
+  "ACTIVE_DOMAIN_POINTER_DRIFT",
+  "ACTIVE_DOMAIN_PROJECTION_UNAVAILABLE",
+  "ACTIVE_DOMAIN_INPUT_MISMATCH",
+] as const;
+
 const HEALTH_GATE_REASONS = [
   "ACTIVE_GENERATION_UNAVAILABLE",
   "AUTHORITY_INPUT_INVALID",
   "CONFIG_DRIFT",
+  "DOMAIN_PROJECTION_DRIFT",
   "HEALTH_RECONCILIATION_MISSING",
   "INCOMPATIBLE_HOST",
   "INDEX_DRIFT",
@@ -89,6 +99,11 @@ type RuntimeRejectionReason =
   | "RUN_LIFECYCLE_INVALIDATED"
   | "RUNTIME_FAILURE"
   | "RUNTIME_HEALTH_GATED";
+
+const isDomainBindingFailure = (
+  reason: RuntimeRejectionReason,
+): reason is typeof DOMAIN_BINDING_FAILURE_REASONS[number] =>
+  (DOMAIN_BINDING_FAILURE_REASONS as readonly RuntimeRejectionReason[]).includes(reason);
 
 class EligibleRunRejectedError extends Error {
   constructor(readonly reasonCode: RuntimeRejectionReason) {
@@ -131,6 +146,7 @@ interface HookBinding {
   readonly registry: RouterRegistry;
   readonly routerResult: RouterOutcome;
   readonly packet: string | null;
+  readonly activeBinding: ActiveRunBinding;
 }
 
 export interface RuntimeMetricsSnapshot {
@@ -359,7 +375,7 @@ export const registerRuntimeHooks = (
   let remediationRevisions = 0;
   let lifecycleEpoch = 0;
   let admissionClosed = false;
-  const bindingCompiler = options.bindingCompiler ?? new FileBindingCompiler();
+  const bindingCompiler: BindingCompilerPort = options.bindingCompiler ?? new FileBindingCompiler();
   const nonLlmDurationSamplesMs: number[] = [];
   const recordDuration = (startedAt: number): void => {
     nonLlmDurationSamplesMs.push(Math.max(0, performance.now() - startedAt));
@@ -397,6 +413,33 @@ export const registerRuntimeHooks = (
     }
   };
 
+  const rejectDomainFailure = async (
+    reasonCode: typeof DOMAIN_BINDING_FAILURE_REASONS[number],
+    runId: string,
+    targetSourceRevision?: string,
+  ): Promise<never> => {
+    admissionClosed = true;
+    try {
+      await closeMaintenanceGate(
+        config.runtime_storage,
+        targetSourceRevision,
+      );
+    } catch {
+      log("MAINTENANCE_GATE_INVALID", runId);
+    }
+    await options.healthGate?.reconcile?.("detected_drift").catch(() => undefined);
+    try {
+      options.healthGate?.recordLifecycle?.("gated");
+    } catch {
+      // Lifecycle metrics must not weaken the final-request barrier.
+    }
+    runsDegraded += 1;
+    log(reasonCode, runId);
+    rejectedRuns.set(runId, reasonCode);
+    trimOldestRunIds(rejectedRuns);
+    throw new EligibleRunRejectedError(reasonCode);
+  };
+
   const buildPromptContext = async (
     event: Readonly<Record<string, unknown>>,
     context: PluginHookContext,
@@ -408,6 +451,23 @@ export const registerRuntimeHooks = (
     }
     const existing = scratch.inspect(runId);
     if (existing !== null) {
+      try {
+        await bindingCompiler.revalidate?.(existing.binding.activeBinding, {
+          config,
+          hostVersion: api.runtime.version,
+          nodeVersion: process.versions.node,
+        });
+      } catch (error: unknown) {
+        const reason = boundedReason(
+          error,
+          BINDING_FAILURE_REASONS,
+          "BINDING_COMPILATION_FAILED",
+        );
+        if (isDomainBindingFailure(reason)) {
+          return rejectDomainFailure(reason, runId, existing.binding.authorityRevision);
+        }
+        return rejectUnavailable(reason, runId);
+      }
       const packet = injectedPackets.get(runId);
       return config.mode === "enforce" && packet !== undefined
         ? { prependContext: packet }
@@ -471,6 +531,9 @@ export const registerRuntimeHooks = (
         BINDING_FAILURE_REASONS,
         "BINDING_COMPILATION_FAILED",
       );
+      if (isDomainBindingFailure(reason)) {
+        return rejectDomainFailure(reason, runId);
+      }
       await options.healthGate?.reconcile?.("detected_drift").catch(() => undefined);
       return rejectUnavailable(reason, runId);
     }
@@ -523,6 +586,7 @@ export const registerRuntimeHooks = (
         registry: activeBinding.registry,
         routerResult,
         packet,
+        activeBinding,
       });
       runsStarted += 1;
       if (config.mode === "enforce" && packet !== null) {

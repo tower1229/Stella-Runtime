@@ -37,6 +37,9 @@ export type { StellaPersonalDataLocator } from "./generated/personal-data-locato
 export type { StellaContextProjectionPointer } from "./generated/context-projection-pointer.schema.js";
 export type { StellaContextProjectionManifest } from "./generated/context-projection-manifest.schema.js";
 export type { StellaIdentityContext } from "./generated/identity-context.schema.js";
+export type { CompositeGenerationManifest as GenerationManifestV3 } from "./generated/v3/generation-manifest.schema.js";
+export type { CompositeActivationReceipt as ActivationReceiptV3 } from "./generated/v3/activation-receipt.schema.js";
+export type { CompositeActiveGenerationPointer as ActiveGenerationPointerV3 } from "./generated/v3/active-generation-pointer.schema.js";
 
 const contractNames = [
   "evidence",
@@ -73,6 +76,9 @@ const contractNames = [
   "context-projection-pointer",
   "context-projection-manifest",
   "identity-context",
+  "generation-manifest-v3",
+  "activation-receipt-v3",
+  "active-generation-pointer-v3",
 ] as const;
 
 export type ContractName = (typeof contractNames)[number];
@@ -104,7 +110,9 @@ const ajv = addFormats(
 
 const schemas = new Map<ContractName, object>();
 for (const name of contractNames) {
-  const contractRoot = [
+  const contractRoot = name.endsWith("-v3")
+    ? "../../contracts/v3"
+    : [
     "personal-data-locator",
     "context-projection-pointer",
     "context-projection-manifest",
@@ -112,7 +120,8 @@ for (const name of contractNames) {
   ].includes(name)
     ? "../../contracts/stella/v1"
     : "../../contracts/v2";
-  const schema = require(`${contractRoot}/${name}.schema.json`) as object;
+  const schemaName = name.endsWith("-v3") ? name.slice(0, -3) : name;
+  const schema = require(`${contractRoot}/${schemaName}.schema.json`) as object;
   schemas.set(name, schema);
   ajv.addSchema(schema);
 }
@@ -151,6 +160,31 @@ export function validateContract(
   }
 
   if (validator(value)) {
+    if (contract.endsWith("-v3") && typeof value === "object" && value !== null) {
+      const domains = (value as { readonly domains?: unknown }).domains;
+      if (Array.isArray(domains)) {
+        const ids = domains.map((domain) =>
+          typeof domain === "object" && domain !== null
+            ? (domain as { readonly domain_id?: unknown }).domain_id
+            : undefined,
+        );
+        if (
+          ids.some((id) => typeof id !== "string")
+          || new Set(ids).size !== ids.length
+          || ids.some((id, index) => index > 0 && String(ids[index - 1]) >= String(id))
+        ) {
+          return {
+            valid: false,
+            errors: [{
+              instancePath: "/domains",
+              schemaPath: "#/domains/order",
+              keyword: "domainOrder",
+              message: "domains must be unique and sorted by domain_id",
+            }],
+          };
+        }
+      }
+    }
     return { valid: true, errors: [] };
   }
 
