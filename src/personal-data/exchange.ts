@@ -24,6 +24,7 @@ import {
   type ProjectionConsumptionPurpose,
   type ProjectionManifest,
   type ProjectionPublication,
+  type RuntimeIdentityProjectionPublication,
 } from "./projection.js";
 
 export type ProjectionPublishFailpoint =
@@ -105,6 +106,7 @@ interface ProjectionPublishLockRecord extends ProjectionLockRecordBase {
     readonly source_revision: string;
     readonly as_of: string;
     readonly manifest_checksum: string;
+    readonly existing_revision: boolean;
     readonly temporary_directory: string;
     readonly pointer: Readonly<Record<string, unknown>>;
   };
@@ -206,6 +208,7 @@ const writeSyncedFile = async (path: string, bytes: Uint8Array): Promise<void> =
   } finally {
     await handle.close();
   }
+  await syncDirectory(dirname(path));
 };
 
 const readSecureFile = async (
@@ -294,7 +297,9 @@ const parseManifest = (bytes: Uint8Array): ProjectionManifest => {
   return value as ProjectionManifest;
 };
 
-const assertRuntimeIdentityPayload = (publication: ProjectionPublication): void => {
+const assertRuntimeIdentityPayload = (
+  publication: RuntimeIdentityProjectionPublication,
+): void => {
   if (
     publication.payloads.length !== 1
     || publication.payloads[0]?.path !== "payloads/identity-context.json"
@@ -311,7 +316,11 @@ const assertRuntimeIdentityPayload = (publication: ProjectionPublication): void 
   if (!validateContract("identity-context", value).valid || !isRecord(value)) {
     throw new Error("IDENTITY_CONTEXT_PAYLOAD_INVALID");
   }
-  assertRuntimeIdentityContextPolicy(value, publication.manifest.source_references);
+  assertRuntimeIdentityContextPolicy(
+    value,
+    publication.manifest.source_references,
+    publication.sourcePolicies,
+  );
 };
 
 const verifyRevision = async (
@@ -380,6 +389,7 @@ const parseLockRecord = (value: unknown): ProjectionLockRecord => {
     || typeof value.target.source_revision !== "string"
     || typeof value.target.as_of !== "string"
     || typeof value.target.manifest_checksum !== "string"
+    || typeof value.target.existing_revision !== "boolean"
     || typeof value.target.temporary_directory !== "string"
     || !isRecord(value.target.pointer)
   ) {
@@ -527,6 +537,18 @@ export class FileProjectionExchange {
     ).toISOString();
     const temporaryDirectory = `.tmp-${this.#ownerId}-${randomUUID()}`;
     const pointer = pointerFor(publication.manifest, publication.manifestChecksum, startedAt);
+    const targetRevision = join(
+      root,
+      "revisions",
+      publication.projectionRevision,
+    );
+    let existingRevision = false;
+    try {
+      await lstat(targetRevision);
+      existingRevision = true;
+    } catch (error: unknown) {
+      if (errorCode(error) !== "ENOENT") throw error;
+    }
     const record: ProjectionPublishLockRecord = {
       schema_version: "stella.projection-publish-lock/v1",
       operation: "publish",
@@ -544,6 +566,7 @@ export class FileProjectionExchange {
         source_revision: publication.manifest.source.revision,
         as_of: publication.manifest.source.as_of,
         manifest_checksum: publication.manifestChecksum,
+        existing_revision: existingRevision,
         temporary_directory: temporaryDirectory,
         pointer,
       },
@@ -614,18 +637,27 @@ export class FileProjectionExchange {
       "stella-runtime",
       "stella-fitness",
     );
+    this.#assertVerifiedTarget(record, verified);
+    return { verified, reused };
+  }
+
+  #assertVerifiedTarget(
+    record: ProjectionPublishLockRecord,
+    verified: VerifiedRevision,
+  ): void {
     if (
       verified.manifest.projection_revision !== record.target.projection_revision
       || verified.manifest.source.revision !== record.target.source_revision
       || verified.manifest.source.as_of !== record.target.as_of
+      || (!record.target.existing_revision
+        && verified.manifestChecksum !== record.target.manifest_checksum)
     ) {
       throw new Error("PROJECTION_EXISTING_REVISION_MISMATCH");
     }
-    return { verified, reused };
   }
 
   async publishIdentityProjection(
-    publication: ProjectionPublication,
+    publication: RuntimeIdentityProjectionPublication,
   ): Promise<ProjectionPublishResult> {
     if (
       publication.manifest.instance_id !== this.#instanceId
@@ -819,6 +851,7 @@ export class FileProjectionExchange {
           );
           committed = { verified, reused: true };
         }
+        this.#assertVerifiedTarget(record, committed.verified);
         const pointer = pointerFor(
           committed.verified.manifest,
           committed.verified.manifestChecksum,

@@ -36,6 +36,9 @@ export type {
   ProjectionSourceReference,
   RuntimeIdentityContextInput,
   RuntimeIdentityContextValue,
+  RuntimeIdentityProjectionPublication,
+  RuntimeIdentitySourceDataClass,
+  RuntimeIdentitySourcePolicy,
   StableFitnessBackgroundKind,
   StableFitnessBackgroundValue,
 } from "./projection.js";

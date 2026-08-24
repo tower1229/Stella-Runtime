@@ -16,6 +16,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  buildRuntimeIdentityProjection,
   FileProjectionExchange,
   jcsCanonicalJson,
   ProjectionDeterminismLedger,
@@ -57,47 +58,29 @@ const createPersonalDataLayout = async (t) => {
 const runtimePublication = (
   sourceRevision = "authority-revision-1",
   sourceAsOf = "2026-08-24T00:00:00Z",
-) => runProjectionProducerConformance({
+) => buildRuntimeIdentityProjection({
   instanceId: "instance-synthetic",
-  producerId: "stella-runtime",
-  consumerId: "stella-fitness",
   canonicalSourceSnapshot: {
     revision: sourceRevision,
     sourceAsOf,
   },
   determinismLedger: new ProjectionDeterminismLedger(),
-  categories: ["identity", "background"],
   sourceReferences: [{
     id: "source-user",
-    path: "identity/user.md",
+    path: "personal-model/pm-user.md",
     revision: sourceRevision,
     checksum: `sha256:${"a".repeat(64)}`,
   }],
-  conflicts: [],
-  retractions: [],
-  capabilities: [
-    { id: "identity_context", state: "available" },
-    { id: "background_context", state: "available" },
-  ],
-  payloads: [{
-    path: "payloads/identity-context.json",
-    mediaType: "application/json",
-    value: {
-      schema_version: "stella.identity-context/v1",
-      instance_id: "instance-synthetic",
-      producer_id: "stella-runtime",
-      consumer_id: "stella-fitness",
-      source_revision: sourceRevision,
-      as_of: sourceAsOf,
-      categories: ["identity", "background"],
-      entries: [{
-        id: "language",
-        category: "identity",
-        content: "zh-CN",
-        source_reference_ids: ["source-user"],
-      }],
-    },
+  sourcePolicies: [{
+    sourceReferenceId: "source-user",
+    authorityRecordKind: "personal_model",
+    dataClasses: ["public_identity"],
+    allowedEntryIds: ["language"],
+    sensitivity: "projection_safe",
   }],
+  context: {
+    language: { content: "zh-CN", sourceReferenceIds: ["source-user"] },
+  },
   generatedAt: "2026-08-24T00:01:00Z",
 });
 
@@ -309,7 +292,10 @@ test("same deterministic revision is verified and reused without rewriting gener
     generatedAt: "2026-08-24T12:00:00Z",
   });
 
-  const retried = await exchange.publishIdentityProjection(later);
+  const retried = await exchange.publishIdentityProjection({
+    ...later,
+    sourcePolicies: first.sourcePolicies,
+  });
   assert.equal(retried.outcome, "reused");
   assert.deepEqual(await readFile(manifestPath), before);
   const consumed = await exchange.readFitnessProjection("identity_background");
@@ -383,7 +369,10 @@ test("Runtime publisher rejects non-allowlisted identity payload fields", async 
   });
 
   await assert.rejects(
-    () => exchange.publishIdentityProjection(unsafe),
+    () => exchange.publishIdentityProjection({
+      ...unsafe,
+      sourcePolicies: base.sourcePolicies,
+    }),
     /IDENTITY_CONTEXT_FIELD_NOT_ALLOWLISTED/,
   );
 
@@ -422,8 +411,15 @@ test("Runtime publisher rejects non-allowlisted identity payload fields", async 
     generatedAt: "2026-08-24T00:01:00Z",
   });
   await assert.rejects(
-    () => exchange.publishIdentityProjection(sensitive),
-    /IDENTITY_CONTEXT_SENSITIVE_CONTENT_FORBIDDEN/,
+    () => exchange.publishIdentityProjection({
+      ...sensitive,
+      sourcePolicies: [{
+        ...base.sourcePolicies[0],
+        allowedEntryIds: ["preferred-name"],
+        sensitivity: "private",
+      }],
+    }),
+    /IDENTITY_CONTEXT_SOURCE_POLICY_FORBIDDEN/,
   );
 });
 

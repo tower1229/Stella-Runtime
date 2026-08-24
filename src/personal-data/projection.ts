@@ -129,8 +129,25 @@ export interface BuildRuntimeIdentityProjectionInput {
   };
   readonly determinismLedger: ProjectionDeterminismLedger;
   readonly sourceReferences: readonly ProjectionSourceReference[];
+  readonly sourcePolicies: readonly RuntimeIdentitySourcePolicy[];
   readonly context: RuntimeIdentityContextInput;
   readonly generatedAt: string;
+}
+
+export type RuntimeIdentitySourceDataClass =
+  | "public_identity"
+  | "stable_fitness_background";
+
+export interface RuntimeIdentitySourcePolicy {
+  readonly sourceReferenceId: string;
+  readonly authorityRecordKind: "cognitive" | "personal_model";
+  readonly dataClasses: readonly RuntimeIdentitySourceDataClass[];
+  readonly allowedEntryIds: readonly string[];
+  readonly sensitivity: "projection_safe";
+}
+
+export interface RuntimeIdentityProjectionPublication extends ProjectionPublication {
+  readonly sourcePolicies: readonly RuntimeIdentitySourcePolicy[];
 }
 
 export interface ProjectionPublication {
@@ -458,12 +475,10 @@ export const runtimeIdentityContextCategoryForEntryId = (
   id: string,
 ): ProjectionCategory | null => RUNTIME_IDENTITY_ENTRY_CATEGORIES.get(id) ?? null;
 
-const RUNTIME_IDENTITY_SOURCE_PATH = /^(?:cognitive|identity|personal-model|semantic)\/[A-Za-z0-9._/-]+$/u;
-const SENSITIVE_IDENTITY_CONTENT = /(?:\b(?:agents|tools)\.md\b|\b(?:api[_ -]?key|password|secret|credential|access[_ -]?token)\b|\b(?:raw[_ -]?)?(?:session|transcript)\b|\b(?:sudo|administrator|permission|privilege)\b|(?:扩大|提升|授予|绕过).{0,8}(?:权限|访问))/iu;
-
 export const assertRuntimeIdentityContextPolicy = (
   value: unknown,
   sourceReferences: readonly ProjectionSourceReference[],
+  sourcePolicies: readonly RuntimeIdentitySourcePolicy[],
 ): void => {
   if (
     typeof value !== "object"
@@ -474,29 +489,51 @@ export const assertRuntimeIdentityContextPolicy = (
     throw new Error("IDENTITY_CONTEXT_PAYLOAD_INVALID");
   }
   const context = value as Readonly<Record<string, unknown>>;
+  if (!Array.isArray(sourcePolicies)) {
+    throw new Error("IDENTITY_CONTEXT_SOURCE_POLICY_INVALID");
+  }
   const referencesById = new Map(sourceReferences.map((reference) => [reference.id, reference]));
+  const policiesByReferenceId = new Map(
+    sourcePolicies.map((policy) => [policy.sourceReferenceId, policy]),
+  );
+  if (
+    referencesById.size !== sourceReferences.length
+    || policiesByReferenceId.size !== sourcePolicies.length
+    || sourcePolicies.length !== sourceReferences.length
+  ) {
+    throw new Error("IDENTITY_CONTEXT_SOURCE_POLICY_INVALID");
+  }
   const usedReferenceIds = new Set<string>();
   for (const entry of context.entries as readonly Readonly<Record<string, unknown>>[]) {
-    const category = runtimeIdentityContextCategoryForEntryId(String(entry.id));
+    const entryId = String(entry.id);
+    const category = runtimeIdentityContextCategoryForEntryId(entryId);
     if (category === null || entry.category !== category) {
       throw new Error("IDENTITY_CONTEXT_FIELD_NOT_ALLOWLISTED");
     }
-    const content = String(entry.content);
-    if (SENSITIVE_IDENTITY_CONTENT.test(content)) {
-      throw new Error("IDENTITY_CONTEXT_SENSITIVE_CONTENT_FORBIDDEN");
-    }
     for (const sourceReferenceId of entry.source_reference_ids as readonly string[]) {
       const reference = referencesById.get(sourceReferenceId);
-      if (reference === undefined) {
+      const policy = policiesByReferenceId.get(sourceReferenceId);
+      if (reference === undefined || policy === undefined) {
         throw new Error("IDENTITY_CONTEXT_SOURCE_REFERENCE_UNKNOWN");
       }
+      const requiredDataClass = category === "background"
+        ? "stable_fitness_background"
+        : "public_identity";
+      const requiresCognitiveSource = ["stella-identity", "stella-persona"]
+        .includes(entryId);
+      const sourcePathValid = policy.authorityRecordKind === "cognitive"
+        ? /^cognitive\/[a-z0-9][a-z0-9._-]{0,127}\/entity\.md$/u.test(reference.path)
+        : /^personal-model\/[a-z0-9][a-z0-9._-]{0,127}\.md$/u.test(reference.path);
       if (
-        !RUNTIME_IDENTITY_SOURCE_PATH.test(reference.path)
-        || /(?:^|\/)(?:AGENTS|TOOLS)\.md$/iu.test(reference.path)
-        || /(?:^|\/)(?:secrets?|sessions?|transcripts?|credentials?)(?:\/|$)/iu
-          .test(reference.path)
+        policy.sensitivity !== "projection_safe"
+        || !policy.dataClasses.includes(requiredDataClass)
+        || !policy.allowedEntryIds.includes(entryId)
+        || !sourcePathValid
+        || policy.authorityRecordKind !== (requiresCognitiveSource
+          ? "cognitive"
+          : "personal_model")
       ) {
-        throw new Error("IDENTITY_CONTEXT_SOURCE_PATH_FORBIDDEN");
+        throw new Error("IDENTITY_CONTEXT_SOURCE_POLICY_FORBIDDEN");
       }
       usedReferenceIds.add(sourceReferenceId);
     }
@@ -522,7 +559,7 @@ const assertContextValue = (
 
 export function buildRuntimeIdentityProjection(
   input: BuildRuntimeIdentityProjectionInput,
-): ProjectionPublication {
+): RuntimeIdentityProjectionPublication {
   const sourceReferenceIds = new Set(input.sourceReferences.map(({ id }) => id));
   const identityEntries: Array<Readonly<Record<string, unknown>>> = [];
   for (const [field, id] of IDENTITY_FIELDS) {
@@ -583,8 +620,12 @@ export function buildRuntimeIdentityProjection(
     categories,
     entries,
   } as const;
-  assertRuntimeIdentityContextPolicy(identityContext, input.sourceReferences);
-  return runProjectionProducerConformance({
+  assertRuntimeIdentityContextPolicy(
+    identityContext,
+    input.sourceReferences,
+    input.sourcePolicies,
+  );
+  const publication = runProjectionProducerConformance({
     instanceId: input.instanceId,
     producerId: "stella-runtime",
     consumerId: "stella-fitness",
@@ -602,6 +643,7 @@ export function buildRuntimeIdentityProjection(
     }],
     generatedAt: input.generatedAt,
   });
+  return { ...publication, sourcePolicies: input.sourcePolicies };
 }
 
 const decodeUtf8 = (bytes: Uint8Array, reason: string): string => {

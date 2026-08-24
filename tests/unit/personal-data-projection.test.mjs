@@ -22,14 +22,44 @@ test("Runtime identity builder exposes only allowlisted stable identity and fitn
     },
     generatedAt: "2026-08-24T00:01:00Z",
     determinismLedger: new ProjectionDeterminismLedger(),
-    sourceReferences: [{
-      id: "source-identity",
-      path: "identity/user.md",
-      revision: "source-synthetic-identity",
-      checksum: `sha256:${"a".repeat(64)}`,
-    }],
+    sourceReferences: [
+      {
+        id: "source-stella",
+        path: "cognitive/cog-stella/entity.md",
+        revision: "source-synthetic-identity",
+        checksum: `sha256:${"a".repeat(64)}`,
+      },
+      {
+        id: "source-identity",
+        path: "personal-model/pm-user.md",
+        revision: "source-synthetic-identity",
+        checksum: `sha256:${"b".repeat(64)}`,
+      },
+    ],
+    sourcePolicies: [
+      {
+        sourceReferenceId: "source-stella",
+        authorityRecordKind: "cognitive",
+        dataClasses: ["public_identity"],
+        allowedEntryIds: ["stella-identity"],
+        sensitivity: "projection_safe",
+      },
+      {
+        sourceReferenceId: "source-identity",
+        authorityRecordKind: "personal_model",
+        dataClasses: ["public_identity", "stable_fitness_background"],
+        allowedEntryIds: [
+          "communication-preferences",
+          "fitness-training-experience",
+          "language",
+          "preferred-name",
+          "timezone",
+        ],
+        sensitivity: "projection_safe",
+      },
+    ],
     context: {
-      stellaIdentity: { content: "Stella", sourceReferenceIds: ["source-identity"] },
+      stellaIdentity: { content: "Stella", sourceReferenceIds: ["source-stella"] },
       preferredName: { content: "朋友", sourceReferenceIds: ["source-identity"] },
       language: { content: "zh-CN", sourceReferenceIds: ["source-identity"] },
       timezone: { content: "Asia/Shanghai", sourceReferenceIds: ["source-identity"] },
@@ -66,9 +96,16 @@ test("Runtime identity builder exposes only allowlisted stable identity and fitn
     determinismLedger: new ProjectionDeterminismLedger(),
     sourceReferences: [{
       id: "source-identity",
-      path: "identity/user.md",
+      path: "personal-model/pm-user.md",
       revision: "source-synthetic-identity",
       checksum: `sha256:${"a".repeat(64)}`,
+    }],
+    sourcePolicies: [{
+      sourceReferenceId: "source-identity",
+      authorityRecordKind: "personal_model",
+      dataClasses: ["public_identity"],
+      allowedEntryIds: ["timezone"],
+      sensitivity: "projection_safe",
     }],
     context: {
       timezone: { content: "Shanghai", sourceReferenceIds: ["source-identity"] },
@@ -85,14 +122,21 @@ test("Runtime identity builder exposes only allowlisted stable identity and fitn
     determinismLedger: new ProjectionDeterminismLedger(),
     sourceReferences: [{
       id: "source-agents",
-      path: "identity/AGENTS.md",
+      path: "personal-model/AGENTS.md",
       revision: "source-synthetic-identity",
       checksum: `sha256:${"a".repeat(64)}`,
+    }],
+    sourcePolicies: [{
+      sourceReferenceId: "source-agents",
+      authorityRecordKind: "personal_model",
+      dataClasses: ["public_identity"],
+      allowedEntryIds: ["preferred-name"],
+      sensitivity: "projection_safe",
     }],
     context: {
       preferredName: { content: "Stella", sourceReferenceIds: ["source-agents"] },
     },
-  }), /IDENTITY_CONTEXT_SOURCE_PATH_FORBIDDEN/);
+  }), /IDENTITY_CONTEXT_SOURCE_POLICY_FORBIDDEN/);
 });
 
 const sha256 = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
