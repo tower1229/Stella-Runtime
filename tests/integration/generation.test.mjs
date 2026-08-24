@@ -135,16 +135,37 @@ test("build reads only the committed Authority subtree from one Personal Data Re
   );
   assert.equal((await verifyGeneration(built.generationDirectory)).valid, true);
 
+  const trackedFitnessRevision = await commitAuthorityChanges(
+    repository,
+    "track synthetic Fitness content",
+  );
+  await writeFile(join(fitnessDirectory, "current.json"), "{\"private\":\"dirty\"}\n");
+  assert.equal(
+    (await validateAuthoritySource({
+      authorityDirectory,
+      sourceRevision: trackedFitnessRevision,
+    })).recordCount,
+    3,
+  );
+
   await writeFile(join(authorityDirectory, "semantic", "untracked.md"), "dirty\n");
   await assert.rejects(
-    validateAuthoritySource({ authorityDirectory, sourceRevision }),
+    validateAuthoritySource({ authorityDirectory, sourceRevision: trackedFitnessRevision }),
     /AUTHORITY_WORKTREE_DIRTY/,
   );
   await rm(join(authorityDirectory, "semantic", "untracked.md"));
   await writeFile(join(authorityDirectory, "semantic", "claim.md"), "tracked dirty\n");
   await assert.rejects(
-    validateAuthoritySource({ authorityDirectory, sourceRevision }),
+    validateAuthoritySource({ authorityDirectory, sourceRevision: trackedFitnessRevision }),
     /AUTHORITY_WORKTREE_DIRTY/,
+  );
+
+  await assert.rejects(
+    validateAuthoritySource({
+      authorityDirectory: `${fitnessDirectory}/../authority`,
+      sourceRevision: trackedFitnessRevision,
+    }),
+    /AUTHORITY_PATH_TRAVERSAL/,
   );
 });
 

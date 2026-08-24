@@ -69,7 +69,6 @@ interface GitTreeEntry {
 interface VerifiedAuthorityCheckout {
   readonly authorityDirectory: string;
   readonly repositoryRoot: string;
-  readonly authorityRelativeRoot: string;
   readonly sourceRevision: string;
   readonly entries: ReadonlyMap<string, GitTreeEntry>;
 }
@@ -247,6 +246,9 @@ const requireStringArray = (value: unknown, reason: string): readonly string[] =
   }
   return value as readonly string[];
 };
+
+const authorityPathCollisionKey = (path: string): string =>
+  path.normalize("NFC").toLocaleLowerCase("en-US");
 
 const roleFor = (record: AuthorityRecord): RegistryRole => {
   if (record.layer === "evidence" || record.layer === "semantic") {
@@ -519,7 +521,7 @@ const assertSafeAuthorityWorkingTree = async (
     }
     const path = join(directory, entry.name);
     const logicalPath = relative(authorityDirectory, path).split(sep).join("/");
-    const collisionKey = entry.name.normalize("NFC").toLocaleLowerCase("en-US");
+    const collisionKey = authorityPathCollisionKey(entry.name);
     const collision = names.get(collisionKey);
     if (collision !== undefined) {
       throw new Error(`AUTHORITY_PATH_CASE_COLLISION:${collision}:${logicalPath}`);
@@ -540,6 +542,9 @@ const assertSafeAuthorityWorkingTree = async (
 const verifyAuthorityCheckout = async (
   options: AuthorityValidationOptions,
 ): Promise<VerifiedAuthorityCheckout> => {
+  if (options.authorityDirectory.split(/[\\/]+/).includes("..")) {
+    throw new Error("AUTHORITY_PATH_TRAVERSAL");
+  }
   const requestedAuthorityDirectory = resolve(options.authorityDirectory);
   if (!SOURCE_REVISION_PATTERN.test(options.sourceRevision)) {
     throw new Error("SOURCE_REVISION_AMBIGUOUS");
@@ -641,6 +646,7 @@ const verifyAuthorityCheckout = async (
     throw new Error("AUTHORITY_SOURCE_REVISION_UNREADABLE");
   }
   const entries = new Map<string, GitTreeEntry>();
+  const treePathsByCollisionKey = new Map<string, string>();
   for (const rawEntry of trackedFiles.split("\0")) {
     if (rawEntry.length === 0) {
       continue;
@@ -669,12 +675,12 @@ const verifyAuthorityCheckout = async (
     if (mode === "120000" || type === "commit") {
       throw new Error(`AUTHORITY_TREE_ENTRY_UNSUPPORTED:${path}`);
     }
-    const collision = [...entries.keys()].find((existing) =>
-      existing.normalize("NFC").toLocaleLowerCase("en-US") ===
-      path.normalize("NFC").toLocaleLowerCase("en-US"));
+    const collisionKey = authorityPathCollisionKey(path);
+    const collision = treePathsByCollisionKey.get(collisionKey);
     if (collision !== undefined) {
       throw new Error(`AUTHORITY_PATH_CASE_COLLISION:${collision}:${path}`);
     }
+    treePathsByCollisionKey.set(collisionKey, path);
     entries.set(path, { mode, type, objectId });
   }
   await assertSafeAuthorityWorkingTree(
@@ -685,7 +691,6 @@ const verifyAuthorityCheckout = async (
   return {
     authorityDirectory,
     repositoryRoot,
-    authorityRelativeRoot,
     sourceRevision: options.sourceRevision,
     entries,
   };
