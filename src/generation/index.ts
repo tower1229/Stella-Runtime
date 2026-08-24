@@ -608,25 +608,6 @@ const verifyAuthorityCheckout = async (
   if (headRevision.trim() !== options.sourceRevision) {
     throw new Error("SOURCE_REVISION_NOT_CHECKED_OUT");
   }
-  try {
-    ({ stdout: worktreeStatus } = await execFileAsync(
-      "git",
-      [
-        "-C",
-        repositoryRoot,
-        "status",
-        "--porcelain=v1",
-        "--untracked-files=all",
-        ...(authorityRelativeRoot === "" ? [] : ["--", authorityRelativeRoot]),
-      ],
-      gitReadOnlyOptions,
-    ));
-  } catch {
-    throw new Error("AUTHORITY_GIT_REPOSITORY_REQUIRED");
-  }
-  if (worktreeStatus.length > 0) {
-    throw new Error("AUTHORITY_WORKTREE_DIRTY");
-  }
   let trackedFiles: string;
   try {
     ({ stdout: trackedFiles } = await execFileAsync(
@@ -688,6 +669,25 @@ const verifyAuthorityCheckout = async (
     authorityDirectory,
     authorityRelativeRoot === "",
   );
+  try {
+    ({ stdout: worktreeStatus } = await execFileAsync(
+      "git",
+      [
+        "-C",
+        repositoryRoot,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        ...(authorityRelativeRoot === "" ? [] : ["--", authorityRelativeRoot]),
+      ],
+      gitReadOnlyOptions,
+    ));
+  } catch {
+    throw new Error("AUTHORITY_GIT_REPOSITORY_REQUIRED");
+  }
+  if (worktreeStatus.length > 0) {
+    throw new Error("AUTHORITY_WORKTREE_DIRTY");
+  }
   return {
     authorityDirectory,
     repositoryRoot,

@@ -14,6 +14,7 @@ import {
   verifyGeneration,
 } from "../../dist/generation/index.js";
 import {
+  commitAuthorityPathTraversalTree,
   commitAuthorityChanges,
   commitSyntheticPersonalDataRepository,
   commitSyntheticAuthority,
@@ -169,7 +170,7 @@ test("build reads only the committed Authority subtree from one Personal Data Re
   );
 });
 
-test("Authority subtree validation fails closed on symlinks and nested Git", async (t) => {
+test("Authority subtree validation fails closed on symlinks, submodules, nested Git, and traversal", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-generation-subtree-negative-"));
   t.after(() => rm(root, { recursive: true, force: true }));
 
@@ -236,6 +237,20 @@ test("Authority subtree validation fails closed on symlinks and nested Git", asy
       sourceRevision: ignoredRevision,
     }),
     /AUTHORITY_SYMLINK_UNSUPPORTED:ignored-link/,
+  );
+
+  const traversalRepository = join(root, "traversal-repository");
+  const traversalAuthority = join(traversalRepository, "stella", "authority");
+  await writeSyntheticAuthority(traversalAuthority);
+  await writeFile(join(traversalRepository, ".gitignore"), "stella/projections/\n");
+  await commitSyntheticPersonalDataRepository(traversalRepository);
+  const traversalRevision = await commitAuthorityPathTraversalTree(traversalRepository);
+  await assert.rejects(
+    validateAuthoritySource({
+      authorityDirectory: traversalAuthority,
+      sourceRevision: traversalRevision,
+    }),
+    /AUTHORITY_PATH_TRAVERSAL/,
   );
 });
 

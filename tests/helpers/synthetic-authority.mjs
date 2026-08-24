@@ -1,9 +1,31 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+
+const gitWithInput = (args, input, cwd) => new Promise((resolve, reject) => {
+  const child = spawn("git", args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
+  const stdout = [];
+  const stderr = [];
+  child.stdout.on("data", (chunk) => stdout.push(chunk));
+  child.stderr.on("data", (chunk) => stderr.push(chunk));
+  child.on("error", reject);
+  child.on("close", (code) => {
+    if (code !== 0) {
+      reject(new Error(Buffer.concat(stderr).toString("utf8")));
+      return;
+    }
+    resolve(Buffer.concat(stdout).toString("utf8").trim());
+  });
+  child.stdin.end(input);
+});
+
+const treeEntry = (mode, name, objectId) => Buffer.concat([
+  Buffer.from(`${mode} ${name}\0`),
+  Buffer.from(objectId, "hex"),
+]);
 
 const cognitiveSections = [
   ["User definition", "A synthetic method for evaluating claims."],
@@ -127,4 +149,42 @@ export async function commitSyntheticPersonalDataRepository(
   await execFileAsync("git", ["-C", repository, "commit", "-m", message]);
   const { stdout } = await execFileAsync("git", ["-C", repository, "rev-parse", "HEAD"]);
   return stdout.trim();
+}
+
+export async function commitAuthorityPathTraversalTree(repository) {
+  const git = async (...args) =>
+    (await execFileAsync("git", ["-C", repository, ...args])).stdout.trim();
+  const head = await git("rev-parse", "HEAD");
+  const authorityTreeId = await git("rev-parse", `${head}:stella/authority`);
+  const bindingBlobId = await git(
+    "rev-parse",
+    `${head}:stella/authority/cognitive-binding.json`,
+  );
+  const { stdout: authorityTree } = await execFileAsync(
+    "git",
+    ["-C", repository, "cat-file", "tree", authorityTreeId],
+    { encoding: "buffer" },
+  );
+  const malformedAuthorityTreeId = await gitWithInput(
+    ["hash-object", "-t", "tree", "--literally", "-w", "--stdin"],
+    Buffer.concat([treeEntry("100644", "..", bindingBlobId), authorityTree]),
+    repository,
+  );
+  const stellaTreeId = await gitWithInput(
+    ["hash-object", "-t", "tree", "--literally", "-w", "--stdin"],
+    treeEntry("40000", "authority", malformedAuthorityTreeId),
+    repository,
+  );
+  const gitignoreBlobId = await git("rev-parse", `${head}:.gitignore`);
+  const rootTreeId = await gitWithInput(
+    ["hash-object", "-t", "tree", "--literally", "-w", "--stdin"],
+    Buffer.concat([
+      treeEntry("100644", ".gitignore", gitignoreBlobId),
+      treeEntry("40000", "stella", stellaTreeId),
+    ]),
+    repository,
+  );
+  const revision = await git("commit-tree", rootTreeId, "-p", head, "-m", "malformed traversal tree");
+  await execFileAsync("git", ["-C", repository, "update-ref", "HEAD", revision]);
+  return revision;
 }
