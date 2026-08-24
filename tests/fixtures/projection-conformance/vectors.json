@@ -65,7 +65,11 @@
     },
     {
       "id": "stale_tuple_mismatch",
-      "input": { "pointer_source_revision": "source-synthetic-mismatch" },
+      "input": {
+        "status": "stale",
+        "pointer_source_revision": "source-synthetic-mismatch",
+        "reason_codes": ["REFRESH_FAILED"]
+      },
       "expected_reason": "PROJECTION_VERIFICATION_TUPLE_MISMATCH"
     }
   ]

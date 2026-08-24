@@ -201,7 +201,11 @@ test("consumer conformance double-reads the pointer and enforces active/stale po
 
   const staleMismatch = vectors.cases.find(({ id }) => id === "stale_tuple_mismatch");
   const mismatchedPointer = pointerBytes(publication, {
+    status: staleMismatch.input.status,
+    projection_revision: undefined,
+    last_verified_revision: publication.projectionRevision,
     source_revision: staleMismatch.input.pointer_source_revision,
+    reason_codes: staleMismatch.input.reason_codes,
   });
   await assert.rejects(runProjectionConsumerConformance({
     instanceId: "instance-synthetic",
