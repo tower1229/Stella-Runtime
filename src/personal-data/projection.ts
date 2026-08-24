@@ -96,6 +96,43 @@ export interface BuildProjectionPublicationInput {
   readonly generatedAt: string;
 }
 
+export interface RuntimeIdentityContextValue {
+  readonly content: string;
+  readonly sourceReferenceIds: readonly string[];
+}
+
+export type StableFitnessBackgroundKind =
+  | "equipment_access"
+  | "injury_constraints"
+  | "mobility_constraints"
+  | "training_experience";
+
+export interface StableFitnessBackgroundValue extends RuntimeIdentityContextValue {
+  readonly kind: StableFitnessBackgroundKind;
+}
+
+export interface RuntimeIdentityContextInput {
+  readonly stellaIdentity?: RuntimeIdentityContextValue;
+  readonly stellaPersona?: RuntimeIdentityContextValue;
+  readonly preferredName?: RuntimeIdentityContextValue;
+  readonly language?: RuntimeIdentityContextValue;
+  readonly timezone?: RuntimeIdentityContextValue;
+  readonly communicationPreferences?: RuntimeIdentityContextValue;
+  readonly stableFitnessBackground?: readonly StableFitnessBackgroundValue[];
+}
+
+export interface BuildRuntimeIdentityProjectionInput {
+  readonly instanceId: string;
+  readonly canonicalSourceSnapshot: {
+    readonly revision: string;
+    readonly sourceAsOf: string;
+  };
+  readonly determinismLedger: ProjectionDeterminismLedger;
+  readonly sourceReferences: readonly ProjectionSourceReference[];
+  readonly context: RuntimeIdentityContextInput;
+  readonly generatedAt: string;
+}
+
 export interface ProjectionPublication {
   readonly projectionRevision: string;
   readonly manifest: ProjectionManifest;
@@ -394,6 +431,118 @@ export function runProjectionProducerConformance(
     manifestChecksum: checksum(manifestBytes),
     payloads,
   };
+}
+
+const IDENTITY_FIELDS = [
+  ["communicationPreferences", "communication-preferences"],
+  ["language", "language"],
+  ["preferredName", "preferred-name"],
+  ["stellaIdentity", "stella-identity"],
+  ["stellaPersona", "stella-persona"],
+  ["timezone", "timezone"],
+] as const;
+
+const FITNESS_BACKGROUND_IDS = {
+  equipment_access: "fitness-equipment-access",
+  injury_constraints: "fitness-injury-constraints",
+  mobility_constraints: "fitness-mobility-constraints",
+  training_experience: "fitness-training-experience",
+} as const satisfies Readonly<Record<StableFitnessBackgroundKind, string>>;
+
+const assertContextValue = (
+  value: RuntimeIdentityContextValue,
+  sourceReferenceIds: ReadonlySet<string>,
+): void => {
+  if (value.content.length === 0 || value.sourceReferenceIds.length === 0) {
+    throw new Error("IDENTITY_CONTEXT_VALUE_INVALID");
+  }
+  for (const sourceReferenceId of value.sourceReferenceIds) {
+    if (!sourceReferenceIds.has(sourceReferenceId)) {
+      throw new Error("IDENTITY_CONTEXT_SOURCE_REFERENCE_UNKNOWN");
+    }
+  }
+};
+
+export function buildRuntimeIdentityProjection(
+  input: BuildRuntimeIdentityProjectionInput,
+): ProjectionPublication {
+  const sourceReferenceIds = new Set(input.sourceReferences.map(({ id }) => id));
+  const identityEntries: Array<Readonly<Record<string, unknown>>> = [];
+  for (const [field, id] of IDENTITY_FIELDS) {
+    const value = input.context[field];
+    if (value === undefined) continue;
+    assertContextValue(value, sourceReferenceIds);
+    if (field === "language") {
+      try {
+        Intl.getCanonicalLocales(value.content);
+      } catch {
+        throw new Error("IDENTITY_CONTEXT_LANGUAGE_INVALID");
+      }
+    }
+    if (field === "timezone") {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: value.content }).format(0);
+      } catch {
+        throw new Error("IDENTITY_CONTEXT_TIMEZONE_INVALID");
+      }
+    }
+    identityEntries.push({
+      id,
+      category: "identity",
+      content: value.content,
+      source_reference_ids: value.sourceReferenceIds,
+    });
+  }
+  const backgroundEntries = (input.context.stableFitnessBackground ?? []).map((value) => {
+    assertContextValue(value, sourceReferenceIds);
+    const id = FITNESS_BACKGROUND_IDS[value.kind];
+    if (id === undefined) throw new Error("IDENTITY_CONTEXT_BACKGROUND_NOT_ALLOWLISTED");
+    return {
+      id,
+      category: "background" as const,
+      content: value.content,
+      source_reference_ids: value.sourceReferenceIds,
+    };
+  });
+  const entries = [...identityEntries, ...backgroundEntries];
+  if (entries.length === 0) throw new Error("IDENTITY_CONTEXT_EMPTY");
+  const categories: ProjectionCategory[] = [];
+  if (backgroundEntries.length > 0) categories.push("background");
+  if (identityEntries.length > 0) categories.push("identity");
+  const capabilities: ProjectionCapability[] = [];
+  if (backgroundEntries.length > 0) {
+    capabilities.push({ id: "background_context", state: "available" });
+  }
+  if (identityEntries.length > 0) {
+    capabilities.push({ id: "identity_context", state: "available" });
+  }
+  return runProjectionProducerConformance({
+    instanceId: input.instanceId,
+    producerId: "stella-runtime",
+    consumerId: "stella-fitness",
+    canonicalSourceSnapshot: input.canonicalSourceSnapshot,
+    determinismLedger: input.determinismLedger,
+    categories,
+    sourceReferences: input.sourceReferences,
+    conflicts: [],
+    retractions: [],
+    capabilities,
+    payloads: [{
+      path: "payloads/identity-context.json",
+      mediaType: "application/json",
+      value: {
+        schema_version: "stella.identity-context/v1",
+        instance_id: input.instanceId,
+        producer_id: "stella-runtime",
+        consumer_id: "stella-fitness",
+        source_revision: input.canonicalSourceSnapshot.revision,
+        as_of: input.canonicalSourceSnapshot.sourceAsOf,
+        categories,
+        entries,
+      },
+    }],
+    generatedAt: input.generatedAt,
+  });
 }
 
 const decodeUtf8 = (bytes: Uint8Array, reason: string): string => {

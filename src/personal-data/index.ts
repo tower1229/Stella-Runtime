@@ -11,11 +11,13 @@ export {
 export type { ProjectionPayloadMediaType } from "./canonical.js";
 export {
   ProjectionDeterminismLedger,
+  buildRuntimeIdentityProjection,
   runProjectionConsumerConformance,
   runProjectionProducerConformance,
 } from "./projection.js";
 export type {
   BuildProjectionPublicationInput,
+  BuildRuntimeIdentityProjectionInput,
   ConsumedProjection,
   ProjectionCapability,
   ProjectionCapabilityId,
@@ -32,7 +34,23 @@ export type {
   ProjectionPublication,
   ProjectionRetraction,
   ProjectionSourceReference,
+  RuntimeIdentityContextInput,
+  RuntimeIdentityContextValue,
+  StableFitnessBackgroundKind,
+  StableFitnessBackgroundValue,
 } from "./projection.js";
+export { FileProjectionExchange } from "./exchange.js";
+export type {
+  CollectOrphanRevisionsOptions,
+  FileProjectionExchangeOptions,
+  ProjectionLockOwner,
+  ProjectionLockPhase,
+  ProjectionOwnerStatus,
+  ProjectionCollectionResult,
+  ProjectionPublishFailpoint,
+  ProjectionPublishResult,
+  ProjectionRecoveryResult,
+} from "./exchange.js";
 
 const PLUGIN_ID = "cognitive-runtime";
 

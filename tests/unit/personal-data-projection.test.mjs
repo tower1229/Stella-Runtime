@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  buildRuntimeIdentityProjection,
   canonicalizeProjectionPayload,
   jcsCanonicalJson,
   ProjectionDeterminismLedger,
@@ -11,6 +12,69 @@ import {
   runProjectionProducerConformance,
   validateContract,
 } from "../../dist/index.js";
+
+test("Runtime identity builder exposes only allowlisted stable identity and fitness fields", () => {
+  const publication = buildRuntimeIdentityProjection({
+    instanceId: "instance-synthetic",
+    canonicalSourceSnapshot: {
+      revision: "source-synthetic-identity",
+      sourceAsOf: "2026-08-24T00:00:00Z",
+    },
+    generatedAt: "2026-08-24T00:01:00Z",
+    determinismLedger: new ProjectionDeterminismLedger(),
+    sourceReferences: [{
+      id: "source-identity",
+      path: "identity/user.md",
+      revision: "source-synthetic-identity",
+      checksum: `sha256:${"a".repeat(64)}`,
+    }],
+    context: {
+      stellaIdentity: { content: "Stella", sourceReferenceIds: ["source-identity"] },
+      preferredName: { content: "朋友", sourceReferenceIds: ["source-identity"] },
+      language: { content: "zh-CN", sourceReferenceIds: ["source-identity"] },
+      timezone: { content: "Asia/Shanghai", sourceReferenceIds: ["source-identity"] },
+      communicationPreferences: {
+        content: "直接、务实、先给结论",
+        sourceReferenceIds: ["source-identity"],
+      },
+      stableFitnessBackground: [{
+        kind: "training_experience",
+        content: "有规律力量训练经验",
+        sourceReferenceIds: ["source-identity"],
+      }],
+    },
+  });
+  const payload = JSON.parse(publication.payloads[0].bytes.toString("utf8"));
+  assert.deepEqual(payload.entries.map(({ id }) => id), [
+    "fitness-training-experience",
+    "communication-preferences",
+    "language",
+    "preferred-name",
+    "stella-identity",
+    "timezone",
+  ]);
+  assert.equal(JSON.stringify(payload).includes("AGENTS"), false);
+  assert.equal(JSON.stringify(payload).includes("secret"), false);
+
+  assert.throws(() => buildRuntimeIdentityProjection({
+    instanceId: "instance-synthetic",
+    canonicalSourceSnapshot: {
+      revision: "source-synthetic-identity",
+      sourceAsOf: "2026-08-24T00:00:00Z",
+    },
+    generatedAt: "2026-08-24T00:01:00Z",
+    determinismLedger: new ProjectionDeterminismLedger(),
+    sourceReferences: [{
+      id: "source-identity",
+      path: "identity/user.md",
+      revision: "source-synthetic-identity",
+      checksum: `sha256:${"a".repeat(64)}`,
+    }],
+    context: {
+      timezone: { content: "Shanghai", sourceReferenceIds: ["source-identity"] },
+    },
+  }), /IDENTITY_CONTEXT_TIMEZONE_INVALID/);
+});
 
 const sha256 = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
