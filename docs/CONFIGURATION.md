@@ -36,6 +36,16 @@ operating mode, Runtime and Generation storage locations, Host Agent and eligibl
 scope, Authority Owner tuple, limits, and adapter locators. It must not contain
 an inline Registry, Context, or cognitive Binding.
 
+The public `stella.personal-data-locator/v1` resolves one Personal Data
+Repository, its `<repository>/stella/` root, and the Authority logical root
+`stella/authority`. Read-only Authority validation and Generation builds accept
+that subtree as well as the legacy dedicated Authority Repository layout. Git
+tree and blob reads are scoped to the Authority prefix and strip it before v2
+entrypoint parsing. Dirty or untracked `stella/fitness/` content and ignored
+`stella/projections/` therefore do not block a read-only build. Runtime does not
+scan or interpret Fitness canonical content; Fitness data may cross into Runtime
+only through the versioned projection consumer seam.
+
 At the start of each eligible Run, the Binding Compiler reads
 `<runtime_storage>/active-generation.json`, the referenced receipt under
 `<runtime_storage>/activation-receipts/`, the immutable Generation under
@@ -120,6 +130,15 @@ Use `createOpenClawTelegramConfirmationPresentation` with the Host runtime and
 the exact instance, account, and conversation identities. It sends the complete
 Review Artifact through the Telegram outbound adapter and binds the Host send
 receipt before any callback can decide the Candidate.
+
+Authority publication remains stricter than read-only validation. The current
+publishing port requires its controlled checkout to satisfy its declared clean
+checkout policy and receives only exact Authority Change Set operations; it must
+not automatically stage or commit `stella/fitness/` or projection data. Until a
+separate worktree/index isolates Authority writes inside a Personal Data
+Repository, a port that requires the whole repository to be clean must report
+that limitation explicitly. This is not complete everyday single-repository
+write support.
 
 ## CLI reference
 

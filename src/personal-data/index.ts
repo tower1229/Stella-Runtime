@@ -47,6 +47,7 @@ export interface PersonalDataLayout {
   readonly repository: string;
   readonly stellaRoot: string;
   readonly authority: string;
+  readonly authorityRelativeRoot: "stella/authority";
   readonly fitness: string;
   readonly projections: {
     readonly fitness: string;
@@ -138,6 +139,7 @@ export async function resolvePersonalDataLocator(
     repository,
     stellaRoot,
     authority,
+    authorityRelativeRoot: "stella/authority",
     fitness,
     projections,
   };

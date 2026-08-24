@@ -115,3 +115,16 @@ export async function commitAuthorityChanges(root, message = "update synthetic a
   const { stdout } = await execFileAsync("git", ["-C", root, "rev-parse", "HEAD"]);
   return stdout.trim();
 }
+
+export async function commitSyntheticPersonalDataRepository(
+  repository,
+  message = "synthetic personal data",
+) {
+  await execFileAsync("git", ["init", "--initial-branch=main", repository]);
+  await execFileAsync("git", ["-C", repository, "config", "user.name", "Synthetic Authority"]);
+  await execFileAsync("git", ["-C", repository, "config", "user.email", "synthetic@example.invalid"]);
+  await execFileAsync("git", ["-C", repository, "add", ".gitignore", "stella/authority"]);
+  await execFileAsync("git", ["-C", repository, "commit", "-m", message]);
+  const { stdout } = await execFileAsync("git", ["-C", repository, "rev-parse", "HEAD"]);
+  return stdout.trim();
+}

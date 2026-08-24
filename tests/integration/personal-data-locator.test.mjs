@@ -58,6 +58,7 @@ test("locator resolves only the fixed Personal Data layout from public api.confi
     repository,
     stellaRoot: join(repository, "stella"),
     authority: join(repository, "stella", "authority"),
+    authorityRelativeRoot: "stella/authority",
     fitness: join(repository, "stella", "fitness"),
     projections: {
       fitness: join(repository, "stella", "projections", "fitness"),

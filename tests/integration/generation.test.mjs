@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, copyFile, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +15,7 @@ import {
 } from "../../dist/generation/index.js";
 import {
   commitAuthorityChanges,
+  commitSyntheticPersonalDataRepository,
   commitSyntheticAuthority,
   writeSyntheticAuthority,
 } from "../helpers/synthetic-authority.mjs";
@@ -72,6 +73,174 @@ test("validate reads one exact clean committed Authority revision without mutati
   await assert.rejects(
     validateAuthoritySource({ authorityDirectory: root, sourceRevision }),
     /AUTHORITY_GIT_REPOSITORY_REQUIRED/,
+  );
+});
+
+test("legacy standalone Authority remains valid when its path happens to end in stella/authority", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-generation-legacy-layout-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const authorityDirectory = join(root, "stella", "authority");
+  await writeSyntheticAuthority(authorityDirectory);
+  const sourceRevision = await commitSyntheticAuthority(authorityDirectory);
+
+  assert.equal(
+    (await validateAuthoritySource({ authorityDirectory, sourceRevision })).recordCount,
+    3,
+  );
+});
+
+test("build reads only the committed Authority subtree from one Personal Data Repository", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-generation-personal-data-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repository = join(root, "personal-data");
+  const authorityDirectory = join(repository, "stella", "authority");
+  const fitnessDirectory = join(repository, "stella", "fitness");
+  const projectionsDirectory = join(repository, "stella", "projections");
+  const stateDirectory = join(root, "state");
+  await writeSyntheticAuthority(authorityDirectory);
+  await mkdir(fitnessDirectory, { recursive: true });
+  await mkdir(projectionsDirectory, { recursive: true });
+  await writeFile(join(repository, ".gitignore"), "stella/projections/\n");
+  const sourceRevision = await commitSyntheticPersonalDataRepository(repository);
+
+  await writeFile(join(fitnessDirectory, "current.json"), "{\"private\":true}\n");
+  await mkdir(join(fitnessDirectory, "semantic"), { recursive: true });
+  await writeFile(join(fitnessDirectory, "semantic", "claim.md"), "not Authority\n");
+  await writeFile(join(projectionsDirectory, "ignored.json"), "{\"derived\":true}\n");
+
+  const validated = await validateAuthoritySource({ authorityDirectory, sourceRevision });
+  const built = await buildGeneration({
+    authorityDirectory,
+    stateDirectory,
+    sourceRevision,
+    packageVersion: "0.2.1-subtree",
+  });
+
+  assert.deepEqual(validated, {
+    sourceRevision,
+    recordCount: 3,
+    activeGoverningSystem: null,
+  });
+  const normalized = JSON.parse(await readFile(
+    join(built.generationDirectory, "normalized-records.json"),
+    "utf8",
+  ));
+  assert.deepEqual(
+    normalized.payload.records.map(({ id }) => id),
+    ["cog-synthetic-method", "sem-synthetic-claim", "src-synthetic-note"],
+  );
+  assert.equal(
+    normalized.payload.records.find(({ id }) => id === "sem-synthetic-claim").checksum,
+    "sha256:e53836d3c19dd902ffe5afeab2eccefc4c555e7adf4347993299fe02c86db6c3",
+  );
+  assert.equal((await verifyGeneration(built.generationDirectory)).valid, true);
+
+  await writeFile(join(authorityDirectory, "semantic", "untracked.md"), "dirty\n");
+  await assert.rejects(
+    validateAuthoritySource({ authorityDirectory, sourceRevision }),
+    /AUTHORITY_WORKTREE_DIRTY/,
+  );
+  await rm(join(authorityDirectory, "semantic", "untracked.md"));
+  await writeFile(join(authorityDirectory, "semantic", "claim.md"), "tracked dirty\n");
+  await assert.rejects(
+    validateAuthoritySource({ authorityDirectory, sourceRevision }),
+    /AUTHORITY_WORKTREE_DIRTY/,
+  );
+});
+
+test("Authority subtree validation fails closed on symlinks and nested Git", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-generation-subtree-negative-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const symlinkRepository = join(root, "symlink-repository");
+  const symlinkAuthority = join(symlinkRepository, "stella", "authority");
+  await writeSyntheticAuthority(symlinkAuthority);
+  await writeFile(join(symlinkRepository, ".gitignore"), "stella/projections/\n");
+  await symlink("cognitive-binding.json", join(symlinkAuthority, "linked-binding.json"));
+  const symlinkRevision = await commitSyntheticPersonalDataRepository(symlinkRepository);
+  await assert.rejects(
+    validateAuthoritySource({
+      authorityDirectory: symlinkAuthority,
+      sourceRevision: symlinkRevision,
+    }),
+    /AUTHORITY_TREE_ENTRY_UNSUPPORTED:linked-binding\.json/,
+  );
+
+  const nestedRepository = join(root, "nested-repository");
+  const nestedAuthority = join(nestedRepository, "stella", "authority");
+  await writeSyntheticAuthority(nestedAuthority);
+  await writeFile(join(nestedRepository, ".gitignore"), "stella/projections/\n");
+  const parentRevision = await commitSyntheticPersonalDataRepository(nestedRepository);
+  await commitSyntheticAuthority(nestedAuthority, "forbidden nested authority repository");
+  await assert.rejects(
+    validateAuthoritySource({
+      authorityDirectory: nestedAuthority,
+      sourceRevision: parentRevision,
+    }),
+    /AUTHORITY_NESTED_GIT_FORBIDDEN/,
+  );
+
+  const submoduleRepository = join(root, "submodule-repository");
+  const submoduleAuthority = join(submoduleRepository, "stella", "authority");
+  await writeSyntheticAuthority(submoduleAuthority);
+  await writeFile(join(submoduleRepository, ".gitignore"), "stella/projections/\n");
+  await commitSyntheticPersonalDataRepository(submoduleRepository);
+  const nestedModule = join(submoduleAuthority, "nested-module");
+  await writeSyntheticAuthority(nestedModule);
+  await commitSyntheticAuthority(nestedModule, "synthetic nested module");
+  const submoduleRevision = await commitAuthorityChanges(
+    submoduleRepository,
+    "forbidden Authority submodule",
+  );
+  await assert.rejects(
+    validateAuthoritySource({
+      authorityDirectory: submoduleAuthority,
+      sourceRevision: submoduleRevision,
+    }),
+    /AUTHORITY_TREE_ENTRY_UNSUPPORTED:nested-module/,
+  );
+
+  const ignoredRepository = join(root, "ignored-symlink-repository");
+  const ignoredAuthority = join(ignoredRepository, "stella", "authority");
+  await writeSyntheticAuthority(ignoredAuthority);
+  await writeFile(
+    join(ignoredRepository, ".gitignore"),
+    "stella/projections/\nstella/authority/ignored-link\n",
+  );
+  const ignoredRevision = await commitSyntheticPersonalDataRepository(ignoredRepository);
+  await symlink("cognitive-binding.json", join(ignoredAuthority, "ignored-link"));
+  await assert.rejects(
+    validateAuthoritySource({
+      authorityDirectory: ignoredAuthority,
+      sourceRevision: ignoredRevision,
+    }),
+    /AUTHORITY_SYMLINK_UNSUPPORTED:ignored-link/,
+  );
+});
+
+test("Authority subtree validation rejects case-colliding committed paths", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-generation-case-collision-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repository = join(root, "personal-data");
+  const authorityDirectory = join(repository, "stella", "authority");
+  await writeSyntheticAuthority(authorityDirectory);
+  await writeFile(join(repository, ".gitignore"), "stella/projections/\n");
+  await commitSyntheticPersonalDataRepository(repository);
+
+  const upperDirectory = join(authorityDirectory, "Semantic");
+  const caseSensitive = await access(upperDirectory)
+    .then(() => false, () => true);
+  if (!caseSensitive) return;
+  await mkdir(upperDirectory);
+  await copyFile(
+    join(authorityDirectory, "semantic", "claim.md"),
+    join(upperDirectory, "claim.md"),
+  );
+  const sourceRevision = await commitAuthorityChanges(repository, "case collision");
+
+  await assert.rejects(
+    validateAuthoritySource({ authorityDirectory, sourceRevision }),
+    /AUTHORITY_PATH_CASE_COLLISION:Semantic\/claim\.md:semantic\/claim\.md|AUTHORITY_PATH_CASE_COLLISION:semantic\/claim\.md:Semantic\/claim\.md/,
   );
 });
 

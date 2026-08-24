@@ -7,13 +7,24 @@ state. Crossing these boundaries changes authority semantics and is unsupported.
 | --- | --- | --- |
 | Runtime repository | Generic source, contracts, adapters, CLI, Skill, synthetic fixtures, tests, compatibility evidence, and release automation | Private identity, knowledge, conversations, credentials, live databases, real experience records |
 | npm package | Compiled Runtime, generated declarations, v2 schemas, compatibility manifest, selected documentation/evidence, Skill, and public Runner | Repository source/tests/scripts, synthetic fixture packs, private identity, knowledge, credentials, or live state |
-| Authority Repository | Private knowledge, identity, configuration, package pin, migration intent | Copied Runtime source or live Runtime databases |
+| Authority Repository logical root `stella/authority/` | Private Runtime knowledge, identity, configuration, package pin, migration intent | Fitness canonical content, copied Runtime source, or live Runtime databases |
+| Personal Data Repository `stella/fitness/` | Fitness-owned canonical working data | Runtime Authority or Runtime-owned projections |
+| Personal Data Repository `stella/projections/` | Versioned producer-owned exchange projections | A second canonical source for Runtime or Fitness |
 | Git-external Runtime State | Current State ledger/head, unfinished correction and outbox state, protected Candidate admission/Receipt records, rebuildable projections, minimized overlays | Source-code authority or credentials |
 
-The Authority Repository is the durable knowledge authority. A generation,
+The Authority subtree is the durable Runtime knowledge authority. Read-only
+validation scopes Git status/tree/blob operations to `stella/authority/` and
+never reads or interprets `stella/fitness/`; Runtime consumes Fitness facts only
+through the formal projection seam. A generation,
 registry, index, cache, or embedding is a disposable checksummed projection.
 Model output never promotes itself into Evidence, Semantic, Cognitive, or Current
 State authority.
+
+Authority publication receives only explicit Authority Change Set operations
+and must never automatically stage or commit Fitness canonical data. A current
+adapter may still require the entire controlled checkout to be clean. Until
+Authority writes use an isolated worktree/index, that is a documented
+publication limitation rather than complete single-repository write support.
 
 Discovery Authorization, Candidate revisions, Confirmation Requests, Telegram
 message bindings, decisions, and Approval Receipt consumption remain in the

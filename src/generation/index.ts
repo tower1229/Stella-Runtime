@@ -68,6 +68,8 @@ interface GitTreeEntry {
 
 interface VerifiedAuthorityCheckout {
   readonly authorityDirectory: string;
+  readonly repositoryRoot: string;
+  readonly authorityRelativeRoot: string;
   readonly sourceRevision: string;
   readonly entries: ReadonlyMap<string, GitTreeEntry>;
 }
@@ -495,7 +497,7 @@ const readAuthorityBlob = async (
   try {
     const { stdout } = await execFileAsync(
       "git",
-      ["-C", checkout.authorityDirectory, "cat-file", "blob", entry.objectId],
+      ["-C", checkout.repositoryRoot, "cat-file", "blob", entry.objectId],
       { ...gitReadOnlyOptions, maxBuffer: 64 * 1024 * 1024 },
     );
     return stdout;
@@ -504,40 +506,118 @@ const readAuthorityBlob = async (
   }
 };
 
+const assertSafeAuthorityWorkingTree = async (
+  directory: string,
+  authorityDirectory: string,
+  allowRootGitMetadata: boolean,
+): Promise<void> => {
+  const directoryEntries = await readdir(directory, { withFileTypes: true });
+  const names = new Map<string, string>();
+  for (const entry of directoryEntries) {
+    if (allowRootGitMetadata && directory === authorityDirectory && entry.name === ".git") {
+      continue;
+    }
+    const path = join(directory, entry.name);
+    const logicalPath = relative(authorityDirectory, path).split(sep).join("/");
+    const collisionKey = entry.name.normalize("NFC").toLocaleLowerCase("en-US");
+    const collision = names.get(collisionKey);
+    if (collision !== undefined) {
+      throw new Error(`AUTHORITY_PATH_CASE_COLLISION:${collision}:${logicalPath}`);
+    }
+    names.set(collisionKey, logicalPath);
+    if (entry.isSymbolicLink()) {
+      throw new Error(`AUTHORITY_SYMLINK_UNSUPPORTED:${logicalPath}`);
+    }
+    if (entry.name === ".git") {
+      throw new Error(`AUTHORITY_NESTED_GIT_FORBIDDEN:${logicalPath}`);
+    }
+    if (entry.isDirectory()) {
+      await assertSafeAuthorityWorkingTree(path, authorityDirectory, false);
+    }
+  }
+};
+
 const verifyAuthorityCheckout = async (
   options: AuthorityValidationOptions,
 ): Promise<VerifiedAuthorityCheckout> => {
-  const authorityDirectory = resolve(options.authorityDirectory);
+  const requestedAuthorityDirectory = resolve(options.authorityDirectory);
   if (!SOURCE_REVISION_PATTERN.test(options.sourceRevision)) {
     throw new Error("SOURCE_REVISION_AMBIGUOUS");
   }
-  let repositoryRoot: string;
+  if ((await lstat(requestedAuthorityDirectory)).isSymbolicLink()) {
+    throw new Error("AUTHORITY_SYMLINK_UNSUPPORTED");
+  }
+  const authorityDirectory = await realpath(requestedAuthorityDirectory);
+  let repositoryRoot: string | null = null;
   let headRevision: string;
   let worktreeStatus: string;
+  const stellaDirectory = dirname(authorityDirectory);
+  const personalDataRepository = dirname(stellaDirectory);
+  if (basename(authorityDirectory) === "authority" && basename(stellaDirectory) === "stella") {
+    try {
+      const { stdout: outerRepositoryRoot } = await execFileAsync(
+        "git",
+        ["-C", personalDataRepository, "rev-parse", "--show-toplevel"],
+        gitReadOnlyOptions,
+      );
+      if (await realpath(outerRepositoryRoot.trim()) === personalDataRepository) {
+        repositoryRoot = outerRepositoryRoot;
+      }
+    } catch {
+      repositoryRoot = null;
+    }
+  }
   try {
-    ({ stdout: repositoryRoot } = await execFileAsync(
-      "git",
-      ["-C", authorityDirectory, "rev-parse", "--show-toplevel"],
-      gitReadOnlyOptions,
-    ));
+    if (repositoryRoot !== null) {
+      if (await lstat(join(authorityDirectory, ".git")).catch(() => null) !== null) {
+        throw new Error("AUTHORITY_NESTED_GIT_FORBIDDEN");
+      }
+    } else {
+      ({ stdout: repositoryRoot } = await execFileAsync(
+        "git",
+        ["-C", authorityDirectory, "rev-parse", "--show-toplevel"],
+        gitReadOnlyOptions,
+      ));
+    }
+    if (repositoryRoot === null) {
+      throw new Error("AUTHORITY_GIT_REPOSITORY_REQUIRED");
+    }
     ({ stdout: headRevision } = await execFileAsync(
       "git",
-      ["-C", authorityDirectory, "rev-parse", "HEAD"],
+      ["-C", repositoryRoot.trim(), "rev-parse", "HEAD"],
       gitReadOnlyOptions,
     ));
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message === "AUTHORITY_NESTED_GIT_FORBIDDEN") {
+      throw error;
+    }
+    throw new Error("AUTHORITY_GIT_REPOSITORY_REQUIRED");
+  }
+  repositoryRoot = await realpath(repositoryRoot.trim());
+  const authorityRelativeRoot = relative(repositoryRoot, authorityDirectory)
+    .split(sep)
+    .join("/");
+  if (authorityRelativeRoot !== "" && authorityRelativeRoot !== "stella/authority") {
+    throw new Error("AUTHORITY_LOGICAL_ROOT_INVALID");
+  }
+  if (headRevision.trim() !== options.sourceRevision) {
+    throw new Error("SOURCE_REVISION_NOT_CHECKED_OUT");
+  }
+  try {
     ({ stdout: worktreeStatus } = await execFileAsync(
       "git",
-      ["-C", authorityDirectory, "status", "--porcelain=v1", "--untracked-files=all"],
+      [
+        "-C",
+        repositoryRoot,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        ...(authorityRelativeRoot === "" ? [] : ["--", authorityRelativeRoot]),
+      ],
       gitReadOnlyOptions,
     ));
   } catch {
     throw new Error("AUTHORITY_GIT_REPOSITORY_REQUIRED");
-  }
-  if (await realpath(repositoryRoot.trim()) !== await realpath(authorityDirectory)) {
-    throw new Error("AUTHORITY_REPOSITORY_ROOT_REQUIRED");
-  }
-  if (headRevision.trim() !== options.sourceRevision) {
-    throw new Error("SOURCE_REVISION_NOT_CHECKED_OUT");
   }
   if (worktreeStatus.length > 0) {
     throw new Error("AUTHORITY_WORKTREE_DIRTY");
@@ -546,7 +626,15 @@ const verifyAuthorityCheckout = async (
   try {
     ({ stdout: trackedFiles } = await execFileAsync(
       "git",
-      ["-C", authorityDirectory, "ls-tree", "-r", "-z", options.sourceRevision],
+      [
+        "-C",
+        repositoryRoot,
+        "ls-tree",
+        "-r",
+        "-z",
+        options.sourceRevision,
+        ...(authorityRelativeRoot === "" ? [] : ["--", `${authorityRelativeRoot}/`]),
+      ],
       { ...gitReadOnlyOptions, maxBuffer: 64 * 1024 * 1024 },
     ));
   } catch {
@@ -559,15 +647,45 @@ const verifyAuthorityCheckout = async (
     }
     const separator = rawEntry.indexOf("\t");
     const metadata = rawEntry.slice(0, separator).split(" ");
-    const path = rawEntry.slice(separator + 1);
+    const repositoryPath = rawEntry.slice(separator + 1);
     const [mode, type, objectId] = metadata;
     if (separator < 0 || mode === undefined || type === undefined || objectId === undefined) {
       throw new Error("AUTHORITY_SOURCE_TREE_INVALID");
     }
+    const prefix = authorityRelativeRoot === "" ? "" : `${authorityRelativeRoot}/`;
+    if (!repositoryPath.startsWith(prefix)) {
+      throw new Error("AUTHORITY_SOURCE_TREE_INVALID");
+    }
+    const path = repositoryPath.slice(prefix.length);
+    const parts = path.split("/");
+    if (
+      path.length === 0 ||
+      path.startsWith("/") ||
+      path.includes("\\") ||
+      parts.some((part) => part.length === 0 || part === "." || part === "..")
+    ) {
+      throw new Error("AUTHORITY_PATH_TRAVERSAL");
+    }
+    if (mode === "120000" || type === "commit") {
+      throw new Error(`AUTHORITY_TREE_ENTRY_UNSUPPORTED:${path}`);
+    }
+    const collision = [...entries.keys()].find((existing) =>
+      existing.normalize("NFC").toLocaleLowerCase("en-US") ===
+      path.normalize("NFC").toLocaleLowerCase("en-US"));
+    if (collision !== undefined) {
+      throw new Error(`AUTHORITY_PATH_CASE_COLLISION:${collision}:${path}`);
+    }
     entries.set(path, { mode, type, objectId });
   }
+  await assertSafeAuthorityWorkingTree(
+    authorityDirectory,
+    authorityDirectory,
+    authorityRelativeRoot === "",
+  );
   return {
     authorityDirectory,
+    repositoryRoot,
+    authorityRelativeRoot,
     sourceRevision: options.sourceRevision,
     entries,
   };
