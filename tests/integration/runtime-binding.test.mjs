@@ -51,6 +51,7 @@ const fitnessDomain = () => {
     retractions: [],
     capabilities: [{ id: "fitness_history_context", state: "available" }],
     payloads: [{
+      stableId: "fitness-history",
       path: "payloads/history.md",
       mediaType: "text/markdown",
       value: "# Fitness history\n\nSynthetic session.\n",
@@ -295,6 +296,53 @@ test("both Eligible Run hooks re-read domain pointers without replacing the pinn
   );
   assert.equal(nextDecision.outcome, "block");
   assert.equal(nextDecision.metadata.reasonCode, "MAINTENANCE_GATE_CLOSED");
+});
+
+test("overlapping Eligible Run hooks independently revalidate before the final model request", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-domain-overlap-gate-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let releaseCompile;
+  const compileReleased = new Promise((resolve) => { releaseCompile = resolve; });
+  let compileStarted;
+  const started = new Promise((resolve) => { compileStarted = resolve; });
+  const pinned = {
+    ...binding("overlap"),
+    domainInputs: [{
+      domain_id: "fitness",
+      status: "active",
+      projection_revision: `projection-${"1".repeat(64)}`,
+      pointer_revision: `pointer-${"2".repeat(64)}`,
+      manifest_checksum: `sha256:${"3".repeat(64)}`,
+      source_revision: "fitness-overlap",
+      as_of: "2026-08-24T00:00:00Z",
+    }],
+  };
+  let currentPointerRevision = pinned.domainInputs[0].pointer_revision;
+  const runtime = createRuntime({
+    paths: { runtimeStorage: join(root, "runtime") },
+    compile: async () => {
+      compileStarted();
+      await compileReleased;
+      return pinned;
+    },
+    revalidate: async (active) => {
+      if (active.domainInputs[0].pointer_revision !== currentPointerRevision) {
+        throw new Error("ACTIVE_DOMAIN_POINTER_DRIFT");
+      }
+    },
+  });
+  const event = { prompt: "overlap", messages: [] };
+  const context = eligible("domain-overlap");
+  const promptHook = runtime.hooks.get("before_prompt_build")(event, context);
+  await started;
+  const finalHook = runtime.hooks.get("before_agent_run")(event, context);
+  currentPointerRevision = `pointer-${"4".repeat(64)}`;
+  releaseCompile();
+
+  await promptHook;
+  const decision = await finalHook;
+  assert.equal(decision.outcome, "block");
+  assert.equal(decision.metadata.reasonCode, "ACTIVE_DOMAIN_POINTER_DRIFT");
 });
 
 test("exact OpenClaw hook fields exclude callbacks, probes, shared chats, and other agents", async () => {
@@ -634,6 +682,7 @@ test("filesystem compiler negotiates v3 and fail-closes domain tuple drift", asy
     hostVersion: "2026.6.34",
     nodeVersion: process.versions.node,
     domainProjections: [domain],
+    domainProjectionReader: { async read() { return expected; } },
     host: {
       async capture() { return {}; },
       async applyTarget() {},

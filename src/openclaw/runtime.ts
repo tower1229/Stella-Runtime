@@ -632,7 +632,11 @@ export const registerRuntimeHooks = (
     try {
       const inFlight = promptBuilds.get(runId);
       if (inFlight !== undefined) {
-        return { eligible: true, promptContext: await inFlight };
+        await inFlight;
+        return {
+          eligible: true,
+          promptContext: await buildPromptContext(event, context, runId),
+        };
       }
       const pending = buildPromptContext(event, context, runId);
       promptBuilds.set(runId, pending);

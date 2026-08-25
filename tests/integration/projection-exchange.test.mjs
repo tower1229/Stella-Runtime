@@ -107,6 +107,7 @@ const fitnessPublication = () => runProjectionProducerConformance({
     { id: "current_fitness_state", state: "unavailable" },
   ],
   payloads: [{
+    stableId: "fitness-history",
     path: "payloads/fitness-history.md",
     mediaType: "text/markdown",
     value: "# Synthetic fitness history\n\n- Session 1",
@@ -288,6 +289,7 @@ test("same deterministic revision is verified and reused without rewriting gener
     retractions: first.manifest.retractions,
     capabilities: first.manifest.capabilities,
     payloads: [{
+      stableId: first.payloads[0].stableId,
       path: first.payloads[0].path,
       mediaType: first.payloads[0].mediaType,
       value: JSON.parse(first.payloads[0].bytes.toString("utf8")),
@@ -354,6 +356,7 @@ test("Runtime publisher rejects non-allowlisted identity payload fields", async 
     retractions: [],
     capabilities: [{ id: "identity_context", state: "available" }],
     payloads: [{
+      stableId: "runtime-identity-context",
       path: "payloads/identity-context.json",
       mediaType: "application/json",
       value: {
@@ -397,6 +400,7 @@ test("Runtime publisher rejects non-allowlisted identity payload fields", async 
     retractions: [],
     capabilities: [{ id: "identity_context", state: "available" }],
     payloads: [{
+      stableId: "runtime-identity-context",
       path: "payloads/identity-context.json",
       mediaType: "application/json",
       value: {

@@ -40,6 +40,7 @@ const fitnessProjection = (
   revision,
   content,
   capabilities = [{ id: "fitness_history_context", state: "available" }],
+  payloadPath = "payloads/history.md",
 ) => {
   const publication = runProjectionProducerConformance({
     instanceId: "instance-synthetic",
@@ -56,7 +57,8 @@ const fitnessProjection = (
     retractions: [],
     capabilities,
     payloads: [{
-      path: "payloads/history.md",
+      stableId: "fitness-history",
+      path: payloadPath,
       mediaType: "text/markdown",
       value: content,
     }],
@@ -504,12 +506,12 @@ test("v3 Generation identity binds complete Authority and verified domain inputs
   assert.equal(firstDomainIndex.payload.domains[0].domain_id, "fitness");
   assert.equal(firstDomainIndex.payload.domains[0].desired_count, 1);
   assert.equal(firstDomainIndex.payload.domains[0].documents[0].payload_path, "payloads/history.md");
-  assert.match(firstDomainIndex.payload.domains[0].documents[0].stable_id, /^domain-[a-f0-9]{64}$/);
+  assert.equal(firstDomainIndex.payload.domains[0].documents[0].stable_id, "fitness-history");
   assert.deepEqual(firstDomainIndex.payload.domains[0].documents[0].source_references, []);
   const indexedDocumentPath = firstDomainIndex.payload.domains[0].documents[0].document_path;
   assert.match(
     indexedDocumentPath,
-    new RegExp(`^projections/${first.syncGeneration}/domains/fitness/domain-[a-f0-9]{64}\\.md$`),
+    new RegExp(`^projections/${first.syncGeneration}/domains/fitness/fitness-history\\.md$`),
   );
   const indexedDocument = await readFile(
     join(first.generationDirectory, indexedDocumentPath),
@@ -523,7 +525,12 @@ test("v3 Generation identity binds complete Authority and verified domain inputs
     stateDirectory,
     sourceRevision,
     packageVersion: "0.2.1-test",
-    domainProjections: [fitnessProjection("fitness-f2", "# Fitness history\n\nCorrected session.\n")],
+    domainProjections: [fitnessProjection(
+      "fitness-f2",
+      "# Fitness history\n\nCorrected session.\n",
+      undefined,
+      "payloads/corrected-history.md",
+    )],
   });
   const correctedDomainIndex = JSON.parse(await readFile(
     join(corrected.generationDirectory, "domain-index.json"),

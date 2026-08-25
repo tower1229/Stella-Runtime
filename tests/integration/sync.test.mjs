@@ -41,7 +41,7 @@ const fitnessDomain = (
     conflicts: [],
     retractions,
     capabilities: [{ id: "fitness_history_context", state: "available" }],
-    payloads: [{ path: "payloads/history.md", mediaType: "text/markdown", value: content }],
+    payloads: [{ stableId: "fitness-history", path: "payloads/history.md", mediaType: "text/markdown", value: content }],
     generatedAt: "2026-08-24T00:01:00Z",
   });
   return {
@@ -58,6 +58,22 @@ const fitnessDomain = (
     },
   };
 };
+
+const readerFor = (...domains) => ({
+  async read(domainId) {
+    const domain = domains.find((candidate) => candidate.domainId === domainId);
+    if (domain === undefined) throw new Error("DOMAIN_NOT_FOUND");
+    return {
+      domain_id: domain.domainId,
+      status: domain.projection.status,
+      projection_revision: domain.projection.projectionRevision,
+      pointer_revision: domain.projection.pointerRevision,
+      manifest_checksum: domain.projection.manifestChecksum,
+      source_revision: domain.projection.sourceRevision,
+      as_of: domain.projection.asOf,
+    };
+  },
+});
 
 const canghaiCutoverPlan = (sourceRevision) => {
   const plan = {
@@ -366,6 +382,121 @@ test("sync v3 repeats the exact Authority/domain tuple in Receipt and final Poin
   assert.equal(await loadMaintenanceGate(config.runtime_storage), null);
 });
 
+test("a non-Fitness composite domain activates without a Fitness-specific Receipt field", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-sync-generic-domain-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = runtimeConfig(root);
+  await writeSyntheticAuthority(config.adapters.authority_checkout);
+  const sourceRevision = await commitSyntheticAuthority(config.adapters.authority_checkout);
+  const alpha = { ...fitnessDomain("alpha-1"), domainId: "alpha" };
+  const result = await syncGeneration({
+    config,
+    sourceRevision,
+    packageVersion: "0.2.1-test",
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+    domainProjections: [alpha],
+    domainProjectionReader: readerFor(alpha),
+    host: {
+      async capture() { return {}; },
+      async applyTarget() {},
+      async verifyTarget(target) {
+        return {
+          deepStatus: "pass",
+          generationId: target.syncGeneration,
+          sourceRevision: target.sourceRevision,
+          projectionChecksum: target.projectionChecksum,
+          hostConfigChecksum: target.hostConfigChecksum,
+          searchSentinelChecksum: checksum("3"),
+          getSentinelChecksum: checksum("4"),
+          domains: target.domainIndexes.map((domain) => ({
+            domainId: domain.domain_id,
+            projectionRevision: domain.projection_revision,
+            manifestChecksum: domain.manifest_checksum,
+            desiredCount: domain.desired_count,
+            indexedCount: domain.desired_count,
+            previousRevision: null,
+            previousStableIdHits: 0,
+            previousTextSentinelHits: 0,
+            previousSourceReferenceHits: 0,
+          })),
+        };
+      },
+      async restore() {},
+      async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
+    },
+    runs: { closeAdmission() {}, openAdmission() {}, async drain() {} },
+  });
+  const receipt = JSON.parse(await readFile(result.receiptPath, "utf8"));
+  assert.equal(receipt.schema_version, "cognitive-runtime.activation-receipt/v3");
+  assert.equal(receipt.domains[0].domain_id, "alpha");
+  assert.equal(receipt.index_evidence.fitness, undefined);
+});
+
+test("Authority-clean Fitness pointer drift after Host verification blocks the final Pointer", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-sync-fitness-dirty-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = runtimeConfig(root);
+  await writeSyntheticAuthority(config.adapters.authority_checkout);
+  const sourceRevision = await commitSyntheticAuthority(config.adapters.authority_checkout);
+  const prior = await installPriorActivation(config, sourceRevision);
+  const domain = fitnessDomain("fitness-dirty");
+  let reads = 0;
+  let restored = false;
+  const evidenceFor = (target) => ({
+    deepStatus: "pass",
+    generationId: target.syncGeneration,
+    sourceRevision: target.sourceRevision,
+    projectionChecksum: target.projectionChecksum,
+    hostConfigChecksum: target.hostConfigChecksum,
+    searchSentinelChecksum: target.expectedIndexEvidence?.searchSentinelChecksum ?? checksum("3"),
+    getSentinelChecksum: target.expectedIndexEvidence?.getSentinelChecksum ?? checksum("4"),
+    domains: target.domainIndexes?.map((indexed) => ({
+      domainId: indexed.domain_id,
+      projectionRevision: indexed.projection_revision,
+      manifestChecksum: indexed.manifest_checksum,
+      desiredCount: indexed.desired_count,
+      indexedCount: indexed.desired_count,
+      previousRevision: null,
+      previousStableIdHits: 0,
+      previousTextSentinelHits: 0,
+      previousSourceReferenceHits: 0,
+    })),
+  });
+
+  await assert.rejects(syncGeneration({
+    config,
+    sourceRevision,
+    packageVersion: "0.2.1-test",
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+    domainProjections: [domain],
+    domainProjectionReader: {
+      async read() {
+        reads += 1;
+        const current = await readerFor(domain).read("fitness");
+        return reads < 3
+          ? current
+          : { ...current, pointer_revision: `pointer-${"9".repeat(64)}` };
+      },
+    },
+    host: {
+      async capture() { return { config_revision: "prior" }; },
+      async applyTarget() {},
+      async verifyTarget(target) { return evidenceFor(target); },
+      async restore() { restored = true; },
+      async verifyPrior(_snapshot, target) { return evidenceFor(target); },
+    },
+    runs: { closeAdmission() {}, openAdmission() {}, async drain() {} },
+  }), /ACTIVE_DOMAIN_POINTER_DRIFT/);
+
+  assert.equal(restored, true);
+  assert.deepEqual(
+    JSON.parse(await readFile(join(config.runtime_storage, "active-generation.json"), "utf8")),
+    prior.pointer,
+  );
+});
+
 test("a failed destructive Fitness replacement stays gated instead of restoring leaking prior content", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-sync-destructive-domain-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -411,6 +542,7 @@ test("a failed destructive Fitness replacement stays gated instead of restoring 
     hostVersion: "2026.6.34",
     nodeVersion: process.versions.node,
     domainProjections: [priorDomain],
+    domainProjectionReader: readerFor(priorDomain),
     host: {
       async capture() { return { config_revision: "empty" }; },
       async applyTarget() {},
@@ -446,6 +578,7 @@ test("a failed destructive Fitness replacement stays gated instead of restoring 
     hostVersion: "2026.6.34",
     nodeVersion: process.versions.node,
     domainProjections: [correctedDomain],
+    domainProjectionReader: readerFor(correctedDomain),
     host: {
       async capture() { events.push("capture"); return { config_revision: "prior" }; },
       async applyTarget() { events.push("apply"); throw new Error("INDEX_FAILED"); },
@@ -480,6 +613,7 @@ test("a failed destructive Fitness replacement stays gated instead of restoring 
     hostVersion: "2026.6.34",
     nodeVersion: process.versions.node,
     domainProjections: [correctedDomain],
+    domainProjectionReader: readerFor(correctedDomain),
     host: {
       async capture() { throw new Error("MUST_REUSE_DURABLE_PRIOR_SNAPSHOT"); },
       async applyTarget() { events.push("resume-apply"); },
@@ -1013,53 +1147,58 @@ test("restart recovery covers every pre-pointer journal phase without exposing a
   ]);
 });
 
-test("restart verifies a fully written target Pointer before completing the Journal", async (t) => {
+test("restart verifies a fully written target for pointer_written and completed journal phases", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-sync-pointer-recovery-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const config = runtimeConfig(root);
   await writeSyntheticAuthority(config.adapters.authority_checkout);
   const sourceRevision = await commitSyntheticAuthority(config.adapters.authority_checkout);
   const active = await installPriorActivation(config, sourceRevision);
-  await writeFile(join(config.runtime_storage, "maintenance-gate.json"), JSON.stringify({
-    target_source_revision: sourceRevision,
-    closed_at: "2026-08-17T00:00:00.000Z",
-  }));
-  await writeFile(join(config.runtime_storage, "sync-journal.json"), JSON.stringify({
-    target_source_revision: sourceRevision,
-    sync_generation: active.built.syncGeneration,
-    prior: { config_revision: "older" },
-    prior_pointer: null,
-    started_at: "2026-08-17T00:00:00.000Z",
-    phase: "pointer_written",
-    receipt_id: "activation-prior",
-    prior_restore_forbidden: false,
-  }));
   let restored = false;
+  let verified = 0;
+  for (const phase of ["pointer_written", "completed"]) {
+    await writeFile(join(config.runtime_storage, "maintenance-gate.json"), JSON.stringify({
+      target_source_revision: sourceRevision,
+      closed_at: "2026-08-17T00:00:00.000Z",
+    }));
+    await writeFile(join(config.runtime_storage, "sync-journal.json"), JSON.stringify({
+      target_source_revision: sourceRevision,
+      sync_generation: active.built.syncGeneration,
+      prior: { config_revision: "older" },
+      prior_pointer: null,
+      started_at: "2026-08-17T00:00:00.000Z",
+      phase,
+      receipt_id: "activation-prior",
+      prior_restore_forbidden: false,
+    }));
 
-  await recoverInterruptedSync({
-    config,
-    hostVersion: "2026.6.34",
-    nodeVersion: process.versions.node,
-    host: {
-      async capture() { throw new Error("UNEXPECTED_CAPTURE"); },
-      async applyTarget() { throw new Error("UNEXPECTED_APPLY"); },
-      async verifyTarget(target) {
-        return {
-          deepStatus: "pass",
-          generationId: target.syncGeneration,
-          sourceRevision: target.sourceRevision,
-          projectionChecksum: target.projectionChecksum,
-          hostConfigChecksum: target.hostConfigChecksum,
-          searchSentinelChecksum: checksum("7"),
-          getSentinelChecksum: checksum("8"),
-        };
+    await recoverInterruptedSync({
+      config,
+      hostVersion: "2026.6.34",
+      nodeVersion: process.versions.node,
+      host: {
+        async capture() { throw new Error("UNEXPECTED_CAPTURE"); },
+        async applyTarget() { throw new Error("UNEXPECTED_APPLY"); },
+        async verifyTarget(target) {
+          verified += 1;
+          return {
+            deepStatus: "pass",
+            generationId: target.syncGeneration,
+            sourceRevision: target.sourceRevision,
+            projectionChecksum: target.projectionChecksum,
+            hostConfigChecksum: target.hostConfigChecksum,
+            searchSentinelChecksum: checksum("7"),
+            getSentinelChecksum: checksum("8"),
+          };
+        },
+        async restore() { restored = true; },
+        async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
       },
-      async restore() { restored = true; },
-      async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
-    },
-  });
+    });
+  }
 
   assert.equal(restored, false);
+  assert.equal(verified, 2);
   assert.equal(await loadMaintenanceGate(config.runtime_storage), null);
   assert.equal(JSON.parse(await readFile(
     join(config.runtime_storage, "sync-journal.json"),

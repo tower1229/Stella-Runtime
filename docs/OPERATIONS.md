@@ -67,7 +67,8 @@ builds `generation-builder/v3`, and repeats the exact Authority checksum plus
 sorted domain projection/pointer/checksum tuple in the Manifest, Activation
 Receipt, and final Active Pointer. Each Fitness revision is materialized as one
 complete desired set under the immutable Generation projection directory;
-payload-path-derived stable IDs do not change when content is corrected. Host
+producer-owned semantic stable IDs do not change when content is corrected or
+the local payload path moves. Host
 verification requires every desired document to be indexed and proves the prior
 revision's stable-ID/revision, text sentinel, and source reference combinations
 have zero Runtime-managed hits. These counts and the previous revision are

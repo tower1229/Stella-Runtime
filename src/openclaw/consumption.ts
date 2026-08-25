@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import type { InstanceRuntimeConfig } from "../contracts/index.js";
@@ -418,6 +418,18 @@ const searchResults = (value: unknown): readonly JsonRecord[] => {
   return value.results.filter(isRecord);
 };
 
+const resultsWithin = (
+  results: readonly JsonRecord[],
+  workspaceDirectory: string,
+  ownedRoot: string,
+): readonly JsonRecord[] => results.filter((candidate) => {
+  if (typeof candidate.path !== "string") return false;
+  const relativePath = relative(ownedRoot, resolve(workspaceDirectory, candidate.path));
+  return relativePath !== ".."
+    && !relativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)
+    && !isAbsolute(relativePath);
+});
+
 const domainDocumentMarkers = (input: {
   readonly domainId: string;
   readonly projectionRevision: string;
@@ -697,15 +709,28 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
       let previousTextSentinelHits = 0;
       let previousSourceReferenceHits = 0;
       if (replacementPrevious !== undefined) {
+        const previousOwnedRoot = resolve(
+          this.#config.generation_storage,
+          replacementPrevious.generation_id,
+          "projections",
+          replacementPrevious.generation_id,
+          "domains",
+          replacementPrevious.domain_id,
+        );
+        const ownedResults = (value: unknown): readonly JsonRecord[] => resultsWithin(
+          searchResults(value),
+          workspaceDirectory,
+          previousOwnedRoot,
+        );
         const previousSourceReferences = new Map<string, string>();
         for (const document of replacementPrevious.documents) {
-          previousStableIdHits += searchResults(
+          previousStableIdHits += ownedResults(
             await this.#commands.search(
               this.#config.host.agent_id,
               `${replacementPrevious.projection_revision} ${document.stable_id}`,
             ),
           ).length;
-          previousTextSentinelHits += searchResults(
+          previousTextSentinelHits += ownedResults(
             await this.#commands.search(
               this.#config.host.agent_id,
               `${replacementPrevious.projection_revision} ${document.text_sentinel}`,
@@ -717,7 +742,7 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
         }
         for (const [id, path] of previousSourceReferences) {
           for (const marker of [id, path]) {
-            previousSourceReferenceHits += searchResults(
+            previousSourceReferenceHits += ownedResults(
               await this.#commands.search(
                 this.#config.host.agent_id,
                 `${replacementPrevious.projection_revision} ${marker}`,

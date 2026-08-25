@@ -42,12 +42,14 @@ export interface ProjectionCapability {
 }
 
 export interface ProjectionPayloadInput {
+  readonly stableId: string;
   readonly path: string;
   readonly mediaType: ProjectionPayloadMediaType;
   readonly value: unknown;
 }
 
 export interface ProjectionPayloadArtifact {
+  readonly stableId: string;
   readonly path: string;
   readonly mediaType: ProjectionPayloadMediaType;
   readonly bytes: Buffer;
@@ -70,6 +72,7 @@ export interface ProjectionManifest {
   readonly retractions: readonly ProjectionRetraction[];
   readonly capabilities: readonly ProjectionCapability[];
   readonly payloads: readonly {
+    readonly stable_id: string;
     readonly path: string;
     readonly media_type: ProjectionPayloadMediaType;
     readonly byte_length: number;
@@ -363,6 +366,7 @@ export function runProjectionProducerConformance(
   input: BuildProjectionPublicationInput,
 ): ProjectionPublication {
   assertUnique(input.payloads, ({ path }) => path, "PROJECTION_PAYLOAD_PATH_DUPLICATE");
+  assertUnique(input.payloads, ({ stableId }) => stableId, "PROJECTION_PAYLOAD_STABLE_ID_DUPLICATE");
   assertUnique(input.sourceReferences, ({ id }) => id, "PROJECTION_SOURCE_REFERENCE_DUPLICATE");
   assertUnique(input.sourceReferences, ({ path }) => path, "PROJECTION_SOURCE_PATH_DUPLICATE");
   assertUnique(input.conflicts, ({ id }) => id, "PROJECTION_CONFLICT_DUPLICATE");
@@ -372,7 +376,7 @@ export function runProjectionProducerConformance(
 
   const { revision: sourceRevision, sourceAsOf } = input.canonicalSourceSnapshot;
   const payloads = input.payloads
-    .map(({ path, mediaType, value }) => {
+    .map(({ stableId, path, mediaType, value }) => {
       const identity = mediaType === "application/json"
         ? validateAndNormalizeIdentityContext(value, {
             instanceId: input.instanceId,
@@ -385,6 +389,7 @@ export function runProjectionProducerConformance(
       const canonicalValue = identity ?? value;
       const bytes = canonicalizeProjectionPayload(canonicalValue, mediaType);
       return {
+        stableId,
         path,
         mediaType,
         bytes,
@@ -394,6 +399,7 @@ export function runProjectionProducerConformance(
     .sort((left, right) => compare(left.path, right.path));
 
   const payloadMetadata = payloads.map((payload) => ({
+    stable_id: payload.stableId,
     path: payload.path,
     media_type: payload.mediaType,
     byte_length: payload.bytes.byteLength,
@@ -644,6 +650,7 @@ export function buildRuntimeIdentityProjection(
     retractions: [],
     capabilities,
     payloads: [{
+      stableId: "runtime-identity-context",
       path: "payloads/identity-context.json",
       mediaType: "application/json",
       value: identityContext,
@@ -779,6 +786,7 @@ export async function runProjectionConsumerConformance(
     throw new Error("PROJECTION_PURPOSE_CAPABILITY_UNAVAILABLE");
   }
   assertUnique(manifest.payloads, ({ path }) => path, "PROJECTION_PAYLOAD_PATH_DUPLICATE");
+  assertUnique(manifest.payloads, ({ stable_id }) => stable_id, "PROJECTION_PAYLOAD_STABLE_ID_DUPLICATE");
 
   const payloads: ProjectionPayloadArtifact[] = [];
   for (const metadata of manifest.payloads) {
@@ -810,6 +818,7 @@ export async function runProjectionConsumerConformance(
       }
     }
     payloads.push({
+      stableId: metadata.stable_id,
       path: metadata.path,
       mediaType: metadata.media_type,
       bytes,

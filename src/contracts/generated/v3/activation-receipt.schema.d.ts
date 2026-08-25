@@ -28,7 +28,7 @@ export interface CompositeActivationReceipt {
     deep_status: "pass";
     search_sentinel_checksum: Checksum;
     get_sentinel_checksum: Checksum;
-    fitness: FitnessIndexEvidence;
+    fitness?: FitnessIndexEvidence;
   };
   cutover_plan_checksum?: Checksum;
   release_channel: string;

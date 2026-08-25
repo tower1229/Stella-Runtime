@@ -56,6 +56,7 @@ import {
 } from "../state/management.js";
 import type { ExactStateImportAuthorization } from "../state/management.js";
 import {
+  expectedHostDomainEvidenceFromReceipt,
   recoverInterruptedSync,
   syncGeneration,
 } from "../sync/index.js";
@@ -388,10 +389,8 @@ const plugin = {
                 runtimeConfig.generation_storage,
                 active.pointer.generation_id,
               );
-              const compositeReceipt = active.receipt.schema_version
-                === "cognitive-runtime.activation-receipt/v3"
-                ? active.receipt
-                : null;
+              const expectedDomainEvidence =
+                expectedHostDomainEvidenceFromReceipt(active.receipt);
               await hostTransition.verifyTarget({
                 config: runtimeConfig,
                 sourceRevision: active.pointer.source_revision,
@@ -414,22 +413,9 @@ const plugin = {
                   getSentinelChecksum:
                     active.receipt.index_evidence.get_sentinel_checksum,
                 },
-                ...(compositeReceipt === null ? {} : {
-                  expectedDomainEvidence: [{
-                    domainId: "fitness",
-                    projectionRevision:
-                      compositeReceipt.index_evidence.fitness.projection_revision,
-                    manifestChecksum:
-                      compositeReceipt.index_evidence.fitness.manifest_checksum,
-                    desiredCount: compositeReceipt.index_evidence.fitness.desired_count,
-                    indexedCount: compositeReceipt.index_evidence.fitness.indexed_count,
-                    previousRevision:
-                      compositeReceipt.index_evidence.fitness.previous_revision,
-                    previousStableIdHits: 0,
-                    previousTextSentinelHits: 0,
-                    previousSourceReferenceHits: 0,
-                  }],
-                }),
+                ...(expectedDomainEvidence.length === 0
+                  ? {}
+                  : { expectedDomainEvidence }),
               });
             },
           },

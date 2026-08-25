@@ -42,7 +42,7 @@ const fitnessProjection = (revision, content) => {
     conflicts: [],
     retractions: [],
     capabilities: [{ id: "fitness_history_context", state: "available" }],
-    payloads: [{ path: "payloads/history.md", mediaType: "text/markdown", value: content }],
+    payloads: [{ stableId: "fitness-history", path: "payloads/history.md", mediaType: "text/markdown", value: content }],
     generatedAt: "2026-08-24T00:01:00Z",
   });
   return {
@@ -567,7 +567,10 @@ test("OpenClaw adapter proves the complete Fitness desired set and prior revisio
     },
     async search(_agentId, query) {
       if (query.includes(previousDomainIndexes[0].projection_revision)) {
-        return { results: [] };
+        return { results: [{
+          path: "unmanaged/fitness-history.md",
+          snippet: query,
+        }] };
       }
       const expectedPath = query.includes(domainDocument.stable_id)
         ? relative(root, join(targetBuild.generationDirectory, domainDocument.document_path))

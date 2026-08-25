@@ -257,6 +257,7 @@ interface EmbeddedDomainProjection {
   readonly input: GenerationDomainIdentity;
   readonly manifest: ConsumedProjection["manifest"];
   readonly payloads: readonly {
+    readonly stable_id: string;
     readonly path: string;
     readonly media_type: string;
     readonly checksum: string;
@@ -283,6 +284,7 @@ export interface ProjectionSourceReferenceIdentity {
 }
 
 export interface GenerationDomainIndex {
+  readonly generation_id: string;
   readonly domain_id: string;
   readonly projection_revision: string;
   readonly manifest_checksum: string;
@@ -939,13 +941,6 @@ const projectionDocument = (entry: ProjectionEntry): string => {
   ].join("\n");
 };
 
-const domainDocumentStableId = (domainId: string, payloadPath: string): string =>
-  `domain-${checksum(canonicalJson({
-    schema_version: "cognitive-runtime.domain-document-identity/v1",
-    domain_id: domainId,
-    payload_path: payloadPath,
-  })).slice("sha256:".length)}`;
-
 const domainDocumentContent = (payload: EmbeddedDomainProjection["payloads"][number]): string =>
   Buffer.from(payload.content_base64, "base64").toString("utf8");
 
@@ -978,7 +973,7 @@ const domainIndexPayload = (
   domains: value.domains.map(({ input, manifest, payloads }) => {
     const sourceReferences = manifest.source_references.map(({ id, path }) => ({ id, path }));
     const documents = payloads.map((payload) => {
-      const stableId = domainDocumentStableId(input.domain_id, payload.path);
+      const stableId = payload.stable_id;
       const content = domainDocumentContent(payload);
       return {
         stable_id: stableId,
@@ -990,6 +985,7 @@ const domainIndexPayload = (
       };
     });
     return {
+      generation_id: syncGeneration,
       domain_id: input.domain_id,
       projection_revision: input.projection_revision,
       manifest_checksum: input.manifest_checksum,
@@ -1244,6 +1240,7 @@ const normalizedDomainProjections = (
           throw new Error(`GENERATION_DOMAIN_PAYLOAD_INVALID:${domainId}:${payload.path}`);
         }
         return {
+          stable_id: metadata.stable_id,
           path: payload.path,
           media_type: payload.mediaType,
           checksum: payload.checksum,
@@ -1803,6 +1800,7 @@ export async function verifyGeneration(
               let payloadsValid = value.payloads.length === metadata.length;
               for (const embeddedPayload of value.payloads) {
                 if (!isRecord(embeddedPayload)
+                  || typeof embeddedPayload.stable_id !== "string"
                   || typeof embeddedPayload.path !== "string"
                   || typeof embeddedPayload.checksum !== "string"
                   || typeof embeddedPayload.media_type !== "string"
@@ -1817,6 +1815,7 @@ export async function verifyGeneration(
                   isRecord(candidate) && candidate.path === embeddedPayload.path);
                 if (
                   !isRecord(expected)
+                  || expected.stable_id !== embeddedPayload.stable_id
                   || expected.checksum !== embeddedPayload.checksum
                   || expected.byte_length !== bytes.byteLength
                   || expected.media_type !== embeddedPayload.media_type

@@ -272,6 +272,7 @@ export interface Capability {
   state: "available" | "degraded" | "unavailable";
 }
 export interface Payload {
+  stable_id: Id;
   path: RelativePath;
   media_type: "application/json" | "text/markdown";
   byte_length: number;

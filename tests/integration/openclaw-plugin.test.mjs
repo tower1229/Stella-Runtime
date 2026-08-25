@@ -556,6 +556,7 @@ test("OpenClaw sync consumes configured Fitness projection and gates domain drif
     retractions: [],
     capabilities: [{ id: "fitness_history_context", state: "available" }],
     payloads: [{
+      stableId: "fitness-history",
       path: "payloads/history.md",
       mediaType: "text/markdown",
       value: "# Fitness history\n\nSynthetic session.\n",

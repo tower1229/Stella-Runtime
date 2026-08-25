@@ -314,6 +314,9 @@ the exact projection revision and manifest checksum, desired/indexed document
 counts, the previous revision, and zero prior stable-ID/revision, text-sentinel,
 and source-reference hits. Exact Current Fitness State is forbidden from this
 Generation/index path.
+Each context-projection payload declares a producer-owned `stable_id`; Runtime
+uses that semantic identity for the managed document and never derives it from
+revision, build time, local path, or Host configuration.
 The published v2 schemas and `generation-builder/v2` identity remain unchanged.
 
 ## 13. Contract evolution

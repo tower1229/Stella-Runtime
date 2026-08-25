@@ -19,7 +19,7 @@
     "index_evidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["deep_status", "search_sentinel_checksum", "get_sentinel_checksum", "fitness"],
+      "required": ["deep_status", "search_sentinel_checksum", "get_sentinel_checksum"],
       "properties": {
         "deep_status": { "const": "pass" },
         "search_sentinel_checksum": { "$ref": "#/$defs/checksum" },

@@ -45,6 +45,7 @@ import {
   ACTIVE_GENERATION_POINTER_FILE,
   calculateRuntimeConfigIdentityChecksum,
   FileBindingCompiler,
+  validateGenerationDomainsCurrent,
   type DomainProjectionReaderPort,
 } from "../runtime/binding.js";
 
@@ -98,6 +99,27 @@ export interface HostDomainIndexEvidence {
   readonly previousTextSentinelHits: 0;
   readonly previousSourceReferenceHits: 0;
 }
+
+export const expectedHostDomainEvidenceFromReceipt = (
+  receipt: ActivationReceiptAny,
+): readonly HostDomainIndexEvidence[] => {
+  if (receipt.schema_version !== "cognitive-runtime.activation-receipt/v3"
+    || receipt.index_evidence.fitness === undefined) {
+    return [];
+  }
+  const fitness = receipt.index_evidence.fitness;
+  return [{
+    domainId: "fitness",
+    projectionRevision: fitness.projection_revision,
+    manifestChecksum: fitness.manifest_checksum,
+    desiredCount: fitness.desired_count,
+    indexedCount: fitness.indexed_count,
+    previousRevision: fitness.previous_revision,
+    previousStableIdHits: 0,
+    previousTextSentinelHits: 0,
+    previousSourceReferenceHits: 0,
+  }];
+};
 
 export type HostSnapshot = Readonly<Record<string, unknown>>;
 
@@ -535,19 +557,10 @@ const activeTarget = async (options: SyncRecoveryOptions): Promise<SyncTarget> =
       searchSentinelChecksum: receipt.index_evidence.search_sentinel_checksum,
       getSentinelChecksum: receipt.index_evidence.get_sentinel_checksum,
     },
-    ...(receipt.schema_version === "cognitive-runtime.activation-receipt/v3" ? {
-      expectedDomainEvidence: [{
-        domainId: "fitness",
-        projectionRevision: receipt.index_evidence.fitness.projection_revision,
-        manifestChecksum: receipt.index_evidence.fitness.manifest_checksum,
-        desiredCount: receipt.index_evidence.fitness.desired_count,
-        indexedCount: receipt.index_evidence.fitness.indexed_count,
-        previousRevision: receipt.index_evidence.fitness.previous_revision,
-        previousStableIdHits: 0,
-        previousTextSentinelHits: 0,
-        previousSourceReferenceHits: 0,
-      }],
-    } : {}),
+    ...(() => {
+      const expectedDomainEvidence = expectedHostDomainEvidenceFromReceipt(receipt);
+      return expectedDomainEvidence.length === 0 ? {} : { expectedDomainEvidence };
+    })(),
   };
 };
 
@@ -717,6 +730,10 @@ const syncGenerationLocked = async (
     (file) => file.path === "projection-entries.json",
   );
   if (projection === undefined) throw new Error("SYNC_PROJECTION_MISSING");
+  if (verification.manifest.schema_version === "cognitive-runtime.generation-manifest/v3"
+    && options.domainProjectionReader === undefined) {
+    throw new Error("SYNC_DOMAIN_PROJECTION_READER_REQUIRED");
+  }
   options.lifecycle?.recordLifecycle("pending_activation");
 
   const target: SyncTarget = {
@@ -777,6 +794,13 @@ const syncGenerationLocked = async (
     journal = journalAt(journal, "runs_drained");
     await writeJournal(runtimeStorage, journal);
 
+    if (verification.manifest.schema_version === "cognitive-runtime.generation-manifest/v3") {
+      await validateGenerationDomainsCurrent(
+        verification.manifest.domains,
+        options.domainProjectionReader,
+      );
+    }
+
     journal = journalAt(journal, "host_applying");
     await writeJournal(runtimeStorage, journal);
     await options.host.applyTarget(target);
@@ -792,6 +816,12 @@ const syncGenerationLocked = async (
 
     const evidence = await options.host.verifyTarget(target);
     assertHostEvidence(evidence, target);
+    if (verification.manifest.schema_version === "cognitive-runtime.generation-manifest/v3") {
+      await validateGenerationDomainsCurrent(
+        verification.manifest.domains,
+        options.domainProjectionReader,
+      );
+    }
     if (options.cutover !== undefined) {
       await verifyCutoverAcceptance(options.cutover, {
         sourceRevision: target.sourceRevision,
@@ -823,7 +853,8 @@ const syncGenerationLocked = async (
         deep_status: "pass",
         search_sentinel_checksum: evidence.searchSentinelChecksum,
         get_sentinel_checksum: evidence.getSentinelChecksum,
-        ...(composite ? {
+        ...(composite && verification.manifest.domains.some(({ domain_id }) =>
+          domain_id === "fitness") ? {
           fitness: (() => {
             const domain = evidence.domains?.find(({ domainId }) => domainId === "fitness");
             if (domain === undefined) throw new Error("SYNC_FITNESS_INDEX_EVIDENCE_MISSING");
@@ -862,6 +893,13 @@ const syncGenerationLocked = async (
     await atomicWrite(receiptPath, receipt);
     journal = { ...journalAt(journal, "receipt_written"), receiptId };
     await writeJournal(runtimeStorage, journal);
+
+    if (composite) {
+      await validateGenerationDomainsCurrent(
+        verification.manifest.domains,
+        options.domainProjectionReader,
+      );
+    }
 
     const activatedAt = now().toISOString();
     const pointer = {

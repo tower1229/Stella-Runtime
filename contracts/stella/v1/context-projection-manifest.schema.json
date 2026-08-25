@@ -107,8 +107,9 @@
     "payload": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "media_type", "byte_length", "checksum"],
+      "required": ["stable_id", "path", "media_type", "byte_length", "checksum"],
       "properties": {
+        "stable_id": { "$ref": "#/$defs/id" },
         "path": { "$ref": "#/$defs/relativePath" },
         "media_type": { "enum": ["application/json", "text/markdown"] },
         "byte_length": { "type": "integer", "minimum": 1, "maximum": 1048576 },

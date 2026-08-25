@@ -374,6 +374,7 @@ const publicationInput = (overrides = {}) => ({
     { id: "background_context", state: "available" },
   ],
   payloads: [{
+    stableId: "runtime-identity-context",
     path: "payloads/identity-context.json",
     mediaType: "application/json",
     value: {
