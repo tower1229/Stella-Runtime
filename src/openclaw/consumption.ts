@@ -697,6 +697,7 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
       let previousTextSentinelHits = 0;
       let previousSourceReferenceHits = 0;
       if (replacementPrevious !== undefined) {
+        const previousSourceReferences = new Map<string, string>();
         for (const document of replacementPrevious.documents) {
           previousStableIdHits += searchResults(
             await this.#commands.search(
@@ -711,14 +712,17 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
             ),
           ).length;
           for (const reference of document.source_references) {
-            for (const marker of [reference.id, reference.path]) {
-              previousSourceReferenceHits += searchResults(
-                await this.#commands.search(
-                  this.#config.host.agent_id,
-                  `${replacementPrevious.projection_revision} ${marker}`,
-                ),
-              ).length;
-            }
+            previousSourceReferences.set(reference.id, reference.path);
+          }
+        }
+        for (const [id, path] of previousSourceReferences) {
+          for (const marker of [id, path]) {
+            previousSourceReferenceHits += searchResults(
+              await this.#commands.search(
+                this.#config.host.agent_id,
+                `${replacementPrevious.projection_revision} ${marker}`,
+              ),
+            ).length;
           }
         }
       }
