@@ -36,7 +36,11 @@ const canonicalJson = (value) => `${JSON.stringify(canonicalize(value))}\n`;
 const checksum = (value) =>
   `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
-const fitnessProjection = (revision, content) => {
+const fitnessProjection = (
+  revision,
+  content,
+  capabilities = [{ id: "fitness_history_context", state: "available" }],
+) => {
   const publication = runProjectionProducerConformance({
     instanceId: "instance-synthetic",
     producerId: "stella-fitness",
@@ -50,7 +54,7 @@ const fitnessProjection = (revision, content) => {
     sourceReferences: [],
     conflicts: [],
     retractions: [],
-    capabilities: [{ id: "fitness_history_context", state: "available" }],
+    capabilities,
     payloads: [{
       path: "payloads/history.md",
       mediaType: "text/markdown",
@@ -492,6 +496,61 @@ test("v3 Generation identity binds complete Authority and verified domain inputs
     "fitness",
   ]);
   assert.ok(first.manifest.files.some(({ path }) => path === "domain-projections.json"));
+  assert.ok(first.manifest.files.some(({ path }) => path === "domain-index.json"));
+  const firstDomainIndex = JSON.parse(await readFile(
+    join(first.generationDirectory, "domain-index.json"),
+    "utf8",
+  ));
+  assert.equal(firstDomainIndex.payload.domains[0].domain_id, "fitness");
+  assert.equal(firstDomainIndex.payload.domains[0].desired_count, 1);
+  assert.equal(firstDomainIndex.payload.domains[0].documents[0].payload_path, "payloads/history.md");
+  assert.match(firstDomainIndex.payload.domains[0].documents[0].stable_id, /^domain-[a-f0-9]{64}$/);
+  assert.deepEqual(firstDomainIndex.payload.domains[0].documents[0].source_references, []);
+  const indexedDocumentPath = firstDomainIndex.payload.domains[0].documents[0].document_path;
+  assert.match(
+    indexedDocumentPath,
+    new RegExp(`^projections/${first.syncGeneration}/domains/fitness/domain-[a-f0-9]{64}\\.md$`),
+  );
+  const indexedDocument = await readFile(
+    join(first.generationDirectory, indexedDocumentPath),
+    "utf8",
+  );
+  assert.match(indexedDocument, /domain_id: fitness/);
+  assert.match(indexedDocument, /# Fitness history/);
+
+  const corrected = await buildGeneration({
+    authorityDirectory,
+    stateDirectory,
+    sourceRevision,
+    packageVersion: "0.2.1-test",
+    domainProjections: [fitnessProjection("fitness-f2", "# Fitness history\n\nCorrected session.\n")],
+  });
+  const correctedDomainIndex = JSON.parse(await readFile(
+    join(corrected.generationDirectory, "domain-index.json"),
+    "utf8",
+  ));
+  assert.equal(
+    correctedDomainIndex.payload.domains[0].documents[0].stable_id,
+    firstDomainIndex.payload.domains[0].documents[0].stable_id,
+  );
+  assert.notEqual(
+    correctedDomainIndex.payload.domains[0].documents[0].checksum,
+    firstDomainIndex.payload.domains[0].documents[0].checksum,
+  );
+  await assert.rejects(buildGeneration({
+    authorityDirectory,
+    stateDirectory,
+    sourceRevision,
+    packageVersion: "0.2.1-test",
+    domainProjections: [fitnessProjection(
+      "fitness-current-state",
+      "# Current fitness state\n\nDo not index exact state.\n",
+      [
+        { id: "current_fitness_state", state: "available" },
+        { id: "fitness_history_context", state: "available" },
+      ],
+    )],
+  }), /GENERATION_CURRENT_FITNESS_STATE_FORBIDDEN:fitness/);
   assert.match(first.syncGeneration, /^generation-[a-f0-9]{64}$/);
   assert.equal((await verifyGeneration(first.generationDirectory)).valid, true);
 

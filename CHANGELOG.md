@@ -10,7 +10,11 @@ Versioning; cognitive contract namespaces remain independently versioned.
   verified domain projection tuples without changing v2 identity semantics;
 - consumes the configured Fitness projection during sync and revalidates its
   pointer at both Eligible Run barriers while retaining one pinned Generation
-  and State View per Run.
+  and State View per Run;
+- replaces the Runtime-managed Fitness corpus as a complete revision-isolated
+  desired set, records exact indexed counts and prior-value zero-hit evidence,
+  and keeps destructive correction/deletion recovery gated until a non-leaking
+  target completes.
 
 ## [0.2.1] - 2026-08-21
 

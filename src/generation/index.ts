@@ -268,6 +268,33 @@ interface DomainProjectionsPayload {
   readonly domains: readonly EmbeddedDomainProjection[];
 }
 
+export interface GenerationDomainIndexDocument {
+  readonly stable_id: string;
+  readonly payload_path: string;
+  readonly document_path: string;
+  readonly checksum: string;
+  readonly text_sentinel: string;
+  readonly source_references: readonly ProjectionSourceReferenceIdentity[];
+}
+
+export interface ProjectionSourceReferenceIdentity {
+  readonly id: string;
+  readonly path: string;
+}
+
+export interface GenerationDomainIndex {
+  readonly domain_id: string;
+  readonly projection_revision: string;
+  readonly manifest_checksum: string;
+  readonly desired_count: number;
+  readonly retraction_count: number;
+  readonly documents: readonly GenerationDomainIndexDocument[];
+}
+
+interface DomainIndexPayload {
+  readonly domains: readonly GenerationDomainIndex[];
+}
+
 export interface ActiveGeneration {
   readonly directory: string;
   readonly manifest: GenerationManifest;
@@ -912,6 +939,99 @@ const projectionDocument = (entry: ProjectionEntry): string => {
   ].join("\n");
 };
 
+const domainDocumentStableId = (domainId: string, payloadPath: string): string =>
+  `domain-${checksum(canonicalJson({
+    schema_version: "cognitive-runtime.domain-document-identity/v1",
+    domain_id: domainId,
+    payload_path: payloadPath,
+  })).slice("sha256:".length)}`;
+
+const domainDocumentContent = (payload: EmbeddedDomainProjection["payloads"][number]): string =>
+  Buffer.from(payload.content_base64, "base64").toString("utf8");
+
+const domainTextSentinel = (content: string): string => {
+  const lines = content.split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .sort((left, right) => right.length - left.length || compareCanonicalStrings(left, right));
+  const sentinel = lines[0];
+  if (sentinel === undefined) throw new Error("GENERATION_DOMAIN_PAYLOAD_EMPTY");
+  return sentinel.slice(0, 256);
+};
+
+const domainDocumentPath = (
+  syncGeneration: string,
+  domainId: string,
+  stableId: string,
+): string => posix.join(
+  "projections",
+  syncGeneration,
+  "domains",
+  domainId,
+  `${stableId}.md`,
+);
+
+const domainIndexPayload = (
+  value: DomainProjectionsPayload,
+  syncGeneration: string,
+): DomainIndexPayload => ({
+  domains: value.domains.map(({ input, manifest, payloads }) => {
+    const sourceReferences = manifest.source_references.map(({ id, path }) => ({ id, path }));
+    const documents = payloads.map((payload) => {
+      const stableId = domainDocumentStableId(input.domain_id, payload.path);
+      const content = domainDocumentContent(payload);
+      return {
+        stable_id: stableId,
+        payload_path: payload.path,
+        document_path: domainDocumentPath(syncGeneration, input.domain_id, stableId),
+        checksum: payload.checksum,
+        text_sentinel: domainTextSentinel(content),
+        source_references: sourceReferences,
+      };
+    });
+    return {
+      domain_id: input.domain_id,
+      projection_revision: input.projection_revision,
+      manifest_checksum: input.manifest_checksum,
+      desired_count: documents.length,
+      retraction_count: manifest.retractions.length,
+      documents,
+    };
+  }),
+});
+
+const domainProjectionDocument = (
+  domain: EmbeddedDomainProjection,
+  document: GenerationDomainIndexDocument,
+  syncGeneration: string,
+): string => {
+  const payload = domain.payloads.find(({ path }) => path === document.payload_path);
+  if (payload === undefined) throw new Error("GENERATION_DOMAIN_DOCUMENT_PAYLOAD_MISSING");
+  const sourceReferenceIds = document.source_references.length === 0
+    ? "source_reference_ids: []"
+    : `source_reference_ids:\n${document.source_references
+        .map(({ id }) => `  - ${id}`).join("\n")}`;
+  const sourceReferencePaths = document.source_references.length === 0
+    ? "source_reference_paths: []"
+    : `source_reference_paths:\n${document.source_references
+        .map(({ path }) => `  - ${JSON.stringify(path)}`).join("\n")}`;
+  return [
+    "---",
+    `generation_id: ${syncGeneration}`,
+    `domain_id: ${domain.input.domain_id}`,
+    `projection_revision: ${domain.input.projection_revision}`,
+    `manifest_checksum: ${domain.input.manifest_checksum}`,
+    `stable_id: ${document.stable_id}`,
+    `payload_path: ${JSON.stringify(document.payload_path)}`,
+    `checksum: ${document.checksum}`,
+    sourceReferenceIds,
+    sourceReferencePaths,
+    "---",
+    domainDocumentContent(payload),
+    "",
+  ].join("\n");
+};
+
 const bootstrapProjection = (
   target: BootstrapTarget,
   syncGeneration: string,
@@ -1096,6 +1216,10 @@ const normalizedDomainProjections = (
     if (!validateContract("context-projection-manifest", projection.manifest).valid) {
       throw new Error(`GENERATION_DOMAIN_MANIFEST_INVALID:${domainId}`);
     }
+    if (projection.manifest.capabilities.some(({ id, state }) =>
+      id === "current_fitness_state" && state === "available")) {
+      throw new Error(`GENERATION_CURRENT_FITNESS_STATE_FORBIDDEN:${domainId}`);
+    }
     const manifestBytes = serializeCanonicalJson(projection.manifest, {
       invalidValueReason: "GENERATION_DOMAIN_MANIFEST_INVALID",
     });
@@ -1198,6 +1322,7 @@ export async function buildGeneration(
   const registryPayload = registryPayloadFor(records, syncGeneration);
   const governingPayload = governingDigestPayload(records, authority.activeGoverningSystem);
   const projectionPayload = projectionEntriesPayload(records, syncGeneration);
+  const domainIndex = domainIndexPayload(domainPayload, syncGeneration);
   const indexPayload = indexMetadataPayload(records);
   const viewPayload = viewProjectionPayload(
     records,
@@ -1242,12 +1367,31 @@ export async function buildGeneration(
       writeArtifact(stagingDirectory, "index-metadata.json", artifact(metadata, indexPayload), ["registry.json"]),
       writeArtifact(stagingDirectory, "view-projection.json", artifact(metadata, viewPayload), ["governing-digest.json", "index-metadata.json", "projection-entries.json", "registry.json"]),
       ...(composite
-        ? [writeArtifact(
-            stagingDirectory,
-            "domain-projections.json",
-            artifact(metadata, domainPayload),
-            [],
-          )]
+        ? [
+            writeArtifact(
+              stagingDirectory,
+              "domain-projections.json",
+              artifact(metadata, domainPayload),
+              [],
+            ),
+            writeArtifact(
+              stagingDirectory,
+              "domain-index.json",
+              artifact(metadata, domainIndex),
+              ["domain-projections.json"],
+            ),
+            ...domainPayload.domains.flatMap((domain) => {
+              const indexedDomain = domainIndex.domains.find(({ domain_id }) =>
+                domain_id === domain.input.domain_id);
+              if (indexedDomain === undefined) throw new Error("GENERATION_DOMAIN_INDEX_MISSING");
+              return indexedDomain.documents.map((document) => writeTextArtifact(
+                stagingDirectory,
+                document.document_path,
+                domainProjectionDocument(domain, document, syncGeneration),
+                ["domain-index.json", "domain-projections.json"],
+              ));
+            }),
+          ]
         : []),
       ...projectionPayload.entries.map((entry) => writeTextArtifact(
         stagingDirectory,
@@ -1540,7 +1684,7 @@ export async function verifyGeneration(
       "registry.json",
       "view-projection.json",
       ...(manifest.schema_version === "cognitive-runtime.generation-manifest/v3"
-        ? ["domain-projections.json"]
+        ? ["domain-index.json", "domain-projections.json"]
         : []),
     ];
     for (const path of required) {
@@ -1581,6 +1725,7 @@ export async function verifyGeneration(
         }
       }
     }
+    let verifiedDomainPayload: DomainProjectionsPayload | null = null;
     const normalizedArtifact = artifacts.get("normalized-records.json");
     const governingArtifact = artifacts.get("governing-digest.json");
     if (normalizedArtifact !== undefined && governingArtifact !== undefined) {
@@ -1688,6 +1833,7 @@ export async function verifyGeneration(
               }
               if (!payloadsValid) issues.push("GENERATION_DOMAIN_PAYLOAD_INVALID");
             }
+            verifiedDomainPayload = domainPayloadValue as unknown as DomainProjectionsPayload;
             identitySeed = {
               contract_set: manifest.contract_version,
               builder_format_version: manifest.builder_format_version,
@@ -1722,6 +1868,10 @@ export async function verifyGeneration(
             manifest.source_revision,
             activeGoverningSystem,
           )],
+          ...(verifiedDomainPayload === null ? [] : [[
+            "domain-index.json",
+            domainIndexPayload(verifiedDomainPayload, manifest.sync_generation),
+          ]] as const),
         ]);
         for (const [path, expectedPayload] of expectedPayloads) {
           const actual = artifacts.get(path);
@@ -1792,6 +1942,37 @@ export async function verifyGeneration(
         }
       }
     }
+    if (verifiedDomainPayload !== null) {
+      const expectedDomainIndex = domainIndexPayload(
+        verifiedDomainPayload,
+        manifest.sync_generation,
+      );
+      for (const indexedDomain of expectedDomainIndex.domains) {
+        const domain = verifiedDomainPayload.domains.find(({ input }) =>
+          input.domain_id === indexedDomain.domain_id);
+        if (domain === undefined) {
+          issues.push(`GENERATION_DOMAIN_INDEX_MISSING:${indexedDomain.domain_id}`);
+          continue;
+        }
+        for (const document of indexedDomain.documents) {
+          if (!manifest.files.some(({ path }) => path === document.document_path)) {
+            issues.push(`GENERATION_DOMAIN_DOCUMENT_MISSING:${document.stable_id}`);
+            continue;
+          }
+          const content = await readFile(
+            join(generationDirectory, document.document_path),
+            "utf8",
+          );
+          if (content !== domainProjectionDocument(
+            domain,
+            document,
+            manifest.sync_generation,
+          )) {
+            issues.push(`GENERATION_DOMAIN_DOCUMENT_MISMATCH:${document.stable_id}`);
+          }
+        }
+      }
+    }
   } catch (error: unknown) {
     issues.push(error instanceof Error ? error.message : "GENERATION_VERIFY_FAILED");
   }
@@ -1801,6 +1982,23 @@ export async function verifyGeneration(
     manifest,
     manifestChecksum,
   };
+}
+
+export async function loadGenerationDomainIndexes(
+  generationDirectory: string,
+): Promise<readonly GenerationDomainIndex[]> {
+  const verification = await verifyGeneration(generationDirectory);
+  if (!verification.valid || verification.manifest === null) {
+    throw new Error(`GENERATION_DOMAIN_INDEX_INVALID:${verification.issues.join(",")}`);
+  }
+  if (verification.manifest.schema_version !== "cognitive-runtime.generation-manifest/v3") {
+    return [];
+  }
+  const artifact = parseArtifact(await readJson(join(generationDirectory, "domain-index.json")));
+  if (!isRecord(artifact.payload) || !Array.isArray(artifact.payload.domains)) {
+    throw new Error("GENERATION_DOMAIN_INDEX_INVALID");
+  }
+  return artifact.payload.domains as unknown as readonly GenerationDomainIndex[];
 }
 
 export async function activateGeneration(options: {

@@ -309,6 +309,11 @@ Composite Generations use the separate `generation-manifest/v3`,
 `activation-receipt/v3`, and `active-generation-pointer/v3` envelopes. They
 retain the v2 Contract Set for Authority artifacts while binding the normalized
 Authority revision/checksum and the sorted, verified domain projection tuples.
+For Fitness, `activation-receipt/v3.index_evidence.fitness` additionally binds
+the exact projection revision and manifest checksum, desired/indexed document
+counts, the previous revision, and zero prior stable-ID/revision, text-sentinel,
+and source-reference hits. Exact Current Fitness State is forbidden from this
+Generation/index path.
 The published v2 schemas and `generation-builder/v2` identity remain unchanged.
 
 ## 13. Contract evolution

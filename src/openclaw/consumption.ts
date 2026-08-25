@@ -8,6 +8,7 @@ import type { InstanceRuntimeConfig } from "../contracts/index.js";
 import type { CutoverTarget } from "../cutover/index.js";
 import { atomicWriteFile } from "../core/persistence.js";
 import type {
+  HostDomainIndexEvidence,
   HostIndexEvidence,
   HostSnapshot,
   HostTransitionPort,
@@ -410,6 +411,25 @@ const getAfterHostReload = async (
   throw lastError;
 };
 
+const searchResults = (value: unknown): readonly JsonRecord[] => {
+  if (!isRecord(value) || !Array.isArray(value.results)) {
+    throw new Error("OPENCLAW_DOMAIN_SEARCH_INVALID");
+  }
+  return value.results.filter(isRecord);
+};
+
+const domainDocumentMarkers = (input: {
+  readonly domainId: string;
+  readonly projectionRevision: string;
+  readonly stableId: string;
+  readonly checksum: string;
+}): readonly string[] => [
+  `domain_id: ${input.domainId}`,
+  `projection_revision: ${input.projectionRevision}`,
+  `stable_id: ${input.stableId}`,
+  `checksum: ${input.checksum}`,
+];
+
 const parseSnapshot = (
   value: HostSnapshot,
   config: InstanceRuntimeConfig,
@@ -600,7 +620,9 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
     const workspaceDirectory = assertDeepStatus(
       await this.#commands.status(this.#config.host.agent_id),
       target,
-      artifact.payload.entries.length,
+      artifact.payload.entries.length
+        + (target.domainIndexes ?? []).reduce((count, domain) =>
+          count + domain.desired_count, 0),
     );
     const search = searchSentinel(
       await this.#commands.search(
@@ -621,6 +643,105 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
       target,
       sentinel,
     );
+    const domains: HostDomainIndexEvidence[] = [];
+    for (const domain of target.domainIndexes ?? []) {
+      let indexedCount = 0;
+      for (const document of domain.documents) {
+        const result = await this.#commands.search(
+          this.#config.host.agent_id,
+          `${domain.projection_revision} ${document.stable_id} ${document.checksum}`,
+        );
+        const expectedPath = resolve(target.generationDirectory, document.document_path);
+        const match = searchResults(result).find((candidate) => {
+          const candidatePath = candidate.path;
+          const snippet = candidate.snippet;
+          return typeof candidatePath === "string"
+          && resolve(workspaceDirectory, candidatePath) === expectedPath
+          && typeof snippet === "string"
+          && domainDocumentMarkers({
+            domainId: domain.domain_id,
+            projectionRevision: domain.projection_revision,
+            stableId: document.stable_id,
+            checksum: document.checksum,
+          }).every((marker) => snippet.includes(marker));
+        });
+        if (match === undefined || typeof match.path !== "string") {
+          throw new Error(`OPENCLAW_DOMAIN_DOCUMENT_MISSING:${document.stable_id}`);
+        }
+        const retrieved = await getAfterHostReload(
+          this.#commands,
+          this.#config.host.agent_id,
+          match.path,
+        );
+        const retrievedText = isRecord(retrieved) ? retrieved.text : undefined;
+        if (!isRecord(retrieved)
+          || retrieved.path !== match.path
+          || typeof retrievedText !== "string"
+          || !domainDocumentMarkers({
+            domainId: domain.domain_id,
+            projectionRevision: domain.projection_revision,
+            stableId: document.stable_id,
+            checksum: document.checksum,
+          }).every((marker) => retrievedText.includes(marker))
+          || !retrievedText.includes(document.text_sentinel)) {
+          throw new Error(`OPENCLAW_DOMAIN_DOCUMENT_GET_MISMATCH:${document.stable_id}`);
+        }
+        indexedCount += 1;
+      }
+      const previous = (target.previousDomainIndexes ?? []).find((candidate) =>
+        candidate.domain_id === domain.domain_id);
+      const replacementPrevious = previous?.projection_revision === domain.projection_revision
+        ? undefined
+        : previous;
+      let previousStableIdHits = 0;
+      let previousTextSentinelHits = 0;
+      let previousSourceReferenceHits = 0;
+      if (replacementPrevious !== undefined) {
+        for (const document of replacementPrevious.documents) {
+          previousStableIdHits += searchResults(
+            await this.#commands.search(
+              this.#config.host.agent_id,
+              `${replacementPrevious.projection_revision} ${document.stable_id}`,
+            ),
+          ).length;
+          previousTextSentinelHits += searchResults(
+            await this.#commands.search(
+              this.#config.host.agent_id,
+              `${replacementPrevious.projection_revision} ${document.text_sentinel}`,
+            ),
+          ).length;
+          for (const reference of document.source_references) {
+            for (const marker of [reference.id, reference.path]) {
+              previousSourceReferenceHits += searchResults(
+                await this.#commands.search(
+                  this.#config.host.agent_id,
+                  `${replacementPrevious.projection_revision} ${marker}`,
+                ),
+              ).length;
+            }
+          }
+        }
+      }
+      if (previousStableIdHits !== 0
+        || previousTextSentinelHits !== 0
+        || previousSourceReferenceHits !== 0) {
+        throw new Error(`OPENCLAW_PRIOR_DOMAIN_HITS_PRESENT:${domain.domain_id}`);
+      }
+      domains.push({
+        domainId: domain.domain_id,
+        projectionRevision: domain.projection_revision,
+        manifestChecksum: domain.manifest_checksum,
+        desiredCount: domain.desired_count,
+        indexedCount,
+        previousRevision: previous?.projection_revision
+          ?? target.expectedDomainEvidence?.find(({ domainId }) =>
+            domainId === domain.domain_id)?.previousRevision
+          ?? null,
+        previousStableIdHits: 0,
+        previousTextSentinelHits: 0,
+        previousSourceReferenceHits: 0,
+      });
+    }
     return {
       deepStatus: "pass",
       generationId: target.syncGeneration,
@@ -629,6 +750,7 @@ export class OpenClawGenerationConsumptionAdapter implements HostTransitionPort 
       hostConfigChecksum: target.hostConfigChecksum,
       searchSentinelChecksum: search.checksum,
       getSentinelChecksum: getChecksum,
+      ...(domains.length === 0 ? {} : { domains }),
     };
   }
 

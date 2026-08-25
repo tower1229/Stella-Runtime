@@ -661,6 +661,18 @@ test("OpenClaw sync consumes configured Fitness projection and gates domain drif
           hostConfigChecksum: target.hostConfigChecksum,
           searchSentinelChecksum: `sha256:${"3".repeat(64)}`,
           getSentinelChecksum: `sha256:${"4".repeat(64)}`,
+          domains: target.domainIndexes.map((domain) => ({
+            domainId: domain.domain_id,
+            projectionRevision: domain.projection_revision,
+            manifestChecksum: domain.manifest_checksum,
+            desiredCount: domain.desired_count,
+            indexedCount: domain.desired_count,
+            previousRevision: target.previousDomainIndexes.find(({ domain_id }) =>
+              domain_id === domain.domain_id)?.projection_revision ?? null,
+            previousStableIdHits: 0,
+            previousTextSentinelHits: 0,
+            previousSourceReferenceHits: 0,
+          })),
         };
       },
       async restore() {},

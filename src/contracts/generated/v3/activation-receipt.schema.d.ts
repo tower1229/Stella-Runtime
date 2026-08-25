@@ -28,6 +28,7 @@ export interface CompositeActivationReceipt {
     deep_status: "pass";
     search_sentinel_checksum: Checksum;
     get_sentinel_checksum: Checksum;
+    fitness: FitnessIndexEvidence;
   };
   cutover_plan_checksum?: Checksum;
   release_channel: string;
@@ -47,4 +48,14 @@ export interface Domain {
   manifest_checksum: Checksum;
   source_revision: SourceRevision;
   as_of: string;
+}
+export interface FitnessIndexEvidence {
+  projection_revision: ProjectionRevision;
+  manifest_checksum: Checksum;
+  desired_count: number;
+  indexed_count: number;
+  previous_revision: ProjectionRevision | null;
+  previous_stable_id_hits: 0;
+  previous_text_sentinel_hits: 0;
+  previous_source_reference_hits: 0;
 }

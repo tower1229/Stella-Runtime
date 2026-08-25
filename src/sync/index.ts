@@ -35,7 +35,9 @@ import { atomicWriteFile } from "../core/persistence.js";
 import { canonicalJson as serializeCanonicalJson } from "../core/canonical-json.js";
 import {
   buildGeneration,
+  loadGenerationDomainIndexes,
   verifyGeneration,
+  type GenerationDomainIndex,
   type GenerationDomainProjectionInput,
 } from "../generation/index.js";
 import {
@@ -64,10 +66,13 @@ export interface SyncTarget {
   readonly manifestChecksum: string;
   readonly projectionChecksum: string;
   readonly hostConfigChecksum: string;
+  readonly domainIndexes?: readonly GenerationDomainIndex[];
+  readonly previousDomainIndexes?: readonly GenerationDomainIndex[];
   readonly expectedIndexEvidence?: {
     readonly searchSentinelChecksum: string;
     readonly getSentinelChecksum: string;
   };
+  readonly expectedDomainEvidence?: readonly HostDomainIndexEvidence[];
   readonly cutover?: CutoverTarget;
 }
 
@@ -79,6 +84,19 @@ export interface HostIndexEvidence {
   readonly hostConfigChecksum: string;
   readonly searchSentinelChecksum: string;
   readonly getSentinelChecksum: string;
+  readonly domains?: readonly HostDomainIndexEvidence[];
+}
+
+export interface HostDomainIndexEvidence {
+  readonly domainId: string;
+  readonly projectionRevision: string;
+  readonly manifestChecksum: string;
+  readonly desiredCount: number;
+  readonly indexedCount: number;
+  readonly previousRevision: string | null;
+  readonly previousStableIdHits: 0;
+  readonly previousTextSentinelHits: 0;
+  readonly previousSourceReferenceHits: 0;
 }
 
 export type HostSnapshot = Readonly<Record<string, unknown>>;
@@ -153,6 +171,7 @@ type SyncPhase =
   | "prepared"
   | "gate_closed"
   | "runs_drained"
+  | "host_applying"
   | "host_applied"
   | "host_verified"
   | "receipt_written"
@@ -169,6 +188,7 @@ interface SyncJournal {
   readonly startedAt: string;
   readonly phase: SyncPhase;
   readonly receiptId?: string;
+  readonly priorRestoreForbidden: boolean;
 }
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -307,6 +327,7 @@ const writeJournal = async (
   started_at: journal.startedAt,
   phase: journal.phase,
   ...(journal.receiptId === undefined ? {} : { receipt_id: journal.receiptId }),
+  prior_restore_forbidden: journal.priorRestoreForbidden,
 });
 
 const journalAt = (journal: SyncJournal, phase: SyncPhase): SyncJournal => ({
@@ -318,6 +339,7 @@ const syncPhases = new Set<SyncPhase>([
   "prepared",
   "gate_closed",
   "runs_drained",
+  "host_applying",
   "host_applied",
   "host_verified",
   "receipt_written",
@@ -344,7 +366,9 @@ const loadSyncJournal = async (runtimeStorage: string): Promise<SyncJournal | nu
     typeof value.started_at !== "string" ||
     typeof value.phase !== "string" ||
     !syncPhases.has(value.phase as SyncPhase) ||
-    (value.receipt_id !== undefined && typeof value.receipt_id !== "string")
+    (value.receipt_id !== undefined && typeof value.receipt_id !== "string") ||
+    (value.prior_restore_forbidden !== undefined
+      && typeof value.prior_restore_forbidden !== "boolean")
   ) {
     throw new Error("SYNC_JOURNAL_INVALID");
   }
@@ -357,6 +381,7 @@ const loadSyncJournal = async (runtimeStorage: string): Promise<SyncJournal | nu
     startedAt: value.started_at,
     phase: value.phase as SyncPhase,
     ...(value.receipt_id === undefined ? {} : { receiptId: value.receipt_id }),
+    priorRestoreForbidden: value.prior_restore_forbidden === true,
   };
 };
 
@@ -379,6 +404,18 @@ const restorePointer = async (
   } else {
     await atomicWrite(path, pointer);
   }
+};
+
+const loadPreviousDomainIndexes = async (
+  runtimeStorage: string,
+  generationStorage: string,
+): Promise<readonly GenerationDomainIndex[]> => {
+  const pointer = await loadOptionalPointer(runtimeStorage);
+  if (pointer === null) return [];
+  if (!isRecord(pointer) || typeof pointer.generation_id !== "string") {
+    throw new Error("SYNC_PRIOR_POINTER_INVALID");
+  }
+  return loadGenerationDomainIndexes(join(generationStorage, pointer.generation_id));
 };
 
 const assertHostEvidence = (
@@ -404,6 +441,34 @@ const assertHostEvidence = (
     )
   ) {
     throw new Error("SYNC_HOST_SENTINEL_MISMATCH");
+  }
+  const domainIndexes = target.domainIndexes ?? [];
+  const previousDomainIndexes = target.previousDomainIndexes ?? [];
+  if (domainIndexes.length > 0) {
+    if (evidence.domains === undefined
+      || evidence.domains.length !== domainIndexes.length) {
+      throw new Error("SYNC_DOMAIN_INDEX_EVIDENCE_MISSING");
+    }
+    for (const domain of domainIndexes) {
+      const actual = evidence.domains.find(({ domainId }) => domainId === domain.domain_id);
+      const previous = previousDomainIndexes.find(({ domain_id }) =>
+        domain_id === domain.domain_id);
+      const expected = target.expectedDomainEvidence?.find(({ domainId }) =>
+        domainId === domain.domain_id);
+      if (actual === undefined
+        || actual.projectionRevision !== domain.projection_revision
+        || actual.manifestChecksum !== domain.manifest_checksum
+        || actual.desiredCount !== domain.desired_count
+        || actual.indexedCount !== domain.desired_count
+        || actual.previousRevision !== (expected?.previousRevision
+          ?? previous?.projection_revision
+          ?? null)
+        || actual.previousStableIdHits !== 0
+        || actual.previousTextSentinelHits !== 0
+        || actual.previousSourceReferenceHits !== 0) {
+        throw new Error(`SYNC_DOMAIN_INDEX_EVIDENCE_MISMATCH:${domain.domain_id}`);
+      }
+    }
   }
 };
 
@@ -464,10 +529,25 @@ const activeTarget = async (options: SyncRecoveryOptions): Promise<SyncTarget> =
     manifestChecksum: verification.manifestChecksum,
     projectionChecksum: projection.checksum,
     hostConfigChecksum: calculateRuntimeConfigIdentityChecksum(options.config),
+    domainIndexes: await loadGenerationDomainIndexes(generationDirectory),
+    previousDomainIndexes: [],
     expectedIndexEvidence: {
       searchSentinelChecksum: receipt.index_evidence.search_sentinel_checksum,
       getSentinelChecksum: receipt.index_evidence.get_sentinel_checksum,
     },
+    ...(receipt.schema_version === "cognitive-runtime.activation-receipt/v3" ? {
+      expectedDomainEvidence: [{
+        domainId: "fitness",
+        projectionRevision: receipt.index_evidence.fitness.projection_revision,
+        manifestChecksum: receipt.index_evidence.fitness.manifest_checksum,
+        desiredCount: receipt.index_evidence.fitness.desired_count,
+        indexedCount: receipt.index_evidence.fitness.indexed_count,
+        previousRevision: receipt.index_evidence.fitness.previous_revision,
+        previousStableIdHits: 0,
+        previousTextSentinelHits: 0,
+        previousSourceReferenceHits: 0,
+      }],
+    } : {}),
   };
 };
 
@@ -491,40 +571,67 @@ const recoverPrior = async (
 
 const recoverInterruptedSyncLocked = async (
   options: SyncRecoveryOptions,
-): Promise<void> => {
+  allowDestructiveReplacement = false,
+): Promise<SyncJournal | null> => {
   const runtimeStorage = resolve(options.config.runtime_storage);
   const interrupted = await loadSyncJournal(runtimeStorage);
-  if (interrupted === null) return;
+  if (interrupted === null) return null;
   const gate = await loadMaintenanceGate(runtimeStorage);
-  if (interrupted.phase === "prepared") {
+  if (["prepared", "gate_closed", "runs_drained"].includes(interrupted.phase)) {
     await writeJournal(runtimeStorage, journalAt(interrupted, "prior_restored"));
     await openGate(runtimeStorage);
     options.runs?.openAdmission();
-    return;
+    return null;
   }
   if (interrupted.phase === "prior_restored") {
     await openGate(runtimeStorage);
     options.runs?.openAdmission();
-    return;
+    return null;
   }
   if (
     gate === null &&
     interrupted.phase === "completed"
-  ) return;
+  ) return null;
   options.runs?.closeAdmission(interrupted.targetSourceRevision);
   if (
     interrupted.phase === "completed"
     && gate?.reasonCode === "DOMAIN_PROJECTION_DRIFT"
-  ) return;
+  ) return null;
+  if (["receipt_written", "pointer_written"].includes(interrupted.phase)) {
+    const pointer = await loadOptionalPointer(runtimeStorage);
+    if (isRecord(pointer)
+      && pointer.generation_id === interrupted.syncGeneration
+      && pointer.activation_receipt_id === interrupted.receiptId) {
+      const target = await activeTarget(options);
+      assertHostEvidence(await options.host.verifyTarget(target), target);
+      await writeJournal(runtimeStorage, journalAt(interrupted, "completed"));
+      await openGate(runtimeStorage);
+      options.runs?.openAdmission();
+      return null;
+    }
+  }
+  if (interrupted.priorRestoreForbidden && [
+    "host_applying",
+    "host_applied",
+    "host_verified",
+    "receipt_written",
+    "pointer_written",
+    "recovery_failed",
+  ].includes(interrupted.phase)) {
+    if (allowDestructiveReplacement) return interrupted;
+    await writeJournal(runtimeStorage, journalAt(interrupted, "recovery_failed"));
+    throw new Error("SYNC_DESTRUCTIVE_DOMAIN_RECOVERY_BLOCKED");
+  }
   try {
     if (interrupted.phase === "completed") {
       const target = await activeTarget(options);
       assertHostEvidence(await options.host.verifyTarget(target), target);
       await openGate(runtimeStorage);
       options.runs?.openAdmission();
-      return;
+      return null;
     }
     await recoverPrior(runtimeStorage, interrupted, options);
+    return null;
   } catch (error: unknown) {
     await writeJournal(runtimeStorage, journalAt(interrupted, "recovery_failed"));
     const reason = error instanceof Error ? error.message : "SYNC_RECOVERY_FAILED";
@@ -540,7 +647,7 @@ export async function recoverInterruptedSync(
     nodeVersion: options.nodeVersion,
   });
   const runtimeStorage = resolve(options.config.runtime_storage);
-  return runWithSyncLease(runtimeStorage, () => recoverInterruptedSyncLocked(options));
+  await runWithSyncLease(runtimeStorage, () => recoverInterruptedSyncLocked(options));
 }
 
 const generationStateDirectory = (config: InstanceRuntimeConfig): string => {
@@ -548,6 +655,25 @@ const generationStateDirectory = (config: InstanceRuntimeConfig): string => {
   if (storage === dirname(storage)) throw new Error("GENERATION_STORAGE_INVALID");
   return dirname(storage);
 };
+
+const replacementForbidsPriorRestore = (
+  target: readonly GenerationDomainIndex[],
+  previous: readonly GenerationDomainIndex[],
+): boolean => target.some((domain) => {
+  const prior = previous.find(({ domain_id }) => domain_id === domain.domain_id);
+  if (prior === undefined || prior.projection_revision === domain.projection_revision) {
+    return false;
+  }
+  if (domain.retraction_count > 0) return true;
+  return prior.documents.some((priorDocument) => {
+    const current = domain.documents.find(({ stable_id }) =>
+      stable_id === priorDocument.stable_id);
+    return current === undefined
+      || current.checksum !== priorDocument.checksum
+      || canonicalJson(current.source_references)
+        !== canonicalJson(priorDocument.source_references);
+  });
+});
 
 const syncGenerationLocked = async (
   options: SyncGenerationOptions,
@@ -562,7 +688,7 @@ const syncGenerationLocked = async (
       options.sourceRevision,
     );
   }
-  await recoverInterruptedSyncLocked(options);
+  const interruptedReplacement = await recoverInterruptedSyncLocked(options, true);
   if (options.cutover !== undefined) {
     await verifyCutoverPrerequisites(options.cutover, options.sourceRevision);
   }
@@ -606,6 +732,11 @@ const syncGenerationLocked = async (
     manifestChecksum: verification.manifestChecksum,
     projectionChecksum: projection.checksum,
     hostConfigChecksum: calculateRuntimeConfigIdentityChecksum(options.config),
+    domainIndexes: await loadGenerationDomainIndexes(built.generationDirectory),
+    previousDomainIndexes: await loadPreviousDomainIndexes(
+      runtimeStorage,
+      resolve(options.config.generation_storage),
+    ),
     ...(options.cutover === undefined ? {} : {
       cutover: {
         plan: options.cutover.plan,
@@ -613,9 +744,11 @@ const syncGenerationLocked = async (
       },
     }),
   };
-  const prior = await options.host.capture(target);
+  const prior = interruptedReplacement?.prior ?? await options.host.capture(target);
   canonicalJson(prior);
-  const priorPointer = await loadOptionalPointer(runtimeStorage);
+  const priorPointer = interruptedReplacement === null
+    ? await loadOptionalPointer(runtimeStorage)
+    : interruptedReplacement.priorPointer;
   const startedAt = now().toISOString();
   let journal: SyncJournal = {
     targetSourceRevision: options.sourceRevision,
@@ -624,6 +757,10 @@ const syncGenerationLocked = async (
     priorPointer,
     startedAt,
     phase: "prepared",
+    priorRestoreForbidden: replacementForbidsPriorRestore(
+      target.domainIndexes ?? [],
+      target.previousDomainIndexes ?? [],
+    ),
   };
   await writeJournal(runtimeStorage, journal);
   await writeGate(runtimeStorage, {
@@ -640,6 +777,8 @@ const syncGenerationLocked = async (
     journal = journalAt(journal, "runs_drained");
     await writeJournal(runtimeStorage, journal);
 
+    journal = journalAt(journal, "host_applying");
+    await writeJournal(runtimeStorage, journal);
     await options.host.applyTarget(target);
     journal = journalAt(journal, "host_applied");
     await writeJournal(runtimeStorage, journal);
@@ -684,6 +823,22 @@ const syncGenerationLocked = async (
         deep_status: "pass",
         search_sentinel_checksum: evidence.searchSentinelChecksum,
         get_sentinel_checksum: evidence.getSentinelChecksum,
+        ...(composite ? {
+          fitness: (() => {
+            const domain = evidence.domains?.find(({ domainId }) => domainId === "fitness");
+            if (domain === undefined) throw new Error("SYNC_FITNESS_INDEX_EVIDENCE_MISSING");
+            return {
+              projection_revision: domain.projectionRevision,
+              manifest_checksum: domain.manifestChecksum,
+              desired_count: domain.desiredCount,
+              indexed_count: domain.indexedCount,
+              previous_revision: domain.previousRevision,
+              previous_stable_id_hits: domain.previousStableIdHits,
+              previous_text_sentinel_hits: domain.previousTextSentinelHits,
+              previous_source_reference_hits: domain.previousSourceReferenceHits,
+            };
+          })(),
+        } : {}),
       },
       ...(options.cutover === undefined ? {} : {
         cutover_plan_checksum: options.cutover.plan.checksum,
@@ -749,6 +904,17 @@ const syncGenerationLocked = async (
     };
   } catch (error: unknown) {
     if (targetCommitted) throw error;
+    if (journal.priorRestoreForbidden && [
+      "host_applying",
+      "host_applied",
+      "host_verified",
+      "receipt_written",
+      "pointer_written",
+    ].includes(journal.phase)) {
+      journal = journalAt(journal, "recovery_failed");
+      await writeJournal(runtimeStorage, journal);
+      throw new Error("SYNC_DESTRUCTIVE_DOMAIN_RECOVERY_BLOCKED", { cause: error });
+    }
     try {
       await recoverPrior(runtimeStorage, journal, options);
     } catch (recoveryError: unknown) {

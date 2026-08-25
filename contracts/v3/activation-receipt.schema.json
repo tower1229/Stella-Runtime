@@ -19,11 +19,12 @@
     "index_evidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["deep_status", "search_sentinel_checksum", "get_sentinel_checksum"],
+      "required": ["deep_status", "search_sentinel_checksum", "get_sentinel_checksum", "fitness"],
       "properties": {
         "deep_status": { "const": "pass" },
         "search_sentinel_checksum": { "$ref": "#/$defs/checksum" },
-        "get_sentinel_checksum": { "$ref": "#/$defs/checksum" }
+        "get_sentinel_checksum": { "$ref": "#/$defs/checksum" },
+        "fitness": { "$ref": "#/$defs/fitnessIndexEvidence" }
       }
     },
     "cutover_plan_checksum": { "$ref": "#/$defs/checksum" },
@@ -42,6 +43,21 @@
     "checksum": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
     "authority": { "type": "object", "additionalProperties": false, "required": ["revision", "checksum"], "properties": { "revision": { "$ref": "#/$defs/authorityRevision" }, "checksum": { "$ref": "#/$defs/checksum" } } },
     "domain": { "type": "object", "additionalProperties": false, "required": ["domain_id", "status", "projection_revision", "pointer_revision", "manifest_checksum", "source_revision", "as_of"], "properties": { "domain_id": { "$ref": "#/$defs/id" }, "status": { "enum": ["active", "stale"] }, "projection_revision": { "$ref": "#/$defs/projectionRevision" }, "pointer_revision": { "$ref": "#/$defs/pointerRevision" }, "manifest_checksum": { "$ref": "#/$defs/checksum" }, "source_revision": { "$ref": "#/$defs/sourceRevision" }, "as_of": { "type": "string", "format": "date-time" } } },
-    "domains": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/domain" } }
+    "domains": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/domain" } },
+    "fitnessIndexEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projection_revision", "manifest_checksum", "desired_count", "indexed_count", "previous_revision", "previous_stable_id_hits", "previous_text_sentinel_hits", "previous_source_reference_hits"],
+      "properties": {
+        "projection_revision": { "$ref": "#/$defs/projectionRevision" },
+        "manifest_checksum": { "$ref": "#/$defs/checksum" },
+        "desired_count": { "type": "integer", "minimum": 0 },
+        "indexed_count": { "type": "integer", "minimum": 0 },
+        "previous_revision": { "oneOf": [{ "$ref": "#/$defs/projectionRevision" }, { "type": "null" }] },
+        "previous_stable_id_hits": { "const": 0 },
+        "previous_text_sentinel_hits": { "const": 0 },
+        "previous_source_reference_hits": { "const": 0 }
+      }
+    }
   }
 }

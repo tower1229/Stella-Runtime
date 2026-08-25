@@ -14,6 +14,7 @@ import type {
 import {
   buildGeneration,
   generationDomainIdentity,
+  loadGenerationDomainIndexes,
   showGeneration,
   validateAuthoritySource,
 } from "../generation/index.js";
@@ -383,14 +384,19 @@ const plugin = {
               const projection = active.manifest.files.find((file) =>
                 file.path === "projection-entries.json");
               if (projection === undefined) throw new Error("ACTIVE_PROJECTION_MISSING");
+              const generationDirectory = join(
+                runtimeConfig.generation_storage,
+                active.pointer.generation_id,
+              );
+              const compositeReceipt = active.receipt.schema_version
+                === "cognitive-runtime.activation-receipt/v3"
+                ? active.receipt
+                : null;
               await hostTransition.verifyTarget({
                 config: runtimeConfig,
                 sourceRevision: active.pointer.source_revision,
                 syncGeneration: active.pointer.generation_id,
-                generationDirectory: join(
-                  runtimeConfig.generation_storage,
-                  active.pointer.generation_id,
-                ),
+                generationDirectory,
                 projectionDirectory: join(
                   runtimeConfig.generation_storage,
                   active.pointer.generation_id,
@@ -400,12 +406,30 @@ const plugin = {
                 manifestChecksum: active.pointer.manifest_checksum,
                 projectionChecksum: projection.checksum,
                 hostConfigChecksum: active.receipt.host_config_checksum,
+                domainIndexes: await loadGenerationDomainIndexes(generationDirectory),
+                previousDomainIndexes: [],
                 expectedIndexEvidence: {
                   searchSentinelChecksum:
                     active.receipt.index_evidence.search_sentinel_checksum,
                   getSentinelChecksum:
                     active.receipt.index_evidence.get_sentinel_checksum,
                 },
+                ...(compositeReceipt === null ? {} : {
+                  expectedDomainEvidence: [{
+                    domainId: "fitness",
+                    projectionRevision:
+                      compositeReceipt.index_evidence.fitness.projection_revision,
+                    manifestChecksum:
+                      compositeReceipt.index_evidence.fitness.manifest_checksum,
+                    desiredCount: compositeReceipt.index_evidence.fitness.desired_count,
+                    indexedCount: compositeReceipt.index_evidence.fitness.indexed_count,
+                    previousRevision:
+                      compositeReceipt.index_evidence.fitness.previous_revision,
+                    previousStableIdHits: 0,
+                    previousTextSentinelHits: 0,
+                    previousSourceReferenceHits: 0,
+                  }],
+                }),
               });
             },
           },

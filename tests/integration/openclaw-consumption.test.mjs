@@ -9,7 +9,14 @@ import {
   OpenClawCliRetrievalCommands,
   OpenClawGenerationConsumptionAdapter,
 } from "../../dist/openclaw/consumption.js";
-import { buildGeneration } from "../../dist/generation/index.js";
+import {
+  buildGeneration,
+  loadGenerationDomainIndexes,
+} from "../../dist/generation/index.js";
+import {
+  ProjectionDeterminismLedger,
+  runProjectionProducerConformance,
+} from "../../dist/personal-data/projection.js";
 import {
   commitSyntheticAuthority,
   writeSyntheticAuthority,
@@ -17,6 +24,41 @@ import {
 
 const checksum = (value) =>
   `sha256:${createHash("sha256").update(value).digest("hex")}`;
+
+const fitnessProjection = (revision, content) => {
+  const publication = runProjectionProducerConformance({
+    instanceId: "instance-synthetic",
+    producerId: "stella-fitness",
+    consumerId: "stella-runtime",
+    canonicalSourceSnapshot: { revision, sourceAsOf: "2026-08-24T00:00:00Z" },
+    determinismLedger: new ProjectionDeterminismLedger(),
+    categories: ["fitness_history"],
+    sourceReferences: [{
+      id: "fitness-source",
+      path: "fitness/history/session.md",
+      revision,
+      checksum: checksum(revision),
+    }],
+    conflicts: [],
+    retractions: [],
+    capabilities: [{ id: "fitness_history_context", state: "available" }],
+    payloads: [{ path: "payloads/history.md", mediaType: "text/markdown", value: content }],
+    generatedAt: "2026-08-24T00:01:00Z",
+  });
+  return {
+    domainId: "fitness",
+    projection: {
+      status: "active",
+      projectionRevision: publication.projectionRevision,
+      pointerRevision: `pointer-${createHash("sha256").update(revision).digest("hex")}`,
+      manifestChecksum: publication.manifestChecksum,
+      sourceRevision: publication.manifest.source.revision,
+      asOf: publication.manifest.source.as_of,
+      manifest: publication.manifest,
+      payloads: publication.payloads,
+    },
+  };
+};
 
 const runtimeConfig = (root) => ({
   schema_version: "cognitive-runtime.instance-runtime-config/v2",
@@ -429,6 +471,134 @@ test("OpenClaw adapter proves deep status plus bound search and get sentinels", 
     adapter.verifyTarget(target),
     /OPENCLAW_DEEP_STATUS_FAILED/,
   );
+});
+
+test("OpenClaw adapter proves the complete Fitness desired set and prior revision zero hits", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-openclaw-fitness-index-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = runtimeConfig(root);
+  await writeSyntheticAuthority(config.adapters.authority_checkout);
+  const sourceRevision = await commitSyntheticAuthority(config.adapters.authority_checkout);
+  const stateDirectory = join(root, "generation-state");
+  const prior = await buildGeneration({
+    authorityDirectory: config.adapters.authority_checkout,
+    stateDirectory,
+    generationsDirectory: config.generation_storage,
+    sourceRevision,
+    packageVersion: "0.2.1-test",
+    domainProjections: [fitnessProjection(
+      "fitness-prior",
+      "# Fitness history\n\nOld injury claim.\n",
+    )],
+  });
+  const targetBuild = await buildGeneration({
+    authorityDirectory: config.adapters.authority_checkout,
+    stateDirectory,
+    generationsDirectory: config.generation_storage,
+    sourceRevision,
+    packageVersion: "0.2.1-test",
+    domainProjections: [fitnessProjection(
+      "fitness-target",
+      "# Fitness history\n\nCorrected: no injury claim.\n",
+    )],
+  });
+  const domainIndexes = await loadGenerationDomainIndexes(targetBuild.generationDirectory);
+  const previousDomainIndexes = await loadGenerationDomainIndexes(prior.generationDirectory);
+  const projectionArtifact = JSON.parse(await readFile(
+    join(targetBuild.generationDirectory, "projection-entries.json"),
+    "utf8",
+  ));
+  const authorityEntry = [...projectionArtifact.payload.entries]
+    .sort((left, right) => left.stable_id.localeCompare(right.stable_id))[0];
+  const authorityPath = targetBuild.manifest.files
+    .map(({ path }) => path)
+    .find((path) => path.includes(`/${authorityEntry.stable_id}/`) && path.endsWith(".md"));
+  const domainDocument = domainIndexes[0].documents[0];
+  const documents = new Map();
+  for (const path of [authorityPath, domainDocument.document_path]) {
+    const relativePath = relative(root, join(targetBuild.generationDirectory, path));
+    documents.set(relativePath, await readFile(join(targetBuild.generationDirectory, path), "utf8"));
+  }
+  const target = {
+    ...syncTarget(config, join(
+      targetBuild.generationDirectory,
+      "projections",
+      targetBuild.syncGeneration,
+    )),
+    sourceRevision,
+    syncGeneration: targetBuild.syncGeneration,
+    generationDirectory: targetBuild.generationDirectory,
+    projectionChecksum: targetBuild.manifest.files.find(
+      ({ path }) => path === "projection-entries.json",
+    ).checksum,
+    domainIndexes,
+    previousDomainIndexes,
+  };
+  const adapter = new OpenClawGenerationConsumptionAdapter(config, {
+    config: {
+      current: () => ({
+        agents: { list: [{ id: "main", memorySearch: { extraPaths: [target.projectionDirectory] } }] },
+      }),
+      async mutateConfigFile() { throw new Error("UNEXPECTED_MUTATION"); },
+    },
+  }, {
+    async index() { throw new Error("UNEXPECTED_INDEX"); },
+    async status(agentId) {
+      const count = projectionArtifact.payload.entries.length + domainIndexes[0].desired_count;
+      return [{
+        agentId,
+        status: {
+          backend: "builtin",
+          workspaceDir: root,
+          files: count,
+          chunks: count,
+          dirty: false,
+          extraPaths: [target.projectionDirectory],
+          vector: {
+            enabled: true,
+            storeAvailable: true,
+            semanticAvailable: true,
+            available: true,
+          },
+        },
+        embeddingProbe: { ok: true },
+        scan: { totalFiles: count, issues: [] },
+      }];
+    },
+    async search(_agentId, query) {
+      if (query.includes(previousDomainIndexes[0].projection_revision)) {
+        return { results: [] };
+      }
+      const expectedPath = query.includes(domainDocument.stable_id)
+        ? relative(root, join(targetBuild.generationDirectory, domainDocument.document_path))
+        : relative(root, join(targetBuild.generationDirectory, authorityPath));
+      const text = documents.get(expectedPath);
+      return { results: [{
+        path: expectedPath,
+        startLine: 1,
+        endLine: text.split("\n").length,
+        snippet: text,
+      }] };
+    },
+    async get(_agentId, path) {
+      const text = documents.get(path);
+      return { path, text, from: 1, lines: text.split("\n").length };
+    },
+  });
+
+  const evidence = await adapter.verifyTarget(target);
+
+  assert.deepEqual(evidence.domains, [{
+    domainId: "fitness",
+    projectionRevision: domainIndexes[0].projection_revision,
+    manifestChecksum: domainIndexes[0].manifest_checksum,
+    desiredCount: 1,
+    indexedCount: 1,
+    previousRevision: previousDomainIndexes[0].projection_revision,
+    previousStableIdHits: 0,
+    previousTextSentinelHits: 0,
+    previousSourceReferenceHits: 0,
+  }]);
 });
 
 test("OpenClaw adapter restores prior ownership without deleting newly unrelated paths", async (t) => {

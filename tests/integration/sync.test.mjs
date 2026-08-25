@@ -25,7 +25,11 @@ import {
 
 const checksum = (character) => `sha256:${character.repeat(64)}`;
 
-const fitnessDomain = (revision, content = "# Fitness history\n\nSynthetic session.\n") => {
+const fitnessDomain = (
+  revision,
+  content = "# Fitness history\n\nSynthetic session.\n",
+  { sourceReferences = [], retractions = [] } = {},
+) => {
   const publication = runProjectionProducerConformance({
     instanceId: "instance-synthetic",
     producerId: "stella-fitness",
@@ -33,9 +37,9 @@ const fitnessDomain = (revision, content = "# Fitness history\n\nSynthetic sessi
     canonicalSourceSnapshot: { revision, sourceAsOf: "2026-08-24T00:00:00Z" },
     determinismLedger: new ProjectionDeterminismLedger(),
     categories: ["fitness_history"],
-    sourceReferences: [],
+    sourceReferences,
     conflicts: [],
-    retractions: [],
+    retractions,
     capabilities: [{ id: "fitness_history_context", state: "available" }],
     payloads: [{ path: "payloads/history.md", mediaType: "text/markdown", value: content }],
     generatedAt: "2026-08-24T00:01:00Z",
@@ -271,6 +275,8 @@ test("sync v3 repeats the exact Authority/domain tuple in Receipt and final Poin
     async applyTarget() { events.push("apply"); },
     async verifyTarget(target) {
       events.push("verify");
+      assert.equal(target.domainIndexes[0].desired_count, 1);
+      const previousRevision = target.previousDomainIndexes[0]?.projection_revision ?? null;
       return {
         deepStatus: "pass",
         generationId: target.syncGeneration,
@@ -279,6 +285,17 @@ test("sync v3 repeats the exact Authority/domain tuple in Receipt and final Poin
         hostConfigChecksum: target.hostConfigChecksum,
         searchSentinelChecksum: checksum("3"),
         getSentinelChecksum: checksum("4"),
+        domains: [{
+          domainId: "fitness",
+          projectionRevision: domain.projection.projectionRevision,
+          manifestChecksum: domain.projection.manifestChecksum,
+          desiredCount: 1,
+          indexedCount: 1,
+          previousRevision,
+          previousStableIdHits: 0,
+          previousTextSentinelHits: 0,
+          previousSourceReferenceHits: 0,
+        }],
       };
     },
     async restore() { events.push("restore"); },
@@ -292,6 +309,19 @@ test("sync v3 repeats the exact Authority/domain tuple in Receipt and final Poin
     hostVersion: "2026.6.34",
     nodeVersion: process.versions.node,
     domainProjections: [domain],
+    domainProjectionReader: {
+      async read() {
+        return {
+          domain_id: "fitness",
+          status: domain.projection.status,
+          projection_revision: domain.projection.projectionRevision,
+          pointer_revision: domain.projection.pointerRevision,
+          manifest_checksum: domain.projection.manifestChecksum,
+          source_revision: domain.projection.sourceRevision,
+          as_of: domain.projection.asOf,
+        };
+      },
+    },
     host,
     runs,
   };
@@ -309,6 +339,16 @@ test("sync v3 repeats the exact Authority/domain tuple in Receipt and final Poin
   assert.deepEqual(receipt.authority, manifest.authority);
   assert.deepEqual(pointer.authority, manifest.authority);
   assert.deepEqual(receipt.domains, manifest.domains);
+  assert.deepEqual(receipt.index_evidence.fitness, {
+    projection_revision: domain.projection.projectionRevision,
+    manifest_checksum: domain.projection.manifestChecksum,
+    desired_count: 1,
+    indexed_count: 1,
+    previous_revision: null,
+    previous_stable_id_hits: 0,
+    previous_text_sentinel_hits: 0,
+    previous_source_reference_hits: 0,
+  });
   assert.deepEqual(pointer.domains, manifest.domains);
   assert.equal(pointer.activation_receipt_id, receipt.receipt_id);
   assert.deepEqual(events, [
@@ -323,6 +363,137 @@ test("sync v3 repeats the exact Authority/domain tuple in Receipt and final Poin
   await closeMaintenanceGate(config.runtime_storage, sourceRevision);
   const repaired = await syncGeneration(syncOptions);
   assert.equal(repaired.reusedGeneration, true);
+  assert.equal(await loadMaintenanceGate(config.runtime_storage), null);
+});
+
+test("a failed destructive Fitness replacement stays gated instead of restoring leaking prior content", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-sync-destructive-domain-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = runtimeConfig(root);
+  await writeSyntheticAuthority(config.adapters.authority_checkout);
+  const sourceRevision = await commitSyntheticAuthority(config.adapters.authority_checkout);
+  const priorSource = {
+    id: "fitness-injury-claim",
+    path: "fitness/history/injury.md",
+    revision: "fitness-prior",
+    checksum: checksum("a"),
+  };
+  const priorDomain = fitnessDomain(
+    "fitness-prior",
+    "# Fitness history\n\nOld injury claim.\n",
+    { sourceReferences: [priorSource] },
+  );
+  const evidenceFor = (target) => ({
+    deepStatus: "pass",
+    generationId: target.syncGeneration,
+    sourceRevision: target.sourceRevision,
+    projectionChecksum: target.projectionChecksum,
+    hostConfigChecksum: target.hostConfigChecksum,
+    searchSentinelChecksum: checksum("3"),
+    getSentinelChecksum: checksum("4"),
+    domains: target.domainIndexes.map((domain) => ({
+      domainId: domain.domain_id,
+      projectionRevision: domain.projection_revision,
+      manifestChecksum: domain.manifest_checksum,
+      desiredCount: domain.desired_count,
+      indexedCount: domain.desired_count,
+      previousRevision: target.previousDomainIndexes.find(({ domain_id }) =>
+        domain_id === domain.domain_id)?.projection_revision ?? null,
+      previousStableIdHits: 0,
+      previousTextSentinelHits: 0,
+      previousSourceReferenceHits: 0,
+    })),
+  });
+  const prior = await syncGeneration({
+    config,
+    sourceRevision,
+    packageVersion: "0.2.1-test",
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+    domainProjections: [priorDomain],
+    host: {
+      async capture() { return { config_revision: "empty" }; },
+      async applyTarget() {},
+      async verifyTarget(target) { return evidenceFor(target); },
+      async restore() {},
+      async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
+    },
+    runs: { closeAdmission() {}, openAdmission() {}, async drain() {} },
+  });
+  const priorPointer = JSON.parse(await readFile(prior.pointerPath, "utf8"));
+  const correctedDomain = fitnessDomain(
+    "fitness-corrected",
+    "# Fitness history\n\nCorrected: no injury claim.\n",
+    {
+      sourceReferences: [{
+        ...priorSource,
+        revision: "fitness-corrected",
+        checksum: checksum("b"),
+      }],
+      retractions: [{
+        id: "retract-injury-claim",
+        source_reference_id: priorSource.id,
+        retracted_revision: priorDomain.projection.projectionRevision,
+      }],
+    },
+  );
+  const events = [];
+
+  await assert.rejects(syncGeneration({
+    config,
+    sourceRevision,
+    packageVersion: "0.2.1-test",
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+    domainProjections: [correctedDomain],
+    host: {
+      async capture() { events.push("capture"); return { config_revision: "prior" }; },
+      async applyTarget() { events.push("apply"); throw new Error("INDEX_FAILED"); },
+      async verifyTarget() { throw new Error("UNEXPECTED_VERIFY"); },
+      async restore() { events.push("restore"); },
+      async verifyPrior() { events.push("verify-prior"); throw new Error("UNEXPECTED_PRIOR"); },
+    },
+    runs: {
+      closeAdmission() { events.push("close"); },
+      openAdmission() { events.push("open"); },
+      async drain() { events.push("drain"); },
+    },
+  }), /SYNC_DESTRUCTIVE_DOMAIN_RECOVERY_BLOCKED/);
+
+  assert.deepEqual(events, ["capture", "close", "drain", "apply"]);
+  assert.notEqual(await loadMaintenanceGate(config.runtime_storage), null);
+  assert.deepEqual(
+    JSON.parse(await readFile(prior.pointerPath, "utf8")),
+    priorPointer,
+  );
+  const journal = JSON.parse(await readFile(
+    join(config.runtime_storage, "sync-journal.json"),
+    "utf8",
+  ));
+  assert.equal(journal.phase, "recovery_failed");
+  assert.equal(journal.prior_restore_forbidden, true);
+
+  const resumed = await syncGeneration({
+    config,
+    sourceRevision,
+    packageVersion: "0.2.1-test",
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+    domainProjections: [correctedDomain],
+    host: {
+      async capture() { throw new Error("MUST_REUSE_DURABLE_PRIOR_SNAPSHOT"); },
+      async applyTarget() { events.push("resume-apply"); },
+      async verifyTarget(target) { return evidenceFor(target); },
+      async restore() { throw new Error("UNEXPECTED_RESTORE"); },
+      async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
+    },
+    runs: { closeAdmission() {}, openAdmission() {}, async drain() {} },
+  });
+  const resumedPointer = JSON.parse(await readFile(resumed.pointerPath, "utf8"));
+  assert.equal(
+    resumedPointer.domains[0].projection_revision,
+    correctedDomain.projection.projectionRevision,
+  );
   assert.equal(await loadMaintenanceGate(config.runtime_storage), null);
 });
 
@@ -768,6 +939,132 @@ test("startup resolves a prepared Journal and orphan Gate without Host mutation"
     },
   });
   assert.equal(await loadMaintenanceGate(config.runtime_storage), null);
+});
+
+test("restart recovery covers every pre-pointer journal phase without exposing a mixed state", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-sync-phase-recovery-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = runtimeConfig(root);
+  await writeSyntheticAuthority(config.adapters.authority_checkout);
+  const priorRevision = await commitSyntheticAuthority(config.adapters.authority_checkout);
+  const prior = await installPriorActivation(config, priorRevision);
+  const restored = [];
+  const host = {
+    async capture() { throw new Error("UNEXPECTED_CAPTURE"); },
+    async applyTarget() { throw new Error("UNEXPECTED_APPLY"); },
+    async verifyTarget() { throw new Error("UNEXPECTED_TARGET_VERIFY"); },
+    async restore(snapshot) { restored.push(snapshot.phase); },
+    async verifyPrior(_snapshot, target) {
+      return {
+        deepStatus: "pass",
+        generationId: target.syncGeneration,
+        sourceRevision: target.sourceRevision,
+        projectionChecksum: target.projectionChecksum,
+        hostConfigChecksum: target.hostConfigChecksum,
+        searchSentinelChecksum: checksum("7"),
+        getSentinelChecksum: checksum("8"),
+      };
+    },
+  };
+  for (const phase of [
+    "prepared",
+    "gate_closed",
+    "runs_drained",
+    "host_applying",
+    "host_applied",
+    "host_verified",
+    "receipt_written",
+  ]) {
+    await writeFile(join(config.runtime_storage, "active-generation.json"), JSON.stringify(
+      prior.pointer,
+    ));
+    await writeFile(join(config.runtime_storage, "maintenance-gate.json"), JSON.stringify({
+      target_source_revision: "b".repeat(40),
+      closed_at: "2026-08-17T00:00:00.000Z",
+    }));
+    await writeFile(join(config.runtime_storage, "sync-journal.json"), JSON.stringify({
+      target_source_revision: "b".repeat(40),
+      sync_generation: `generation-${"b".repeat(64)}`,
+      prior: { phase },
+      prior_pointer: prior.pointer,
+      started_at: "2026-08-17T00:00:00.000Z",
+      phase,
+      prior_restore_forbidden: false,
+      ...(phase === "receipt_written" ? { receipt_id: "activation-target" } : {}),
+    }));
+
+    await recoverInterruptedSync({
+      config,
+      hostVersion: "2026.6.34",
+      nodeVersion: process.versions.node,
+      host,
+    });
+    assert.equal(await loadMaintenanceGate(config.runtime_storage), null, phase);
+    assert.equal(JSON.parse(await readFile(
+      join(config.runtime_storage, "sync-journal.json"),
+      "utf8",
+    )).phase, "prior_restored", phase);
+  }
+  assert.deepEqual(restored, [
+    "host_applying",
+    "host_applied",
+    "host_verified",
+    "receipt_written",
+  ]);
+});
+
+test("restart verifies a fully written target Pointer before completing the Journal", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-sync-pointer-recovery-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = runtimeConfig(root);
+  await writeSyntheticAuthority(config.adapters.authority_checkout);
+  const sourceRevision = await commitSyntheticAuthority(config.adapters.authority_checkout);
+  const active = await installPriorActivation(config, sourceRevision);
+  await writeFile(join(config.runtime_storage, "maintenance-gate.json"), JSON.stringify({
+    target_source_revision: sourceRevision,
+    closed_at: "2026-08-17T00:00:00.000Z",
+  }));
+  await writeFile(join(config.runtime_storage, "sync-journal.json"), JSON.stringify({
+    target_source_revision: sourceRevision,
+    sync_generation: active.built.syncGeneration,
+    prior: { config_revision: "older" },
+    prior_pointer: null,
+    started_at: "2026-08-17T00:00:00.000Z",
+    phase: "pointer_written",
+    receipt_id: "activation-prior",
+    prior_restore_forbidden: false,
+  }));
+  let restored = false;
+
+  await recoverInterruptedSync({
+    config,
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+    host: {
+      async capture() { throw new Error("UNEXPECTED_CAPTURE"); },
+      async applyTarget() { throw new Error("UNEXPECTED_APPLY"); },
+      async verifyTarget(target) {
+        return {
+          deepStatus: "pass",
+          generationId: target.syncGeneration,
+          sourceRevision: target.sourceRevision,
+          projectionChecksum: target.projectionChecksum,
+          hostConfigChecksum: target.hostConfigChecksum,
+          searchSentinelChecksum: checksum("7"),
+          getSentinelChecksum: checksum("8"),
+        };
+      },
+      async restore() { restored = true; },
+      async verifyPrior() { throw new Error("UNEXPECTED_PRIOR_VERIFY"); },
+    },
+  });
+
+  assert.equal(restored, false);
+  assert.equal(await loadMaintenanceGate(config.runtime_storage), null);
+  assert.equal(JSON.parse(await readFile(
+    join(config.runtime_storage, "sync-journal.json"),
+    "utf8",
+  )).phase, "completed");
 });
 
 test("restart recovers an interrupted Journal before beginning another target", async (t) => {

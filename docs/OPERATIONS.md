@@ -65,11 +65,25 @@ When the public Host config contains the validated Stella Personal Data
 locator, `sync` also consumes the verified Fitness-to-Stella projection. It
 builds `generation-builder/v3`, and repeats the exact Authority checksum plus
 sorted domain projection/pointer/checksum tuple in the Manifest, Activation
-Receipt, and final Active Pointer. A blocked/revoked projection, verification
-failure, or tuple drift fails closed. Both `before_prompt_build` and
+Receipt, and final Active Pointer. Each Fitness revision is materialized as one
+complete desired set under the immutable Generation projection directory;
+payload-path-derived stable IDs do not change when content is corrected. Host
+verification requires every desired document to be indexed and proves the prior
+revision's stable-ID/revision, text sentinel, and source reference combinations
+have zero Runtime-managed hits. These counts and the previous revision are
+persisted in `index_evidence.fitness` before the Active Pointer is replaced.
+A blocked/revoked projection, verification failure, or tuple drift fails closed.
+Both `before_prompt_build` and
 `before_agent_run` re-read the domain pointer; an already-started Run retains
 its one Generation and State View, while `enforce` blocks the final Host request
 if the tuple no longer matches.
+
+If a correction, deletion, or retraction changes/removes an indexed Fitness
+document and target indexing becomes uncertain, Runtime does not restore the
+leaking prior Fitness desired set. The durable Gate and Journal remain blocked;
+a later idempotent `sync` reuses the recorded pre-transition snapshot and may
+complete a verified non-leaking target. Startup recovery alone never opens this
+state.
 
 Use `openclaw cognitive generation show --json` for the current Active/latest
 Source Revisions, Synchronization Gap, Pending Activation, Generation and

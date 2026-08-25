@@ -646,6 +646,17 @@ test("filesystem compiler negotiates v3 and fail-closes domain tuple drift", asy
           hostConfigChecksum: target.hostConfigChecksum,
           searchSentinelChecksum: `sha256:${"3".repeat(64)}`,
           getSentinelChecksum: `sha256:${"4".repeat(64)}`,
+          domains: target.domainIndexes.map((indexed) => ({
+            domainId: indexed.domain_id,
+            projectionRevision: indexed.projection_revision,
+            manifestChecksum: indexed.manifest_checksum,
+            desiredCount: indexed.desired_count,
+            indexedCount: indexed.desired_count,
+            previousRevision: null,
+            previousStableIdHits: 0,
+            previousTextSentinelHits: 0,
+            previousSourceReferenceHits: 0,
+          })),
         };
       },
       async restore() {},
