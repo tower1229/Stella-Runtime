@@ -15,14 +15,18 @@ The stable workflow then installs the exact published registry version, binds it
 to the workflow tarball integrity, and repeats discovery, Gateway restart,
 Generation Consumption, failure recovery, uninstall, and config restoration.
 
-The Consumer Integration extension packs Fitness source revision
+The Fitness Generation Consumption acceptance packs Fitness source revision
 `ac1b8eaf55cf0cba4f5035b82ff74ac5ddd8cf8e`, publishes F1, activates G1, then
 publishes corrected F2 and proves a distinct G2 Receipt, exact Host retrieval,
-and next Eligible Run consumption with zero prior-value hits. OpenClaw
-`2026.6.34` removes an uninstalled Plugin's complete config entry; acceptance
-therefore preserves canonical Fitness data and the last verified projection,
-requires Fitness to reject the missing locator, and restores the same locator
-explicitly after Runtime reinstall rather than copying or guessing the path.
+and next Eligible Run consumption with zero prior-value hits. A subsequent
+destructive Fitness replacement with forced index failure keeps the Gate closed
+and reaches zero final Agent model requests before an exact retry recovers. The
+same acceptance force-upgrades both packed Plugins and preserves the consumer
+artifacts. OpenClaw `2026.6.34` removes an uninstalled Plugin's complete config
+entry; acceptance therefore preserves canonical Fitness data and the last
+verified projection, requires Fitness to reject the missing locator, and
+restores the same locator explicitly after Runtime reinstall rather than copying
+or guessing the path.
 
 ## Runtime 0.2 Generation Consumption acceptance
 

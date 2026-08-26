@@ -18,7 +18,7 @@ Versioning; cognitive contract namespaces remain independently versioned.
 - adds a pinned packed Fitness consumer to exact-host verification, proving F1
   to G1 and corrected F2 to distinct G2 consumption, lifecycle data retention,
   fail-closed locator loss, explicit locator restoration after reinstall, and
-  the full recovery and replacement matrix without publishing either package.
+  exact prior-value replacement evidence without publishing either package.
 
 ## [0.2.1] - 2026-08-21
 

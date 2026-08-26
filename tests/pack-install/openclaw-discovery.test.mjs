@@ -32,9 +32,14 @@ const checksum = (value) =>
 const contractChecksum = (digit) => `sha256:${digit.repeat(64)}`;
 
 function parseJsonOutput(output) {
-  const start = output.indexOf("{");
-  assert.notEqual(start, -1, `JSON output missing: ${output}`);
-  return JSON.parse(output.slice(start));
+  for (let start = output.lastIndexOf("{"); start >= 0; start = output.lastIndexOf("{", start - 1)) {
+    try {
+      return JSON.parse(output.slice(start));
+    } catch {
+      // A command may emit an earlier recovery receipt before its final JSON result.
+    }
+  }
+  assert.fail(`JSON output missing: ${output}`);
 }
 
 async function run(command, arguments_, options = {}) {
@@ -1293,7 +1298,90 @@ async function verifyFitnessF2Replacement({
     "Stella next Eligible Run did not consume the exact F2 projection");
   assert.equal(JSON.stringify(finalRequests[0].messages).includes("68.4"), false,
     "the final model request retained the replaced F1 Fitness value");
-  return { f2, activated };
+  return { f2, corrected, activated };
+}
+
+async function verifyFitnessBlockedReplacement({
+  runtimeConfig,
+  apiConfig,
+  initialFitness,
+  activeFitness,
+  authorityRevision,
+  environment,
+  modelServer,
+  restartGateway,
+}) {
+  const pointerPath = join(runtimeConfig.runtime_storage, "active-generation.json");
+  const g2 = JSON.parse(await readFile(pointerPath, "utf8"));
+  const corrected = await initialFitness.harness.correctBodyWeight({
+    replacesObservationId: activeFitness.corrected.observation.id,
+    text: "correct body weight to 66.8 kg",
+    receivedAt: "2026-08-24T00:04:00.000Z",
+  });
+  assert.equal(corrected.status, "recorded");
+  const f3 = await initialFitness.fitness.publishFitnessContextProjection({
+    openclawConfig: apiConfig,
+    generatedAt: "2026-08-24T00:05:00.000Z",
+  });
+  assert.notEqual(f3.projectionRevision, activeFitness.f2.projectionRevision);
+
+  const failureCountBefore = modelServer.control.embeddingFailureCount;
+  modelServer.control.embeddingMode = "fail";
+  try {
+    await assert.rejects(
+      run(
+        "openclaw",
+        ["cognitive", "sync", "--revision", authorityRevision, "--json"],
+        { env: environment, timeout: 180_000 },
+      ),
+      /SYNC_DESTRUCTIVE_DOMAIN_RECOVERY_BLOCKED/,
+    );
+  } finally {
+    modelServer.control.embeddingMode = "normal";
+  }
+  assert.ok(modelServer.control.embeddingFailureCount > failureCountBefore);
+  assert.deepEqual(JSON.parse(await readFile(pointerPath, "utf8")), g2);
+
+  const requestStart = modelServer.requests.length;
+  await run(
+    "openclaw",
+    [
+      "agent",
+      "--agent",
+      "main",
+      "--channel",
+      "telegram",
+      "--to",
+      "+15555550123",
+      "--message",
+      "FITNESS_BLOCKED_REPLACEMENT_RUN ELIGIBLE_GENERATION_RUN",
+      "--json",
+      "--timeout",
+      "15",
+    ],
+    { env: environment },
+  );
+  assert.deepEqual(
+    modelServer.requests.slice(requestStart).filter((request) =>
+      Array.isArray(request.messages)
+    ),
+    [],
+    "a blocked Fitness replacement reached the final model request",
+  );
+
+  const { stdout, stderr } = await run(
+    "openclaw",
+    ["cognitive", "sync", "--revision", authorityRevision, "--json"],
+    { env: environment, timeout: 180_000 },
+  );
+  const activated = parseJsonOutput(stdout.length > 0 ? stdout : stderr);
+  assert.notEqual(activated.sync_generation, g2.generation_id);
+  const g3 = JSON.parse(await readFile(pointerPath, "utf8"));
+  assert.equal(g3.domains[0].projection_revision, f3.projectionRevision);
+  await restartGateway();
+  await waitForDeepGatewayProbe(environment);
+  await waitForRuntimeHealth(runtimeConfig.runtime_storage);
+  return { f3, corrected, activated };
 }
 
 async function verifyPackedHostNegativeMatrices(environment, port, token, modelRequests) {
@@ -2168,11 +2256,21 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       restartGateway,
       apiConfig: installedConfig,
     });
-    await verifyFitnessF2Replacement({
+    const activeFitness = await verifyFitnessF2Replacement({
       runtime: installedRuntime,
       runtimeConfig,
       apiConfig: installedConfig,
       initialFitness,
+      authorityRevision: g1.publication.sourceRevision,
+      environment,
+      modelServer,
+      restartGateway,
+    });
+    await verifyFitnessBlockedReplacement({
+      runtimeConfig,
+      apiConfig: installedConfig,
+      initialFitness,
+      activeFitness,
       authorityRevision: g1.publication.sourceRevision,
       environment,
       modelServer,
@@ -2200,6 +2298,16 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
 
     await stopGateway(gateway);
     gateway = undefined;
+    await run("openclaw", ["plugins", "install", installSpec, "--force"], {
+      env: environment,
+    });
+    await assertLocatorPreserved();
+    await run(
+      "openclaw",
+      ["plugins", "install", fitnessPackage.installSpec, "--force"],
+      { env: environment },
+    );
+    await assertLocatorPreserved();
     await run("openclaw", ["plugins", "disable", "stella-fitness"], {
       env: environment,
     });
@@ -2277,6 +2385,23 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
     gateway = spawnGateway(port, token, environment);
     await waitForGatewayProcessReady(gateway);
     await waitForDeepGatewayProbe(environment);
+    const { stdout: lifecycleSyncOutput, stderr: lifecycleSyncError } = await run(
+      "openclaw",
+      ["cognitive", "sync", "--revision", g1.publication.sourceRevision, "--json"],
+      { env: environment, timeout: 180_000 },
+    );
+    const lifecycleSync = parseJsonOutput(
+      lifecycleSyncOutput.length > 0 ? lifecycleSyncOutput : lifecycleSyncError,
+    );
+    assert.equal(lifecycleSync.source_revision, g1.publication.sourceRevision);
+    const lifecyclePointer = JSON.parse(await readFile(
+      join(runtimeConfig.runtime_storage, "active-generation.json"),
+      "utf8",
+    ));
+    assert.equal(lifecyclePointer.domains[0].projection_revision,
+      (await initialFitness.fitness.readFitnessContextProjectionPointer({
+        openclawConfig: JSON.parse(await readFile(configPath, "utf8")),
+      })).projectionRevision);
     await waitForRuntimeHealth(runtimeConfig.runtime_storage);
     await verifyExactHostBeforeAgentRunGate(environment, modelServer.requests);
     await verifyPackedHostNegativeMatrices(

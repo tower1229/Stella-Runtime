@@ -134,6 +134,35 @@ test("pull requests and master pushes run capability-separated verification", as
   assert.match(workflow, /\.stella\/verification\/\$\{\{ matrix\.profile \}\}\.json/);
 });
 
+test("every exact-host workflow prepares one pinned Fitness source package", async () => {
+  const paths = [
+    "../../.github/workflows/verification.yml",
+    "../../.github/workflows/release-beta.yml",
+    "../../.github/workflows/release-stable.yml",
+  ];
+  const workflows = await Promise.all(paths.map((path) =>
+    readFile(new URL(path, import.meta.url), "utf8")
+  ));
+  const preparation = await readFile(
+    new URL("../../scripts/prepare-exact-fitness.mjs", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    preparation,
+    /FITNESS_REVISION = "ac1b8eaf55cf0cba4f5035b82ff74ac5ddd8cf8e"/,
+  );
+  assert.match(preparation, /STELLA_FITNESS_PACKAGE_ROOT=/);
+  assert.match(preparation, /STELLA_FITNESS_EXPECTED_REVISION=/);
+  for (const workflow of workflows) {
+    assert.doesNotThrow(() => parseYaml(workflow));
+    assert.match(
+      workflow,
+      /node scripts\/prepare-exact-fitness\.mjs "\$RUNNER_TEMP\/stella-fitness"/,
+    );
+  }
+});
+
 test("dependency changes are reviewed before merge", async () => {
   const workflow = await readFile(
     new URL("../../.github/workflows/dependency-review.yml", import.meta.url),
