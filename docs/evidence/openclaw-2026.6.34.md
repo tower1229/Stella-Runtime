@@ -7,7 +7,7 @@
 
 ## Unreleased Issue #34 source acceptance
 
-On 2026-08-26, local source revision `55b4fd3` plus the working Issue #34 diff
+On 2026-08-26, the local Issue #34 source tree based on revision `55b4fd3`
 passed the exact-host scenario. This is source verification only: it is not
 evidence for an npm package, GitHub Release, or published registry artifact.
 
