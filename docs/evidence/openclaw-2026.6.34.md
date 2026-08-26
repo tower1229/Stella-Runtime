@@ -5,6 +5,32 @@
 > Published stable release: `0.2.1` on Node.js `24.18.0`
 > Previous rollback version: published `0.2.0`
 
+## Unreleased Issue #34 source acceptance
+
+On 2026-08-26, local source revision `55b4fd3` plus the working Issue #34 diff
+passed the exact-host scenario. This is source verification only: it is not
+evidence for an npm package, GitHub Release, or published registry artifact.
+
+The Fitness Generation Consumption acceptance packs Fitness source revision
+`ac1b8eaf55cf0cba4f5035b82ff74ac5ddd8cf8e`, publishes F1, activates G1, then
+publishes corrected F2 and proves a distinct G2 Receipt, exact Host retrieval,
+and next Eligible Run consumption with zero prior-value hits. A subsequent
+destructive Fitness replacement with forced index failure keeps the Gate closed
+and reaches zero final Agent model requests before an exact retry recovers. The
+same acceptance force-upgrades both packed Plugins and preserves the consumer
+artifacts; after reinstall and resync, a real Eligible Run consumes the exact F3
+projection revision without the replaced F2 revision. OpenClaw `2026.6.34`
+removes an uninstalled Plugin's complete config entry; acceptance therefore
+preserves canonical Fitness data and the last verified projection, requires
+Fitness to reject the missing locator, and restores the same locator explicitly
+after Runtime reinstall rather than copying or guessing the path.
+
+The real-Host scenario exercises representative successful and destructive
+Fitness replacements. The exhaustive stale, blocked, revoked, checksum,
+source-instability, invalid-edit, publication-crash, rollback, and idempotency
+matrix remains at the packed public projection contract and integration seams;
+it is not repeated as a cross-product of every filesystem fault and Host Run.
+
 ## Runtime 0.2.1 fail-closed and registry acceptance
 
 On 2026-08-21, the `0.2.1` source target passed the complete packed exact-host
@@ -14,19 +40,6 @@ the bounded Router completion, and stops before the final Agent model request.
 The stable workflow then installs the exact published registry version, binds it
 to the workflow tarball integrity, and repeats discovery, Gateway restart,
 Generation Consumption, failure recovery, uninstall, and config restoration.
-
-The Fitness Generation Consumption acceptance packs Fitness source revision
-`ac1b8eaf55cf0cba4f5035b82ff74ac5ddd8cf8e`, publishes F1, activates G1, then
-publishes corrected F2 and proves a distinct G2 Receipt, exact Host retrieval,
-and next Eligible Run consumption with zero prior-value hits. A subsequent
-destructive Fitness replacement with forced index failure keeps the Gate closed
-and reaches zero final Agent model requests before an exact retry recovers. The
-same acceptance force-upgrades both packed Plugins and preserves the consumer
-artifacts. OpenClaw `2026.6.34` removes an uninstalled Plugin's complete config
-entry; acceptance therefore preserves canonical Fitness data and the last
-verified projection, requires Fitness to reject the missing locator, and
-restores the same locator explicitly after Runtime reinstall rather than copying
-or guessing the path.
 
 ## Runtime 0.2 Generation Consumption acceptance
 

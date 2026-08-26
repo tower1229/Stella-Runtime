@@ -170,6 +170,7 @@ async function startSyntheticModelServer(port) {
   const control = {
     embeddingMode: "normal",
     embeddingFailureCount: 0,
+    fitnessF3Query: "66.8 kg",
     onEmbeddingRequest: undefined,
   };
   const server = createServer(async (request, response) => {
@@ -215,9 +216,9 @@ async function startSyntheticModelServer(port) {
       response.end();
       return;
     }
-    const latestUser = [...(body.messages ?? [])]
-      .reverse()
-      .find((message) => message.role === "user");
+    const messages = body.messages ?? [];
+    const latestUserIndex = messages.findLastIndex((message) => message.role === "user");
+    const latestUser = messages[latestUserIndex];
     const latestUserContent = JSON.stringify(latestUser?.content ?? "");
     if (latestUserContent.includes("ROUTER_INVALID")) {
       sendOpenAiResponse(response, body, "not-json", undefined);
@@ -262,12 +263,18 @@ async function startSyntheticModelServer(port) {
       }));
       return;
     }
-    const hasToolResult = (body.messages ?? []).some(
+    const hasToolResult = messages.slice(latestUserIndex + 1).some(
       (message) => message.role === "tool",
     );
     if (latestUserContent.includes("FITNESS_F2_RUN") && !hasToolResult) {
       sendOpenAiResponse(response, body, undefined, "memory_search", {
         query: "67.9 kg",
+      });
+      return;
+    }
+    if (latestUserContent.includes("FITNESS_F3_RUN") && !hasToolResult) {
+      sendOpenAiResponse(response, body, undefined, "memory_search", {
+        query: control.fitnessF3Query,
       });
       return;
     }
@@ -1271,6 +1278,23 @@ async function verifyFitnessF2Replacement({
   await restartGateway();
   await waitForDeepGatewayProbe(environment);
   await waitForRuntimeHealth(runtimeConfig.runtime_storage);
+  await verifyFitnessEligibleRun({
+    environment,
+    modelServer,
+    marker: "FITNESS_F2_RUN",
+    expectedRevision: f2.projectionRevision,
+    replacedRevision: initialFitness.publication.projectionRevision,
+  });
+  return { f2, corrected, activated };
+}
+
+async function verifyFitnessEligibleRun({
+  environment,
+  modelServer,
+  marker,
+  expectedRevision,
+  replacedRevision,
+}) {
   const requestStart = modelServer.requests.length;
   const result = await run(
     "openclaw",
@@ -1283,7 +1307,7 @@ async function verifyFitnessF2Replacement({
       "--to",
       "+15555550123",
       "--message",
-      "FITNESS_F2_RUN ELIGIBLE_GENERATION_RUN",
+      `${marker} ELIGIBLE_GENERATION_RUN`,
       "--json",
       "--timeout",
       "15",
@@ -1291,17 +1315,22 @@ async function verifyFitnessF2Replacement({
     { env: environment },
   );
   assert.match(result.stdout, /Synthetic host response/);
-  const finalRequests = modelServer.requests.slice(requestStart).filter((request) =>
-    Array.isArray(request.messages)
-    && JSON.stringify(request.messages).includes("67.9"));
-  assert.equal(finalRequests.length, 1,
-    "Stella next Eligible Run did not consume the exact F2 projection");
-  assert.equal(JSON.stringify(finalRequests[0].messages).includes("68.4"), false,
-    "the final model request retained the replaced F1 Fitness value");
-  return { f2, corrected, activated };
+  const matchingTurns = modelServer.requests.slice(requestStart).flatMap((request) => {
+    if (!Array.isArray(request.messages)) return [];
+    const userIndex = request.messages.findLastIndex((message) =>
+      message.role === "user" && JSON.stringify(message.content).includes(marker));
+    if (userIndex === -1) return [];
+    const currentTurn = request.messages.slice(userIndex);
+    return JSON.stringify(currentTurn).includes(expectedRevision) ? [currentTurn] : [];
+  });
+  assert.equal(matchingTurns.length, 1,
+    `the Host did not consume the exact ${marker} projection`);
+  assert.equal(JSON.stringify(matchingTurns[0]).includes(replacedRevision), false,
+    `the ${marker} current turn retained its replaced Fitness revision`);
 }
 
 async function verifyFitnessBlockedReplacement({
+  runtime,
   runtimeConfig,
   apiConfig,
   initialFitness,
@@ -1324,6 +1353,21 @@ async function verifyFitnessBlockedReplacement({
     generatedAt: "2026-08-24T00:05:00.000Z",
   });
   assert.notEqual(f3.projectionRevision, activeFitness.f2.projectionRevision);
+  const layout = await runtime.resolvePersonalDataLocator({
+    apiConfig,
+    runtimeInstanceId: runtimeConfig.instance_id,
+  });
+  const activeF3 = await new runtime.FileProjectionExchange({
+    layout,
+    instanceId: runtimeConfig.instance_id,
+    ownerId: "packed-fitness-f3-reader",
+  }).readStellaProjection("fitness_history");
+  assert.equal(activeF3.projectionRevision, f3.projectionRevision);
+  const [fitnessPayload] = activeF3.payloads;
+  assert.ok(fitnessPayload);
+  assert.match(fitnessPayload.bytes.toString("utf8"), /66\.8/);
+  assert.equal(fitnessPayload.bytes.toString("utf8").includes("67.9"), false);
+  modelServer.control.fitnessF3Query = "66.8 kg";
 
   const failureCountBefore = modelServer.control.embeddingFailureCount;
   modelServer.control.embeddingMode = "fail";
@@ -2266,7 +2310,8 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       modelServer,
       restartGateway,
     });
-    await verifyFitnessBlockedReplacement({
+    const blockedFitness = await verifyFitnessBlockedReplacement({
+      runtime: installedRuntime,
       runtimeConfig,
       apiConfig: installedConfig,
       initialFitness,
@@ -2403,6 +2448,24 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
         openclawConfig: JSON.parse(await readFile(configPath, "utf8")),
       })).projectionRevision);
     await waitForRuntimeHealth(runtimeConfig.runtime_storage);
+    const { stdout: lifecycleSearchOutput } = await run(
+      "openclaw",
+      ["memory", "search", "--agent", "main", "--json", "66.8 kg"],
+      { env: environment },
+    );
+    const lifecycleSearch = parseJsonOutput(lifecycleSearchOutput);
+    assert.match(
+      JSON.stringify(lifecycleSearch),
+      new RegExp(blockedFitness.f3.projectionRevision),
+      `the lifecycle-resynced Host search did not expose F3: ${JSON.stringify(lifecycleSearch)}`,
+    );
+    await verifyFitnessEligibleRun({
+      environment,
+      modelServer,
+      marker: "FITNESS_F3_RUN",
+      expectedRevision: blockedFitness.f3.projectionRevision,
+      replacedRevision: activeFitness.f2.projectionRevision,
+    });
     await verifyExactHostBeforeAgentRunGate(environment, modelServer.requests);
     await verifyPackedHostNegativeMatrices(
       environment,

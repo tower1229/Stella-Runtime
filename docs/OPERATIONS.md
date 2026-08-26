@@ -185,6 +185,15 @@ remaining consumer fails closed while the locator is absent. Reinstall does not
 guess or duplicate the repository path: the operator must explicitly restore
 the same validated locator before live synchronization resumes.
 
+Exact-host verification covers one successful Fitness replacement and one
+destructive replacement that remains gated through index failure. Exhaustive
+projection pointer, integrity, source-instability, publication-crash, rollback,
+and idempotency cases remain contract/integration gates instead of being
+repeated as a Host cross-product. These Issue #34 checks are currently source
+acceptance only; the next release
+must rerun both layers against the immutable published artifact before claiming
+registry or Release delivery.
+
 ## Stable release operator checklist for the next version
 
 - The public scoped package was bootstrapped with the exact verified
