@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  STELLA_FITNESS_EXPECTED_REVISION: ac1b8eaf55cf0cba4f5035b82ff74ac5ddd8cf8e
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -30,9 +33,18 @@ jobs:
       - name: Install the exact supported OpenClaw host
         if: matrix.profile == 'exact-host'
         run: npm install --global openclaw@2026.6.34
+      - name: Prepare the exact Fitness source package
+        if: matrix.profile == 'exact-host'
+        run: |
+          git clone --no-checkout https://github.com/tower1229/Stella-Fitness.git "$RUNNER_TEMP/stella-fitness"
+          git -C "$RUNNER_TEMP/stella-fitness" fetch --depth=1 origin "$STELLA_FITNESS_EXPECTED_REVISION"
+          git -C "$RUNNER_TEMP/stella-fitness" checkout --detach FETCH_HEAD
+          npm ci --prefix "$RUNNER_TEMP/stella-fitness"
+          npm run build --prefix "$RUNNER_TEMP/stella-fitness"
       - name: Run verification profile
         env:
           VERIFICATION_PROFILE: ${{ matrix.profile }}
+          STELLA_FITNESS_PACKAGE_ROOT: ${{ runner.temp }}/stella-fitness
         run: npm run verify:env -- "$VERIFICATION_PROFILE" --json
       - name: Upload verification receipt
         if: always()

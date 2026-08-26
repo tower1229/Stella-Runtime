@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   readdir,
   rm,
   writeFile,
@@ -91,7 +92,7 @@ function routerResult() {
   };
 }
 
-function sendOpenAiResponse(response, body, content, toolCall) {
+function sendOpenAiResponse(response, body, content, toolCall, toolArguments = { query: "synthetic" }) {
   const id = "chatcmpl-synthetic";
   const model = body.model ?? "synthetic-model";
   if (body.stream === true) {
@@ -106,7 +107,7 @@ function sendOpenAiResponse(response, body, content, toolCall) {
             type: "function",
             function: {
               name: toolCall,
-              arguments: JSON.stringify({ query: "synthetic" }),
+              arguments: JSON.stringify(toolArguments),
             },
           }],
         };
@@ -149,7 +150,7 @@ function sendOpenAiResponse(response, body, content, toolCall) {
               type: "function",
               function: {
                 name: toolCall,
-                arguments: JSON.stringify({ query: "synthetic" }),
+                arguments: JSON.stringify(toolArguments),
               },
             }],
           },
@@ -259,6 +260,12 @@ async function startSyntheticModelServer(port) {
     const hasToolResult = (body.messages ?? []).some(
       (message) => message.role === "tool",
     );
+    if (latestUserContent.includes("FITNESS_F2_RUN") && !hasToolResult) {
+      sendOpenAiResponse(response, body, undefined, "memory_search", {
+        query: "67.9 kg",
+      });
+      return;
+    }
     if (latestUserContent.includes("MEMORY_RUN") && !hasToolResult) {
       sendOpenAiResponse(response, body, undefined, "synthetic_memory");
       return;
@@ -659,6 +666,22 @@ async function listJavaScriptFiles(directory) {
   return files;
 }
 
+async function snapshotFiles(directory, relativeDirectory = "") {
+  const entries = await readdir(join(directory, relativeDirectory), { withFileTypes: true });
+  const snapshots = await Promise.all(entries
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map(async (entry) => {
+      const relativePath = join(relativeDirectory, entry.name);
+      if (entry.isDirectory()) return snapshotFiles(directory, relativePath);
+      if (!entry.isFile()) return [];
+      return [{
+        path: relativePath,
+        checksum: checksum(await readFile(join(directory, relativePath))),
+      }];
+    }));
+  return snapshots.flat().sort((left, right) => left.path.localeCompare(right.path));
+}
+
 async function verifyRejectedPathsAbsent(pluginRoot) {
   const source = (
     await Promise.all(
@@ -947,6 +970,113 @@ async function verifyPackedAdapters(pluginRoot, successors) {
   await verifyTelegramConfirmationGateway(runtime);
 }
 
+async function packInstallFitness({ root, environment }) {
+  const configuredRoot = process.env.STELLA_FITNESS_PACKAGE_ROOT?.trim();
+  const packageRoot = configuredRoot === undefined || configuredRoot.length === 0
+    ? fileURLToPath(new URL("../../../Stella-Fitness/", import.meta.url))
+    : configuredRoot;
+  const packageJson = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
+  assert.equal(packageJson.name, "@tower1229/stella-fitness");
+  const { stdout: sourceRevisionOutput } = await run(
+    "git",
+    ["rev-parse", "HEAD"],
+    { cwd: packageRoot, env: environment },
+  );
+  const sourceRevision = sourceRevisionOutput.trim();
+  const expectedSourceRevision = process.env.STELLA_FITNESS_EXPECTED_REVISION?.trim();
+  if (expectedSourceRevision !== undefined && expectedSourceRevision.length > 0) {
+    assert.equal(sourceRevision, expectedSourceRevision);
+  }
+  const { stdout: packOutput } = await run(
+    "npm",
+    ["pack", "--json", "--ignore-scripts", "--pack-destination", root],
+    { cwd: packageRoot, env: environment },
+  );
+  const [pack] = JSON.parse(packOutput);
+  await run(
+    "openclaw",
+    ["plugins", "install", `npm-pack:${join(root, pack.filename)}`],
+    { env: environment },
+  );
+  const { stdout: inspectOutput } = await run(
+    "openclaw",
+    ["plugins", "inspect", "stella-fitness", "--runtime", "--json"],
+    { env: environment },
+  );
+  const inspection = parseJsonOutput(inspectOutput);
+  assert.equal(inspection.plugin.status, "loaded");
+  const pluginRoot = dirname(dirname(inspection.plugin.source));
+  const installedPackage = JSON.parse(await readFile(join(pluginRoot, "package.json"), "utf8"));
+  assert.equal(installedPackage.name, "@tower1229/stella-fitness");
+  assert.equal(installedPackage.version, packageJson.version);
+  return {
+    pluginRoot,
+    packageRoot,
+    sourceRevision,
+    installSpec: `npm-pack:${join(root, pack.filename)}`,
+  };
+}
+
+async function publishInitialFitnessProjection({
+  pluginRoot,
+  openclawConfig,
+  fitnessDataDirectory,
+}) {
+  const scenario = await import(
+    pathToFileURL(join(pluginRoot, "dist", "scenario", "harness.js")).href
+  );
+  const fitness = await import(
+    pathToFileURL(join(pluginRoot, "dist", "plugin.js")).href
+  );
+  const harness = scenario.createScenarioHarness({
+    extractionRuntime: {
+      async extract() {
+        throw new Error("SYNTHETIC_EXTRACTION_MUST_NOT_RUN");
+      },
+    },
+    personalDataDirectory: () => fitnessDataDirectory,
+    runtimeDirectory: () => join(fitnessDataDirectory, "..", "runtime"),
+    preflight: () => ({ readiness: "READY", reasons: [] }),
+  });
+  const recorded = await harness.recordBodyWeight({
+    text: "2026-08-24T00:00:00Z body weight 68.4 kg",
+    receivedAt: "2026-08-24T00:00:00.000Z",
+    source: { channel: "synthetic", messageId: "fitness-f1" },
+  });
+  assert.equal(recorded.status, "recorded");
+  const publication = await fitness.publishFitnessContextProjection({
+    openclawConfig,
+    generatedAt: "2026-08-24T00:01:00.000Z",
+  });
+  assert.equal(publication.status, "published");
+  return { fitness, harness, recorded, publication };
+}
+
+async function compilePackedBinding(runtime, runtimeConfig, apiConfig, ownerId) {
+  const layout = await runtime.resolvePersonalDataLocator({
+    apiConfig,
+    runtimeInstanceId: runtimeConfig.instance_id,
+  });
+  const exchange = new runtime.FileProjectionExchange({
+    layout,
+    instanceId: runtimeConfig.instance_id,
+    ownerId,
+  });
+  return new runtime.FileBindingCompiler({
+    domainProjectionReader: {
+      async read(domainId) {
+        assert.equal(domainId, "fitness");
+        const projection = await exchange.readStellaProjection("fitness_history");
+        return runtime.generationDomainIdentity(domainId, projection);
+      },
+    },
+  }).compile({
+    config: runtimeConfig,
+    hostVersion: "2026.6.34",
+    nodeVersion: process.versions.node,
+  });
+}
+
 async function verifyExactHostGenerationConsumption({
   runtime,
   runtimeConfig,
@@ -957,6 +1087,7 @@ async function verifyExactHostGenerationConsumption({
   port,
   token,
   restartGateway,
+  apiConfig,
 }) {
   await restartGateway();
   await waitForDeepGatewayProbe(environment);
@@ -1058,13 +1189,111 @@ async function verifyExactHostGenerationConsumption({
       "Packed approval reaches the next eligible Run.",
     )),
   "next Eligible Run did not consume the published semantic claim");
-  const binding = await new runtime.FileBindingCompiler().compile({
-    config: runtimeConfig,
-    hostVersion: "2026.6.34",
-    nodeVersion: process.versions.node,
-  });
+  const binding = await compilePackedBinding(
+    runtime,
+    runtimeConfig,
+    apiConfig,
+    "packed-acceptance-binding-reader",
+  );
   assert.equal(binding.syncGeneration, activated.sync_generation);
   assert.equal(binding.authorityRevision, publication.sourceRevision);
+  return { activated, publication };
+}
+
+async function verifyFitnessF2Replacement({
+  runtime,
+  runtimeConfig,
+  apiConfig,
+  initialFitness,
+  authorityRevision,
+  environment,
+  modelServer,
+  restartGateway,
+}) {
+  const pointerPath = join(runtimeConfig.runtime_storage, "active-generation.json");
+  const g1 = JSON.parse(await readFile(pointerPath, "utf8"));
+  assert.equal(g1.schema_version, "cognitive-runtime.active-generation-pointer/v3");
+  assert.equal(g1.authority.revision, authorityRevision);
+  assert.equal(g1.domains[0].projection_revision, initialFitness.publication.projectionRevision);
+
+  const corrected = await initialFitness.harness.correctBodyWeight({
+    replacesObservationId: initialFitness.recorded.observation.id,
+    text: "correct body weight to 67.9 kg",
+    receivedAt: "2026-08-24T00:02:00.000Z",
+  });
+  assert.equal(corrected.status, "recorded");
+  const f2 = await initialFitness.fitness.publishFitnessContextProjection({
+    openclawConfig: apiConfig,
+    generatedAt: "2026-08-24T00:03:00.000Z",
+  });
+  assert.notEqual(f2.projectionRevision, initialFitness.publication.projectionRevision);
+  assert.equal(f2.asOf, "2026-08-24T00:02:00.000Z");
+
+  const layout = await runtime.resolvePersonalDataLocator({
+    apiConfig,
+    runtimeInstanceId: runtimeConfig.instance_id,
+  });
+  const activeF2 = await new runtime.FileProjectionExchange({
+    layout,
+    instanceId: runtimeConfig.instance_id,
+    ownerId: "packed-fitness-f2-reader",
+  }).readStellaProjection("fitness_history");
+  assert.equal(activeF2.projectionRevision, f2.projectionRevision);
+  const [fitnessPayload] = activeF2.payloads;
+  assert.ok(fitnessPayload);
+  assert.match(fitnessPayload.stableId, /^fitness-history-/);
+
+  const { stdout, stderr } = await run(
+    "openclaw",
+    ["cognitive", "sync", "--revision", authorityRevision, "--json"],
+    { env: environment, timeout: 180_000 },
+  );
+  const activated = parseJsonOutput(stdout.length > 0 ? stdout : stderr);
+  assert.equal(activated.source_revision, authorityRevision);
+  assert.notEqual(activated.sync_generation, g1.generation_id);
+  const g2 = JSON.parse(await readFile(pointerPath, "utf8"));
+  assert.equal(g2.authority.revision, authorityRevision);
+  assert.equal(g2.domains[0].projection_revision, f2.projectionRevision);
+  const receipt = JSON.parse(await readFile(activated.receipt_path, "utf8"));
+  assert.equal(receipt.domains[0].projection_revision, f2.projectionRevision);
+  assert.equal(receipt.index_evidence.fitness.projection_revision, f2.projectionRevision);
+  assert.equal(receipt.index_evidence.fitness.previous_revision,
+    initialFitness.publication.projectionRevision);
+  assert.equal(receipt.index_evidence.fitness.previous_stable_id_hits, 0);
+  assert.equal(receipt.index_evidence.fitness.previous_text_sentinel_hits, 0);
+  assert.equal(receipt.index_evidence.fitness.previous_source_reference_hits, 0);
+
+  await restartGateway();
+  await waitForDeepGatewayProbe(environment);
+  await waitForRuntimeHealth(runtimeConfig.runtime_storage);
+  const requestStart = modelServer.requests.length;
+  const result = await run(
+    "openclaw",
+    [
+      "agent",
+      "--agent",
+      "main",
+      "--channel",
+      "telegram",
+      "--to",
+      "+15555550123",
+      "--message",
+      "FITNESS_F2_RUN ELIGIBLE_GENERATION_RUN",
+      "--json",
+      "--timeout",
+      "15",
+    ],
+    { env: environment },
+  );
+  assert.match(result.stdout, /Synthetic host response/);
+  const finalRequests = modelServer.requests.slice(requestStart).filter((request) =>
+    Array.isArray(request.messages)
+    && JSON.stringify(request.messages).includes("67.9"));
+  assert.equal(finalRequests.length, 1,
+    "Stella next Eligible Run did not consume the exact F2 projection");
+  assert.equal(JSON.stringify(finalRequests[0].messages).includes("68.4"), false,
+    "the final model request retained the replaced F1 Fitness value");
+  return { f2, activated };
 }
 
 async function verifyPackedHostNegativeMatrices(environment, port, token, modelRequests) {
@@ -1150,11 +1379,12 @@ async function verifyPackedUnsmokedHostGates({
     })),
   );
   const originalReceipts = await readReceipts();
-  const originalBinding = await new runtime.FileBindingCompiler().compile({
-    config: runtimeConfig,
-    hostVersion: "2026.6.34",
-    nodeVersion: process.versions.node,
-  });
+  const originalBinding = await compilePackedBinding(
+    runtime,
+    runtimeConfig,
+    JSON.parse(originalConfig),
+    "packed-unsmoked-original-reader",
+  );
   await writeFile(join(authorityDirectory, "unsmoked-host-probe.txt"), "unsmoked\n");
   const targetRevision = await commitAuthorityChanges(
     authorityDirectory,
@@ -1272,11 +1502,12 @@ async function verifyPackedUnsmokedHostGates({
   assert.equal(await readFile(pointerPath, "utf8"), originalPointer);
   assert.deepEqual(await readReceipts(), originalReceipts);
 
-  const recoveredBinding = await new runtime.FileBindingCompiler().compile({
-    config: runtimeConfig,
-    hostVersion: "2026.6.34",
-    nodeVersion: process.versions.node,
-  });
+  const recoveredBinding = await compilePackedBinding(
+    runtime,
+    runtimeConfig,
+    JSON.parse(originalConfig),
+    "packed-unsmoked-recovered-reader",
+  );
   assert.deepEqual(recoveredBinding, originalBinding);
   const requestStart = modelRequests.length;
   const recoveredRun = await run(
@@ -1330,11 +1561,12 @@ async function verifyExactHostFailureRecovery({
       "utf8",
     ));
     assert.deepEqual(pointer, activePointer);
-    const binding = await new runtime.FileBindingCompiler().compile({
-      config: runtimeConfig,
-      hostVersion: "2026.6.34",
-      nodeVersion: process.versions.node,
-    });
+    const binding = await compilePackedBinding(
+      runtime,
+      runtimeConfig,
+      JSON.parse(await readFile(configPath, "utf8")),
+      "packed-failure-recovery-reader",
+    );
     assert.equal(binding.syncGeneration, activePointer.generation_id);
   };
   const commitFailureRevision = async (reason) => {
@@ -1529,7 +1761,7 @@ async function verifyExactHostDriftGates({
 }
 
 test("packed runtime passes the exact OpenClaw host smoke and restores configuration", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "stella-runtime-openclaw-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "stella-runtime-openclaw-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   const configPath = join(root, "openclaw.json");
   const backupPath = join(root, "pre-install-openclaw.json");
@@ -1541,8 +1773,24 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
   const token = ["synthetic", "gateway", "token"].join("-");
   const providerKey = ["synthetic", "provider", "credential"].join("-");
   const sessionKey = "agent:main:synthetic-smoke";
+  const personalDataRepository = join(root, "personal-data");
+  const personalDataRoot = join(personalDataRepository, "stella");
+  const authorityDirectory = join(personalDataRoot, "authority");
+  const fitnessDataDirectory = join(personalDataRoot, "fitness");
+  const projectionRoot = join(personalDataRoot, "projections");
   await mkdir(join(workspace, "memory"), { recursive: true });
   await writeFile(join(workspace, "MEMORY.md"), "# Synthetic memory\n", "utf8");
+  for (const directory of [
+    personalDataRepository,
+    personalDataRoot,
+    fitnessDataDirectory,
+    projectionRoot,
+    join(projectionRoot, "fitness"),
+    join(projectionRoot, "stella"),
+  ]) {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await chmod(directory, 0o700);
+  }
   const originalConfig = `${JSON.stringify({
     gateway: {
       mode: "local",
@@ -1574,6 +1822,11 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
           sync: { onSessionStart: false, onSearch: false, watch: false },
           query: { minScore: 0 },
         },
+      }, {
+        id: "fitness",
+        workspace: join(root, "workspace-fitness"),
+        model: { primary: "synthetic/synthetic-model" },
+        memorySearch: { enabled: false },
       }],
     },
     models: {
@@ -1623,6 +1876,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
   );
   const modelServer = await startSyntheticModelServer(modelPort);
   let runtimeInstalled = false;
+  let fitnessInstalled = false;
   let probeInstalled = false;
   let gateway;
 
@@ -1694,11 +1948,11 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
     const installedRuntime = await import(
       pathToFileURL(join(pluginRoot, "dist", "index.js")).href
     );
-    const authorityDirectory = join(root, "authority");
     const generationState = join(root, "generation-state");
     const runtimeStorage = join(root, "runtime-binding");
     await writeSyntheticAuthority(authorityDirectory);
     const sourceRevision = await commitSyntheticAuthority(authorityDirectory);
+    await chmod(authorityDirectory, 0o700);
     const built = await installedRuntime.buildGeneration({
       authorityDirectory,
       stateDirectory: generationState,
@@ -1842,8 +2096,30 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       },
       config: {
         runtime: runtimeConfig,
+        stella: {
+          schema_version: "stella.personal-data-locator/v1",
+          instance_id: runtimeConfig.instance_id,
+          personal_data_repository: personalDataRepository,
+        },
       },
     };
+    const fitnessPackage = await packInstallFitness({ root, environment });
+    fitnessInstalled = true;
+    installedConfig.plugins.entries["stella-fitness"] = {
+      ...installedConfig.plugins.entries["stella-fitness"],
+      enabled: true,
+      hooks: { allowConversationAccess: true },
+      config: {
+        dedicatedAgentId: "fitness",
+        extraction: { provider: "synthetic", model: "synthetic-model" },
+      },
+    };
+    const initialFitness = await publishInitialFitnessProjection({
+      pluginRoot: fitnessPackage.pluginRoot,
+      openclawConfig: installedConfig,
+      fitnessDataDirectory,
+    });
+    assert.match(initialFitness.publication.projectionRevision, /^projection-[a-f0-9]{64}$/);
     await writeFile(configPath, `${JSON.stringify(installedConfig, null, 2)}\n`, {
       mode: 0o600,
     });
@@ -1880,7 +2156,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       if (gateway !== undefined) await stopGateway(gateway);
       gateway = undefined;
     };
-    await verifyExactHostGenerationConsumption({
+    const g1 = await verifyExactHostGenerationConsumption({
       runtime: installedRuntime,
       runtimeConfig,
       sourceRevision,
@@ -1890,7 +2166,118 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       port,
       token,
       restartGateway,
+      apiConfig: installedConfig,
     });
+    await verifyFitnessF2Replacement({
+      runtime: installedRuntime,
+      runtimeConfig,
+      apiConfig: installedConfig,
+      initialFitness,
+      authorityRevision: g1.publication.sourceRevision,
+      environment,
+      modelServer,
+      restartGateway,
+    });
+    const canonicalFitnessSnapshot = await snapshotFiles(fitnessDataDirectory);
+    const verifiedProjectionSnapshot = await snapshotFiles(join(projectionRoot, "stella"));
+    const expectedLocator = installedConfig.plugins.entries["cognitive-runtime"].config.stella;
+    const assertConsumerArtifactsPreserved = async () => {
+      assert.deepEqual(await snapshotFiles(fitnessDataDirectory), canonicalFitnessSnapshot);
+      assert.deepEqual(
+        await snapshotFiles(join(projectionRoot, "stella")),
+        verifiedProjectionSnapshot,
+      );
+      return JSON.parse(await readFile(configPath, "utf8"));
+    };
+    const assertLocatorPreserved = async () => {
+      const currentConfig = await assertConsumerArtifactsPreserved();
+      assert.deepEqual(
+        currentConfig.plugins?.entries?.["cognitive-runtime"]?.config?.stella,
+        expectedLocator,
+      );
+      return currentConfig;
+    };
+
+    await stopGateway(gateway);
+    gateway = undefined;
+    await run("openclaw", ["plugins", "disable", "stella-fitness"], {
+      env: environment,
+    });
+    await assertLocatorPreserved();
+    await run("openclaw", ["plugins", "enable", "stella-fitness"], {
+      env: environment,
+    });
+    await assertLocatorPreserved();
+
+    await run(
+      "openclaw",
+      ["plugins", "uninstall", "cognitive-runtime", "--force"],
+      { env: environment },
+    );
+    runtimeInstalled = false;
+    const afterRuntimeUninstall = await assertConsumerArtifactsPreserved();
+    assert.equal(
+      afterRuntimeUninstall.plugins?.entries?.["cognitive-runtime"],
+      undefined,
+      "the exact Host must not be treated as retaining uninstalled Plugin config",
+    );
+    await assert.rejects(
+      initialFitness.fitness.publishFitnessContextProjection({
+        openclawConfig: afterRuntimeUninstall,
+        generatedAt: "2026-08-24T00:04:00.000Z",
+      }),
+      /Stella Fitness context contract rejected: LOCATOR_REQUIRED/,
+    );
+    gateway = spawnGateway(port, token, environment);
+    await waitForGatewayProcessReady(gateway);
+    await waitForDeepGatewayProbe(environment);
+    const { stdout: standaloneFitnessOutput } = await run(
+      "openclaw",
+      ["plugins", "inspect", "stella-fitness", "--runtime", "--json"],
+      { env: environment },
+    );
+    assert.equal(parseJsonOutput(standaloneFitnessOutput).plugin.status, "loaded");
+    await stopGateway(gateway);
+    gateway = undefined;
+    await run("openclaw", ["plugins", "install", installSpec], {
+      env: environment,
+    });
+    runtimeInstalled = true;
+    const afterRuntimeReinstall = JSON.parse(await readFile(configPath, "utf8"));
+    afterRuntimeReinstall.plugins.entries["cognitive-runtime"] =
+      installedConfig.plugins.entries["cognitive-runtime"];
+    await writeFile(configPath, `${JSON.stringify(afterRuntimeReinstall, null, 2)}\n`, {
+      mode: 0o600,
+    });
+    await assertLocatorPreserved();
+
+    await run(
+      "openclaw",
+      ["plugins", "uninstall", "stella-fitness", "--force"],
+      { env: environment },
+    );
+    fitnessInstalled = false;
+    const afterFitnessUninstall = await assertLocatorPreserved();
+    assert.equal(
+      afterFitnessUninstall.plugins?.entries?.["stella-fitness"],
+      undefined,
+      "the exact Host must not be treated as retaining uninstalled Plugin config",
+    );
+    await run("openclaw", ["plugins", "install", fitnessPackage.installSpec], {
+      env: environment,
+    });
+    fitnessInstalled = true;
+    const afterFitnessReinstall = JSON.parse(await readFile(configPath, "utf8"));
+    afterFitnessReinstall.plugins.entries["stella-fitness"] =
+      installedConfig.plugins.entries["stella-fitness"];
+    await writeFile(configPath, `${JSON.stringify(afterFitnessReinstall, null, 2)}\n`, {
+      mode: 0o600,
+    });
+    await assertLocatorPreserved();
+    gateway = spawnGateway(port, token, environment);
+    await waitForGatewayProcessReady(gateway);
+    await waitForDeepGatewayProbe(environment);
+    await waitForRuntimeHealth(runtimeConfig.runtime_storage);
     await verifyExactHostBeforeAgentRunGate(environment, modelServer.requests);
     await verifyPackedHostNegativeMatrices(
       environment,
@@ -1976,6 +2363,13 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
         await run(
           "openclaw",
           ["plugins", "uninstall", "cognitive-runtime-host-probe", "--force"],
+          { env: environment },
+        );
+      }
+      if (fitnessInstalled) {
+        await run(
+          "openclaw",
+          ["plugins", "uninstall", "stella-fitness", "--force"],
           { env: environment },
         );
       }

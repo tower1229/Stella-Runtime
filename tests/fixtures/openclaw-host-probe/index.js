@@ -83,7 +83,27 @@ async function runPackedFailClosedMatrix(config, hostApi) {
   const hookRuntime = await import(
     pathToFileURL(join(runtimeRoot, "dist", "openclaw", "runtime.js")).href
   );
-  const binding = await new runtime.FileBindingCompiler().compile({
+  const apiConfig = hostApi.runtime.config.current();
+  const layout = await runtime.resolvePersonalDataLocator({
+    apiConfig,
+    runtimeInstanceId: config.instance_id,
+  });
+  const exchange = new runtime.FileProjectionExchange({
+    layout,
+    instanceId: config.instance_id,
+    ownerId: "packed-fail-closed-domain-reader",
+  });
+  const binding = await new runtime.FileBindingCompiler({
+    domainProjectionReader: {
+      async read(domainId) {
+        if (domainId !== "fitness") {
+          throw new Error("ACTIVE_DOMAIN_PROJECTION_UNAVAILABLE");
+        }
+        const projection = await exchange.readStellaProjection("fitness_history");
+        return runtime.generationDomainIdentity(domainId, projection);
+      },
+    },
+  }).compile({
     config,
     hostVersion: "2026.6.34",
     nodeVersion: process.versions.node,

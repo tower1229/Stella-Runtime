@@ -5,6 +5,9 @@ on:
     tags:
       - "v[0-9]*.[0-9]*.[0-9]*"
 
+env:
+  STELLA_FITNESS_EXPECTED_REVISION: ac1b8eaf55cf0cba4f5035b82ff74ac5ddd8cf8e
+
 jobs:
   verify:
     if: ${{ !contains(github.ref_name, '-') }}
@@ -27,6 +30,13 @@ jobs:
         run: |
           npm install --global openclaw@2026.6.34
           openclaw --version | grep -F "2026.6.34 (5c38f99)"
+      - name: Prepare the exact Fitness source package
+        run: |
+          git clone --no-checkout https://github.com/tower1229/Stella-Fitness.git "$RUNNER_TEMP/stella-fitness"
+          git -C "$RUNNER_TEMP/stella-fitness" fetch --depth=1 origin "$STELLA_FITNESS_EXPECTED_REVISION"
+          git -C "$RUNNER_TEMP/stella-fitness" checkout --detach FETCH_HEAD
+          npm ci --prefix "$RUNNER_TEMP/stella-fitness"
+          npm run build --prefix "$RUNNER_TEMP/stella-fitness"
       - name: Verify immutable release identity
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -35,6 +45,8 @@ jobs:
           test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
           test "$(node -p "require('./package-lock.json').version")" = "$(node -p "require('./package.json').version")"
       - run: npm run verify:env -- release --json
+        env:
+          STELLA_FITNESS_PACKAGE_ROOT: ${{ runner.temp }}/stella-fitness
       - name: Upload verification receipt
         if: always()
         uses: actions/upload-artifact@v7
@@ -186,9 +198,17 @@ jobs:
         run: |
           npm install --global openclaw@2026.6.34
           openclaw --version | grep -F "2026.6.34 (5c38f99)"
+      - name: Prepare the exact Fitness source package
+        run: |
+          git clone --no-checkout https://github.com/tower1229/Stella-Fitness.git "$RUNNER_TEMP/stella-fitness"
+          git -C "$RUNNER_TEMP/stella-fitness" fetch --depth=1 origin "$STELLA_FITNESS_EXPECTED_REVISION"
+          git -C "$RUNNER_TEMP/stella-fitness" checkout --detach FETCH_HEAD
+          npm ci --prefix "$RUNNER_TEMP/stella-fitness"
+          npm run build --prefix "$RUNNER_TEMP/stella-fitness"
       - name: Smoke the published registry artifact on the exact Host
         env:
           STELLA_RUNTIME_INSTALL_SPEC: "@tower1229/stella-cognitive-runtime@${{ needs.publish.outputs.version }}"
           STELLA_RUNTIME_EXPECTED_VERSION: ${{ needs.publish.outputs.version }}
           STELLA_RUNTIME_EXPECTED_INTEGRITY: ${{ needs.publish.outputs.integrity }}
+          STELLA_FITNESS_PACKAGE_ROOT: ${{ runner.temp }}/stella-fitness
         run: node --test --test-concurrency=1 tests/pack-install/openclaw-discovery.test.mjs

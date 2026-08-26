@@ -14,7 +14,11 @@ Versioning; cognitive contract namespaces remain independently versioned.
 - replaces the Runtime-managed Fitness corpus as a complete revision-isolated
   desired set, records exact indexed counts and prior-value zero-hit evidence,
   and keeps destructive correction/deletion recovery gated until a non-leaking
-  target completes.
+  target completes;
+- adds a pinned packed Fitness consumer to exact-host verification, proving F1
+  to G1 and corrected F2 to distinct G2 consumption, lifecycle data retention,
+  fail-closed locator loss, explicit locator restoration after reinstall, and
+  the full recovery and replacement matrix without publishing either package.
 
 ## [0.2.1] - 2026-08-21
 

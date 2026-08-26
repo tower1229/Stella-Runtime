@@ -178,6 +178,13 @@ repeats Plugin discovery, Gateway restart continuity, Generation Consumption,
 fail-closed, recovery, uninstall, and configuration-restoration acceptance
 against those installed bytes.
 
+OpenClaw `2026.6.34` removes the complete Plugin entry during uninstall, so it
+does not retain `config.stella` for an uninstalled Runtime. Runtime/Fitness
+uninstall must preserve canonical data and last verified projections, but the
+remaining consumer fails closed while the locator is absent. Reinstall does not
+guess or duplicate the repository path: the operator must explicitly restore
+the same validated locator before live synchronization resumes.
+
 ## Stable release operator checklist for the next version
 
 - The public scoped package was bootstrapped with the exact verified
