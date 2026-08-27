@@ -5,12 +5,13 @@
 > Published stable release: `0.2.1` on Node.js `24.18.0`
 > Previous rollback version: published `0.2.0`
 
-## Unreleased Issue #34 source evidence and blocked uninstall seam
+## Unreleased Issue #34 source acceptance
 
 On 2026-08-26, the local Issue #34 source tree based on revision `55b4fd3`
 ran the exact-host source scenario through the installed Runtime/Fitness
-lifecycle. It does not satisfy the full Issue #34 uninstall acceptance and is
-not evidence for an npm package, GitHub Release, or published registry artifact.
+lifecycle. The source acceptance uses the documented OpenClaw `2026.6.34`
+uninstall boundary below; it is not evidence for an npm package, GitHub Release,
+or published registry artifact.
 
 The Fitness Generation Consumption acceptance packs Fitness source revision
 `ac1b8eaf55cf0cba4f5035b82ff74ac5ddd8cf8e`, publishes F1, activates G1, then
@@ -25,8 +26,12 @@ removes an uninstalled Plugin's complete config entry; acceptance therefore
 preserves canonical Fitness data and the last verified projection, requires
 Fitness to reject the missing locator, and restores the same locator explicitly
 after Runtime reinstall rather than copying or guessing the path. The missing
-locator is the failure condition named by Issue #34: full acceptance remains
-blocked until OpenClaw provides a public Host-owned persistent locator seam.
+locator is accepted only as a fail-closed `standalone-degraded` lifecycle state:
+canonical data and last verified artifacts remain intact, and live exchange
+cannot resume until the operator restores the same Host-owned locator. Native
+locator persistence across Plugin uninstall remains a possible future Host
+enhancement; Runtime and Fitness must not emulate it with duplicate config,
+guessed paths, or private Host storage.
 
 The real-Host scenario exercises representative successful and destructive
 Fitness replacements. The exhaustive stale, blocked, revoked, checksum,

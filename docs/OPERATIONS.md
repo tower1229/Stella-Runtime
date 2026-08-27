@@ -183,9 +183,12 @@ does not retain `config.stella` for an uninstalled Runtime. Runtime/Fitness
 uninstall must preserve canonical data and last verified projections, but the
 remaining consumer fails closed while the locator is absent. Reinstall does not
 guess or duplicate the repository path: the operator must explicitly restore
-the same validated locator before live synchronization resumes. This is not the
-full Issue #34 uninstall acceptance: that acceptance remains blocked until the
-Host exposes a public persistent locator seam outside the removed Plugin entry.
+the same validated locator before live synchronization resumes. For the
+OpenClaw `2026.6.34` compatibility row, this fail-closed lifecycle is the
+accepted uninstall boundary: locator persistence across Plugin uninstall is a
+future Host capability, not a Runtime-owned fallback. Runtime must not satisfy
+it by adding a second locator, guessing a repository path, or reading private
+Host storage.
 
 Exact-host verification covers one successful Fitness replacement and one
 destructive replacement that remains gated through index failure. Exhaustive
