@@ -67,7 +67,7 @@ const runtimePublication = (
   determinismLedger: new ProjectionDeterminismLedger(),
   sourceReferences: [{
     id: "source-user",
-    path: "personal-model/pm-user.md",
+    path: "semantic/pm-user/claim.md",
     revision: sourceRevision,
     checksum: `sha256:${"a".repeat(64)}`,
   }],

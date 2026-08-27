@@ -13,9 +13,10 @@ import type {
 import { validateContract } from "../contracts/index.js";
 import { resolveCompatibilityMatrixRow } from "../compatibility/index.js";
 import { canonicalJson as serializeCanonicalJson } from "../core/canonical-json.js";
-import { verifyGeneration } from "../generation/index.js";
+import { loadVerifiedGenerationDomainIndexes, verifyGeneration } from "../generation/index.js";
 import type {
   GenerationAuthorityInput,
+  GenerationDomainIndex,
   GenerationDomainIdentity,
 } from "../generation/index.js";
 import type { ExplicitContextBinding } from "../packet/index.js";
@@ -77,6 +78,27 @@ export async function validateGenerationDomainsCurrent(
     }
   }
 }
+
+export const fitnessIndexEvidenceMatchesDomains = (
+  receipt: ActivationReceiptV3,
+  domains: readonly GenerationDomainIdentity[],
+  domainIndexes: readonly GenerationDomainIndex[],
+): boolean => {
+  const fitnessDomain = domains.find(({ domain_id }) => domain_id === "fitness");
+  if (fitnessDomain === undefined) return true;
+  const evidence = receipt.index_evidence.fitness;
+  const domainIndex = domainIndexes.find(({ domain_id }) => domain_id === "fitness");
+  return evidence !== undefined
+    && domainIndex !== undefined
+    && domainIndex.generation_id === receipt.generation_id
+    && evidence.projection_revision === fitnessDomain.projection_revision
+    && evidence.projection_revision === domainIndex.projection_revision
+    && evidence.manifest_checksum === fitnessDomain.manifest_checksum
+    && evidence.manifest_checksum === domainIndex.manifest_checksum
+    && evidence.desired_count === domainIndex.desired_count
+    && evidence.indexed_count === domainIndex.desired_count
+    && domainIndex.documents.length === domainIndex.desired_count;
+};
 
 type ActiveGenerationPointerAny = ActiveGenerationPointer | ActiveGenerationPointerV3;
 type ActivationReceiptAny = ActivationReceipt | ActivationReceiptV3;
@@ -250,6 +272,7 @@ const validateActivationChain = (input: {
   readonly manifestRevision: string;
   readonly manifestAuthority?: GenerationAuthorityInput;
   readonly manifestDomains?: readonly GenerationDomainIdentity[];
+  readonly manifestDomainIndexes?: readonly GenerationDomainIndex[];
 }): void => {
   const { pointer, receipt } = input;
   if (pointer.instance_id !== input.config.instance_id || receipt.instance_id !== input.config.instance_id) {
@@ -299,6 +322,13 @@ const validateActivationChain = (input: {
       || input.manifestAuthority.revision !== input.manifestRevision
     ) {
       throw new Error("ACTIVE_DOMAIN_INPUT_MISMATCH");
+    }
+    if (!fitnessIndexEvidenceMatchesDomains(
+      receipt,
+      input.manifestDomains,
+      input.manifestDomainIndexes ?? [],
+    )) {
+      throw new Error("ACTIVE_DOMAIN_INDEX_EVIDENCE_MISMATCH");
     }
   }
 };
@@ -369,6 +399,10 @@ export class FileBindingCompiler implements BindingCompilerPort {
       (file) => file.path === "projection-entries.json",
     );
     if (projectionManifest === undefined) throw new Error("ACTIVE_PROJECTION_MISSING");
+    const manifestDomainIndexes = verification.manifest.schema_version
+      === "cognitive-runtime.generation-manifest/v3"
+      ? await loadVerifiedGenerationDomainIndexes(generationDirectory, verification.manifest)
+      : [];
     validateActivationChain({
       pointer,
       receipt,
@@ -384,6 +418,7 @@ export class FileBindingCompiler implements BindingCompilerPort {
         ? {
             manifestAuthority: verification.manifest.authority,
             manifestDomains: verification.manifest.domains,
+            manifestDomainIndexes,
           }
         : {}),
     });

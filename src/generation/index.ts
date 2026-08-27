@@ -1993,7 +1993,20 @@ export async function loadGenerationDomainIndexes(
   if (verification.manifest.schema_version !== "cognitive-runtime.generation-manifest/v3") {
     return [];
   }
-  const artifact = parseArtifact(await readJson(join(generationDirectory, "domain-index.json")));
+  return loadVerifiedGenerationDomainIndexes(generationDirectory, verification.manifest);
+}
+
+export async function loadVerifiedGenerationDomainIndexes(
+  generationDirectory: string,
+  manifest: GenerationManifestV3,
+): Promise<readonly GenerationDomainIndex[]> {
+  const manifestFile = manifest.files.find(({ path }) => path === "domain-index.json");
+  if (manifestFile === undefined) throw new Error("GENERATION_DOMAIN_INDEX_INVALID");
+  const bytes = await readFile(join(generationDirectory, manifestFile.path));
+  if (checksum(bytes) !== manifestFile.checksum) {
+    throw new Error("GENERATION_DOMAIN_INDEX_INVALID");
+  }
+  const artifact = parseArtifact(JSON.parse(bytes.toString("utf8")) as unknown);
   if (!isRecord(artifact.payload) || !Array.isArray(artifact.payload.domains)) {
     throw new Error("GENERATION_DOMAIN_INDEX_INVALID");
   }

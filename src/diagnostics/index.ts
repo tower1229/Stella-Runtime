@@ -14,13 +14,14 @@ import type {
 import { atomicWriteFile } from "../core/persistence.js";
 import { canonicalJson } from "../core/canonical-json.js";
 import { validateContract } from "../contracts/index.js";
-import { verifyGeneration } from "../generation/index.js";
-import type { GenerationManifest } from "../generation/index.js";
+import { loadVerifiedGenerationDomainIndexes, verifyGeneration } from "../generation/index.js";
+import type { GenerationDomainIndex, GenerationManifest } from "../generation/index.js";
 import { resolveCompatibilityMatrixRow } from "../compatibility/index.js";
 import {
   ACTIVATION_RECEIPTS_DIRECTORY,
   ACTIVE_GENERATION_POINTER_FILE,
   calculateRuntimeConfigIdentityChecksum,
+  fitnessIndexEvidenceMatchesDomains,
 } from "../runtime/binding.js";
 import { closeMaintenanceGate } from "../sync/index.js";
 
@@ -59,6 +60,7 @@ export interface ActiveGenerationHealthSnapshot {
   readonly pointer: ActiveGenerationPointer | ActiveGenerationPointerV3;
   readonly receipt: ActivationReceipt | ActivationReceiptV3;
   readonly manifest: GenerationManifest;
+  readonly domainIndexes?: readonly GenerationDomainIndex[];
 }
 
 export interface ReceiptValidity {
@@ -159,6 +161,14 @@ export const loadActiveGenerationHealth = async (
     pointer,
     receipt: receiptValue as ActivationReceipt | ActivationReceiptV3,
     manifest: verified.manifest,
+    ...(verified.manifest.schema_version === "cognitive-runtime.generation-manifest/v3"
+      ? {
+          domainIndexes: await loadVerifiedGenerationDomainIndexes(
+            join(config.generation_storage, pointer.generation_id),
+            verified.manifest,
+          ),
+        }
+      : {}),
   };
 };
 
@@ -206,6 +216,11 @@ export const validateActiveReceipt = async (
         && canonicalJson(receipt.authority) === canonicalJson(active.manifest.authority)
         && canonicalJson(pointer.domains) === canonicalJson(active.manifest.domains)
         && canonicalJson(receipt.domains) === canonicalJson(active.manifest.domains)
+        && fitnessIndexEvidenceMatchesDomains(
+          receipt,
+          active.manifest.domains,
+          active.domainIndexes ?? [],
+        )
       : pointer.schema_version === "cognitive-runtime.active-generation-pointer/v2"
         && receipt.schema_version === "cognitive-runtime.activation-receipt/v2");
   if (valid) return { valid: true, reasonCodes: [] };

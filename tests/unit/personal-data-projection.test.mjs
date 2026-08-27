@@ -31,7 +31,7 @@ test("Runtime identity builder exposes only allowlisted stable identity and fitn
       },
       {
         id: "source-identity",
-        path: "personal-model/pm-user.md",
+        path: "semantic/pm-user/claim.md",
         revision: "source-synthetic-identity",
         checksum: `sha256:${"b".repeat(64)}`,
       },
@@ -96,7 +96,7 @@ test("Runtime identity builder exposes only allowlisted stable identity and fitn
     determinismLedger: new ProjectionDeterminismLedger(),
     sourceReferences: [{
       id: "source-identity",
-      path: "personal-model/pm-user.md",
+      path: "semantic/pm-user/claim.md",
       revision: "source-synthetic-identity",
       checksum: `sha256:${"a".repeat(64)}`,
     }],
@@ -122,7 +122,7 @@ test("Runtime identity builder exposes only allowlisted stable identity and fitn
     determinismLedger: new ProjectionDeterminismLedger(),
     sourceReferences: [{
       id: "source-agents",
-      path: "personal-model/AGENTS.md",
+      path: "personal-model/pm-user.md",
       revision: "source-synthetic-identity",
       checksum: `sha256:${"a".repeat(64)}`,
     }],

@@ -739,6 +739,33 @@ test("filesystem compiler negotiates v3 and fail-closes domain tuple drift", asy
   );
 
   const receipt = JSON.parse(await readFile(synced.receiptPath, "utf8"));
+  receipt.index_evidence.fitness.projection_revision = `projection-${"0".repeat(64)}`;
+  await writeFile(synced.receiptPath, JSON.stringify(receipt));
+  current = expected;
+  await assert.rejects(
+    compiler.compile({
+      config: runtimeConfig,
+      hostVersion: "2026.6.34",
+      nodeVersion: process.versions.node,
+    }),
+    /ACTIVE_DOMAIN_INDEX_EVIDENCE_MISMATCH/,
+  );
+
+  receipt.index_evidence.fitness.projection_revision = expected.projection_revision;
+  receipt.index_evidence.fitness.desired_count = 0;
+  receipt.index_evidence.fitness.indexed_count = 0;
+  await writeFile(synced.receiptPath, JSON.stringify(receipt));
+  await assert.rejects(
+    compiler.compile({
+      config: runtimeConfig,
+      hostVersion: "2026.6.34",
+      nodeVersion: process.versions.node,
+    }),
+    /ACTIVE_DOMAIN_INDEX_EVIDENCE_MISMATCH/,
+  );
+
+  receipt.index_evidence.fitness.desired_count = 1;
+  receipt.index_evidence.fitness.indexed_count = 1;
   receipt.domains[0].pointer_revision = `pointer-${"6".repeat(64)}`;
   await writeFile(synced.receiptPath, JSON.stringify(receipt));
   current = expected;

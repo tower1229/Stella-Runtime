@@ -150,6 +150,16 @@ const normalizeErrors = (
     message: error.message ?? "contract validation failed",
   }));
 
+const semanticValidationError = (
+  instancePath: string,
+  schemaPath: string,
+  keyword: string,
+  message: string,
+): ContractValidationResult => ({
+  valid: false,
+  errors: [{ instancePath, schemaPath, keyword, message }],
+});
+
 export function validateContract(
   contract: ContractName,
   value: unknown,
@@ -173,15 +183,25 @@ export function validateContract(
           || new Set(ids).size !== ids.length
           || ids.some((id, index) => index > 0 && String(ids[index - 1]) >= String(id))
         ) {
-          return {
-            valid: false,
-            errors: [{
-              instancePath: "/domains",
-              schemaPath: "#/domains/order",
-              keyword: "domainOrder",
-              message: "domains must be unique and sorted by domain_id",
-            }],
-          };
+          return semanticValidationError(
+            "/domains",
+            "#/domains/order",
+            "domainOrder",
+            "domains must be unique and sorted by domain_id",
+          );
+        }
+        if (contract === "activation-receipt-v3" && ids.includes("fitness")) {
+          const indexEvidence = (value as {
+            readonly index_evidence?: Readonly<Record<string, unknown>>;
+          }).index_evidence;
+          if (indexEvidence?.fitness === undefined) {
+            return semanticValidationError(
+              "/index_evidence",
+              "#/index_evidence/fitness",
+              "fitnessIndexEvidence",
+              "Fitness domains require exact Fitness index evidence",
+            );
+          }
         }
       }
     }

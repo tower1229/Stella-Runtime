@@ -183,7 +183,9 @@ does not retain `config.stella` for an uninstalled Runtime. Runtime/Fitness
 uninstall must preserve canonical data and last verified projections, but the
 remaining consumer fails closed while the locator is absent. Reinstall does not
 guess or duplicate the repository path: the operator must explicitly restore
-the same validated locator before live synchronization resumes.
+the same validated locator before live synchronization resumes. This is not the
+full Issue #34 uninstall acceptance: that acceptance remains blocked until the
+Host exposes a public persistent locator seam outside the removed Plugin entry.
 
 Exact-host verification covers one successful Fitness replacement and one
 destructive replacement that remains gated through index failure. Exhaustive

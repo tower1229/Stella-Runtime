@@ -536,7 +536,7 @@ export const assertRuntimeIdentityContextPolicy = (
         .includes(entryId);
       const sourcePathValid = policy.authorityRecordKind === "cognitive"
         ? /^cognitive\/[a-z0-9][a-z0-9._-]{0,127}\/entity\.md$/u.test(reference.path)
-        : /^personal-model\/[a-z0-9][a-z0-9._-]{0,127}\.md$/u.test(reference.path);
+        : /^semantic\/[a-z0-9][a-z0-9._-]{0,127}\/claim\.md$/u.test(reference.path);
       if (
         policy.sensitivity !== "projection_safe"
         || !policy.dataClasses.includes(requiredDataClass)

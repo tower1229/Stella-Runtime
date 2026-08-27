@@ -200,7 +200,26 @@ test("v3 diagnostics report live domain projection drift separately", async (t) 
   }];
   const activeV3 = {
     pointer: { ...active.pointer, schema_version: "cognitive-runtime.active-generation-pointer/v3", authority, domains },
-    receipt: { ...active.receipt, schema_version: "cognitive-runtime.activation-receipt/v3", authority, domains },
+    receipt: {
+      ...active.receipt,
+      schema_version: "cognitive-runtime.activation-receipt/v3",
+      authority,
+      domains,
+      host_config_checksum: calculateRuntimeConfigIdentityChecksum(config(root)),
+      index_evidence: {
+        ...active.receipt.index_evidence,
+        fitness: {
+          projection_revision: domains[0].projection_revision,
+          manifest_checksum: domains[0].manifest_checksum,
+          desired_count: 0,
+          indexed_count: 0,
+          previous_revision: null,
+          previous_stable_id_hits: 0,
+          previous_text_sentinel_hits: 0,
+          previous_source_reference_hits: 0,
+        },
+      },
+    },
     manifest: {
       ...active.manifest,
       schema_version: "cognitive-runtime.generation-manifest/v3",
@@ -208,8 +227,37 @@ test("v3 diagnostics report live domain projection drift separately", async (t) 
       authority,
       domains,
       sync_generation: generation,
+      files: [{
+        path: "projection-entries.json",
+        checksum: projectionChecksum,
+      }],
     },
+    domainIndexes: [{
+      generation_id: generation,
+      domain_id: "fitness",
+      projection_revision: domains[0].projection_revision,
+      manifest_checksum: domains[0].manifest_checksum,
+      desired_count: 1,
+      retraction_count: 0,
+      documents: [{
+        stable_id: "fitness-history",
+        payload_path: "fitness-history.md",
+        document_path: "fitness/fitness-history.md",
+        checksum: `sha256:${"a".repeat(64)}`,
+        text_sentinel: `sha256:${"b".repeat(64)}`,
+        source_references: [],
+      }],
+    }],
   };
+  assert.deepEqual(await validateActiveReceipt(
+    activeV3,
+    config(root),
+    "2026.6.34",
+    "24.18.0",
+  ), {
+    valid: false,
+    reasonCodes: ["STALE_RECEIPT"],
+  });
   const monitor = new RuntimeHealthMonitor({
     config: config(root),
     hostVersion: "2026.6.34",

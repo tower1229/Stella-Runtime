@@ -98,6 +98,7 @@ test("contract validator rejects independent negative fixtures", async () => {
     ["instance-cutover-plan", "instance-cutover-plan-extra-field"],
     ["generation-manifest-v3", "generation-manifest-v3-unsorted-domains"],
     ["activation-receipt-v3", "activation-receipt-v3-domain-tamper"],
+    ["activation-receipt-v3", "activation-receipt-v3-fitness-evidence-missing"],
     ["active-generation-pointer-v3", "active-generation-pointer-v3-extra-field"],
   ];
 
