@@ -27,6 +27,7 @@ import {
 const execFileAsync = promisify(execFile);
 const repositoryRoot = new URL("../../", import.meta.url);
 const commandTimeoutMs = 240_000;
+const telegramSessionKey = "agent:main:telegram:direct:+15555550123";
 const checksum = (value) =>
   createHash("sha256").update(value).digest("hex");
 const contractChecksum = (digit) => `sha256:${digit.repeat(64)}`;
@@ -450,7 +451,7 @@ async function verifyExactHostBeforeAgentRunGate(environment, modelRequests) {
       "--agent",
       "main",
       "--session-key",
-      "agent:main:telegram:direct:+15555550123",
+      telegramSessionKey,
       "--channel",
       "telegram",
       "--to",
@@ -938,7 +939,7 @@ async function verifyTelegramConfirmationGateway(runtime) {
       },
     },
     service,
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
   });
   const registration = registrations[0];
   assert.ok(registration);
@@ -1084,7 +1085,7 @@ async function compilePackedBinding(runtime, runtimeConfig, apiConfig, ownerId) 
     },
   }).compile({
     config: runtimeConfig,
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
   });
 }
@@ -1105,7 +1106,7 @@ async function verifyExactHostGenerationConsumption({
   await waitForDeepGatewayProbe(environment);
   const priorBinding = await new runtime.FileBindingCompiler().compile({
     config: runtimeConfig,
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
   });
   assert.equal(priorBinding.authorityRevision, sourceRevision);
@@ -1168,6 +1169,8 @@ async function verifyExactHostGenerationConsumption({
       "agent",
       "--agent",
       "main",
+      "--session-key",
+      telegramSessionKey,
       "--channel",
       "telegram",
       "--to",
@@ -1302,6 +1305,8 @@ async function verifyFitnessEligibleRun({
       "agent",
       "--agent",
       "main",
+      "--session-key",
+      telegramSessionKey,
       "--channel",
       "telegram",
       "--to",
@@ -1393,6 +1398,8 @@ async function verifyFitnessBlockedReplacement({
       "agent",
       "--agent",
       "main",
+      "--session-key",
+      telegramSessionKey,
       "--channel",
       "telegram",
       "--to",
@@ -1567,6 +1574,8 @@ async function verifyPackedUnsmokedHostGates({
         "agent",
         "--agent",
         "main",
+        "--session-key",
+        telegramSessionKey,
         "--channel",
         "telegram",
         "--to",
@@ -1648,6 +1657,8 @@ async function verifyPackedUnsmokedHostGates({
       "agent",
       "--agent",
       "main",
+      "--session-key",
+      telegramSessionKey,
       "--channel",
       "telegram",
       "--to",
@@ -1839,6 +1850,8 @@ async function verifyExactHostDriftGates({
         "agent",
         "--agent",
         "main",
+        "--session-key",
+        telegramSessionKey,
         "--channel",
         "telegram",
         "--to",
@@ -2016,7 +2029,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
     const { stdout: versionOutput } = await run("openclaw", ["--version"], {
       env: environment,
     });
-    assert.match(versionOutput, /2026\.6\.34 \(5c38f99\)/);
+    assert.match(versionOutput, /2026\.7\.1-2 \(0790d9f\)/);
 
     const registryInstallSpec = process.env.STELLA_RUNTIME_INSTALL_SPEC?.trim();
     const repositoryPackage = JSON.parse(
@@ -2133,7 +2146,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
         get_sentinel_checksum: contractChecksum("4"),
       },
       release_channel: "extended-stable",
-      openclaw_version: "2026.6.34",
+      openclaw_version: "2026.7.1-2",
       node_version: process.versions.node,
       verified_at: "2026-08-17T00:00:00.000Z",
     }));
@@ -2151,7 +2164,7 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       await readFile(join(pluginRoot, "compatibility", "openclaw.json"), "utf8"),
     );
     assert.equal(compatibility.hosts[0].releaseChannel, "extended-stable");
-    assert.equal(compatibility.hosts[0].openclawVersion, "2026.6.34");
+    assert.equal(compatibility.hosts[0].openclawVersion, "2026.7.1-2");
     assert.deepEqual(
       compatibility.hosts[0].capabilityExpectations.typedHooks.hooks,
       [
@@ -2187,9 +2200,9 @@ test("packed runtime passes the exact OpenClaw host smoke and restores configura
       pluginId: "cognitive-runtime",
       compatibilityMatrixRow: {
         releaseChannel: "extended-stable",
-        openclawVersion: "2026.6.34",
+        openclawVersion: "2026.7.1-2",
         nodeVersion: "24.18.0",
-        evidence: "docs/evidence/openclaw-2026.6.34.md",
+        evidence: "docs/evidence/openclaw-2026.7.1-2.md",
       },
       hostCapabilities: { hostModelCompletion: "llm.complete" },
     });

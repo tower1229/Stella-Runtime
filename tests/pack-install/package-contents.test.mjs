@@ -24,7 +24,7 @@ test("npm tarball contains only allowlisted and non-sensitive public assets", as
   );
   const [pack] = JSON.parse(stdout);
   assert.equal(pack.name, "@tower1229/stella-cognitive-runtime");
-  assert.equal(pack.version, "0.2.1");
+  assert.equal(pack.version, "0.3.0");
   const paths = pack.files.map((file) => file.path);
   const allowed = [
     "LICENSE",
@@ -86,7 +86,7 @@ test("npm tarball contains only allowlisted and non-sensitive public assets", as
     true,
   );
   assert.equal(
-    paths.includes("docs/evidence/openclaw-2026.6.34.md"),
+    paths.includes("docs/evidence/openclaw-2026.7.1-2.md"),
     true,
   );
   for (const documentation of [

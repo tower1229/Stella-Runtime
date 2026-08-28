@@ -1,6 +1,6 @@
 {
   "name": "@tower1229/stella-cognitive-runtime",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Instance-neutral cognitive runtime for OpenClaw",
   "license": "MIT",
   "type": "module",
@@ -17,7 +17,7 @@
     "docs/DATA-BOUNDARIES.md",
     "docs/OPERATIONS.md",
     "docs/SUPPORT.md",
-    "docs/evidence/openclaw-2026.6.34.md",
+    "docs/evidence/openclaw-2026.7.1-2.md",
     "skills/framework-admission",
     "CHANGELOG.md",
     "LICENSE",
@@ -48,7 +48,7 @@
     ]
   },
   "peerDependencies": {
-    "openclaw": "2026.6.34"
+    "openclaw": "2026.7.1-2"
   },
   "peerDependenciesMeta": {
     "openclaw": {

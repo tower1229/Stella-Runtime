@@ -195,7 +195,7 @@ test("public CangHai pack executes the declared cutover behavior", async (t) => 
     config,
     sourceRevision,
     packageVersion: "0.2.0",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     host,
     runs: {

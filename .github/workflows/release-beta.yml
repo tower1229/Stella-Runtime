@@ -24,7 +24,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Install the exact supported OpenClaw host
-        run: npm install --global openclaw@2026.6.34
+        run: npm install --global openclaw@2026.7.1-2
       - name: Prepare the exact Fitness source package
         run: node scripts/prepare-exact-fitness.mjs "$RUNNER_TEMP/stella-fitness"
       - name: Verify tag matches package version

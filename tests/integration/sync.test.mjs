@@ -150,7 +150,7 @@ const installPriorActivation = async (config, sourceRevision) => {
       get_sentinel_checksum: checksum("8"),
     },
     release_channel: "extended-stable",
-    openclaw_version: "2026.6.34",
+    openclaw_version: "2026.7.1-2",
     node_version: process.versions.node,
     verified_at: "2026-08-17T00:00:00.000Z",
   };
@@ -187,7 +187,7 @@ test("sync rejects an unsmoked Host before Host config, Receipt, or Pointer muta
     config,
     sourceRevision,
     packageVersion: "0.2.0-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: "24.17.0",
     host: {
       async capture() { events.push("capture"); return {}; },
@@ -248,7 +248,7 @@ test("sync builds a missing committed target and exposes its Pointer only after 
     config,
     sourceRevision,
     packageVersion: "0.2.0-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     host,
     runs: runPort(events),
@@ -322,7 +322,7 @@ test("sync v3 repeats the exact Authority/domain tuple in Receipt and final Poin
     config,
     sourceRevision,
     packageVersion: "0.2.1-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     domainProjections: [domain],
     domainProjectionReader: {
@@ -393,7 +393,7 @@ test("a non-Fitness composite domain activates without a Fitness-specific Receip
     config,
     sourceRevision,
     packageVersion: "0.2.1-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     domainProjections: [alpha],
     domainProjectionReader: readerFor(alpha),
@@ -468,7 +468,7 @@ test("Authority-clean Fitness pointer drift after Host verification blocks the f
     config,
     sourceRevision,
     packageVersion: "0.2.1-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     domainProjections: [domain],
     domainProjectionReader: {
@@ -539,7 +539,7 @@ test("a failed destructive Fitness replacement stays gated instead of restoring 
     config,
     sourceRevision,
     packageVersion: "0.2.1-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     domainProjections: [priorDomain],
     domainProjectionReader: readerFor(priorDomain),
@@ -575,7 +575,7 @@ test("a failed destructive Fitness replacement stays gated instead of restoring 
     config,
     sourceRevision,
     packageVersion: "0.2.1-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     domainProjections: [correctedDomain],
     domainProjectionReader: readerFor(correctedDomain),
@@ -610,7 +610,7 @@ test("a failed destructive Fitness replacement stays gated instead of restoring 
     config,
     sourceRevision,
     packageVersion: "0.2.1-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     domainProjections: [correctedDomain],
     domainProjectionReader: readerFor(correctedDomain),
@@ -681,7 +681,7 @@ test("sync enforces the CangHai cutover contract before and inside one Activatio
     config,
     sourceRevision,
     packageVersion: "0.2.0-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     host,
     runs: runPort(events),
@@ -761,7 +761,7 @@ test("sync rejects a tampered cutover plan before touching publication or Host s
     config,
     sourceRevision,
     packageVersion: "0.2.0-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     host: {
       async capture() { touched = true; return {}; },
@@ -803,7 +803,7 @@ test("sync restores the prior Generation when post-cutover evidence still finds 
     config,
     sourceRevision,
     packageVersion: "0.2.0-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     host: {
       async capture() { return { config_revision: "prior" }; },
@@ -897,7 +897,7 @@ test("sync restores verified prior Host state and preserves the old Pointer on f
     config,
     sourceRevision,
     packageVersion: "0.2.0-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     host: {
       async capture() { return { config_revision: "prior" }; },
@@ -956,7 +956,7 @@ test("sync keeps the durable Gate closed when neither target nor prior Host stat
     config,
     sourceRevision,
     packageVersion: "0.2.0-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     host: {
       async capture() { return { config_revision: "prior" }; },
@@ -993,7 +993,7 @@ test("prior recovery keeps the Gate closed when search/get sentinel proof drifts
     config,
     sourceRevision,
     packageVersion: "0.2.0-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     host: {
       async capture() { return { config_revision: "prior" }; },
@@ -1038,7 +1038,7 @@ test("startup resolves a prepared Journal and orphan Gate without Host mutation"
 
   await recoverInterruptedSync({
     config,
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     host: {
       async capture() { throw new Error("UNEXPECTED_CAPTURE"); },
@@ -1062,7 +1062,7 @@ test("startup resolves a prepared Journal and orphan Gate without Host mutation"
   }));
   await recoverInterruptedSync({
     config,
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     host: {
       async capture() { throw new Error("UNEXPECTED_CAPTURE"); },
@@ -1129,7 +1129,7 @@ test("restart recovery covers every pre-pointer journal phase without exposing a
 
     await recoverInterruptedSync({
       config,
-      hostVersion: "2026.6.34",
+      hostVersion: "2026.7.1-2",
       nodeVersion: process.versions.node,
       host,
     });
@@ -1174,7 +1174,7 @@ test("restart verifies a fully written target for pointer_written and completed 
 
     await recoverInterruptedSync({
       config,
-      hostVersion: "2026.6.34",
+      hostVersion: "2026.7.1-2",
       nodeVersion: process.versions.node,
       host: {
         async capture() { throw new Error("UNEXPECTED_CAPTURE"); },
@@ -1234,7 +1234,7 @@ test("restart recovers an interrupted Journal before beginning another target", 
     config,
     sourceRevision,
     packageVersion: "0.2.0-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     host: {
       async capture() { events.push("capture-new"); return { config_revision: "new-prior" }; },
@@ -1325,7 +1325,7 @@ test("concurrent sync calls serialize the durable transaction and Host transitio
     config,
     sourceRevision,
     packageVersion: "0.2.0-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     host,
     runs: { closeAdmission() {}, openAdmission() {}, async drain() {} },

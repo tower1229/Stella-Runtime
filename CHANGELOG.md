@@ -5,6 +5,8 @@ Versioning; cognitive contract namespaces remain independently versioned.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-28
+
 - adds separate composite Generation Manifest, Activation Receipt, and Active
   Generation Pointer v3 contracts that bind one Authority checksum and sorted
   verified domain projection tuples without changing v2 identity semantics;
@@ -19,6 +21,9 @@ Versioning; cognitive contract namespaces remain independently versioned.
   to G1 and corrected F2 to distinct G2 consumption, lifecycle data retention,
   fail-closed locator loss, explicit locator restoration after reinstall, and
   exact prior-value replacement evidence without publishing either package.
+- updates the exact supported Host to OpenClaw `2026.7.1-2 (0790d9f)` on
+  Node.js `24.18.0`, including explicit CLI session routing required by the
+  current Host and the full packed Gateway acceptance path.
 
 ## [0.2.1] - 2026-08-21
 
@@ -83,7 +88,8 @@ First stable technical release of Stella Runtime V1.
   recovery, restart continuity, upgrade, rollback, integrity, and public-data
   boundaries using synthetic fixtures only.
 
-[Unreleased]: https://github.com/tower1229/Stella-Runtime/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/tower1229/Stella-Runtime/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tower1229/Stella-Runtime/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/tower1229/Stella-Runtime/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/tower1229/Stella-Runtime/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tower1229/Stella-Runtime/releases/tag/v0.1.0

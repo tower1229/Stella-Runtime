@@ -14,10 +14,10 @@ test("compatibility is declared for one channel and exact host version", async (
     manifest.schemaVersion,
     "cognitive-runtime.openclaw-compatibility/v2",
   );
-  assert.equal(manifest.packageVersion, "0.2.1");
+  assert.equal(manifest.packageVersion, "0.3.0");
   assert.equal(manifest.hosts.length, 1);
   assert.equal(manifest.hosts[0].releaseChannel, "extended-stable");
-  assert.equal(manifest.hosts[0].openclawVersion, "2026.6.34");
+  assert.equal(manifest.hosts[0].openclawVersion, "2026.7.1-2");
   assert.equal(manifest.hosts[0].nodeVersion, "24.18.0");
   assert.doesNotMatch(manifest.hosts[0].openclawVersion, /[<>=~^*]/);
   assert.doesNotMatch(manifest.hosts[0].nodeVersion, /[<>=~^*]/);

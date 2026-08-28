@@ -61,7 +61,7 @@ const active = {
       get_sentinel_checksum: `sha256:${"5".repeat(64)}`,
     },
     release_channel: "extended-stable",
-    openclaw_version: "2026.6.34",
+    openclaw_version: "2026.7.1-2",
     node_version: "24.18.0",
     verified_at: "2026-08-18T00:00:00.000Z",
   },
@@ -108,7 +108,7 @@ test("generation status preserves Pointer identity when its Receipt is missing",
   assert.deepEqual(await inspectStoredGenerationStatus({
     config: config(root),
     latestSourceRevision: "b".repeat(40),
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: "24.18.0",
   }), {
     status: "degraded",
@@ -139,7 +139,7 @@ test("Active Receipt must bind the release channel of its exact matrix row", asy
   assert.deepEqual(await validateActiveReceipt(
     mismatched,
     runtimeConfig,
-    "2026.6.34",
+    "2026.7.1-2",
     "24.18.0",
   ), {
     valid: false,
@@ -153,7 +153,7 @@ test("full self-check separates Authority input validation from environment heal
   await mkdir(config(root).runtime_storage, { recursive: true });
   const monitor = new RuntimeHealthMonitor({
     config: config(root),
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: "24.18.0",
     pluginDiscovered: () => true,
     authority: { validate: async () => ({ sourceRevision: "b".repeat(40) }) },
@@ -252,7 +252,7 @@ test("v3 diagnostics report live domain projection drift separately", async (t) 
   assert.deepEqual(await validateActiveReceipt(
     activeV3,
     config(root),
-    "2026.6.34",
+    "2026.7.1-2",
     "24.18.0",
   ), {
     valid: false,
@@ -260,7 +260,7 @@ test("v3 diagnostics report live domain projection drift separately", async (t) 
   });
   const monitor = new RuntimeHealthMonitor({
     config: config(root),
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: "24.18.0",
     pluginDiscovered: () => true,
     authority: { validate: async () => ({ sourceRevision: "a".repeat(40) }) },
@@ -290,7 +290,7 @@ test("self-check rejects an engine-compatible Node version absent from the matri
   await mkdir(config(root).runtime_storage, { recursive: true });
   const monitor = new RuntimeHealthMonitor({
     config: config(root),
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: "24.17.0",
     pluginDiscovered: () => true,
     hostCapabilities: () => true,
@@ -319,7 +319,7 @@ test("self-check preserves Receipt Host incompatibility instead of reporting con
   await mkdir(config(root).runtime_storage, { recursive: true });
   const monitor = new RuntimeHealthMonitor({
     config: config(root),
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: "24.18.0",
     pluginDiscovered: () => true,
     hostCapabilities: () => true,
@@ -347,7 +347,7 @@ test("reconciliation persists stable drift codes and enforce gates while observe
   let retrievalHealthy = false;
   const options = {
     config: config(root),
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: "24.18.0",
     pluginDiscovered: () => true,
     authority: { validate: async () => ({ sourceRevision: "a".repeat(40) }) },
@@ -386,7 +386,7 @@ test("reconciliation replaces duplicate Host failures after compatibility recove
   let compatible = false;
   const monitor = new RuntimeHealthMonitor({
     config: config(root),
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: "24.18.0",
     pluginDiscovered: () => true,
     hostCapabilities: () => compatible,
@@ -430,7 +430,7 @@ test("lifecycle metrics contain bounded outcomes and reject private trace fields
   await mkdir(config(root).runtime_storage, { recursive: true });
   const monitor = new RuntimeHealthMonitor({
     config: config(root),
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: "24.18.0",
     pluginDiscovered: () => true,
     authority: { validate: async () => ({ sourceRevision: "a".repeat(40) }) },

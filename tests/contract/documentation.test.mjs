@@ -15,10 +15,10 @@ test("public documentation covers install, configuration, CLI, data, operations,
       read("CHANGELOG.md"),
     ]);
 
-  assert.match(readme, /published stable release: `0\.2\.1`/i);
+  assert.match(readme, /published stable release: `0\.3\.0`/i);
   assert.doesNotMatch(readme, /not yet published|stable release candidate/i);
   assert.match(readme, /Node\.js `24\.18\.0` exactly/);
-  assert.match(readme, /npm install --save-exact @tower1229\/stella-cognitive-runtime@0\.2\.1/);
+  assert.match(readme, /npm install --save-exact @tower1229\/stella-cognitive-runtime@0\.3\.0/);
   assert.match(readme, /cognitive self-check/);
   assert.match(readme, /Configuration reference/);
   assert.match(readme, /Known limitations/);
@@ -39,20 +39,21 @@ test("public documentation covers install, configuration, CLI, data, operations,
   assert.match(operations, /upgrade/i);
   assert.match(operations, /rollback/i);
   assert.match(operations, /backup.*verify.*restore/is);
-  assert.match(operations, /@tower1229\/stella-cognitive-runtime@0\.2\.0/);
+  assert.match(operations, /@tower1229\/stella-cognitive-runtime@0\.2\.1/);
   assert.match(operations, /rollback version/i);
   assert.match(operations, /published on 2026-08-20/i);
   assert.match(operations, /4e0000f4227a9ec7bf12e9b9ac0d7ca87f2f515b/);
   assert.match(operations, /Node\.js is exactly `24\.18\.0`/);
   assert.match(operations, /bootstrap/i);
   assert.match(operations, /npm trust github/);
-  assert.match(support, /`0\.2\.1` is the published stable release/i);
+  assert.match(support, /`0\.3\.0` is the published stable release/i);
   assert.doesNotMatch(support, /not yet published|release candidate/i);
   assert.match(support, /engines.*package-install boundary.*not.*compatibility/is);
-  assert.match(support, /extended-stable.*2026\.6\.34/is);
+  assert.match(support, /extended-stable.*2026\.7\.1-2/is);
   assert.match(support, /consumer product acceptance/i);
-  assert.match(changelog, /## \[Unreleased\].*composite Generation Manifest.*## \[0\.2\.1\] - 2026-08-21/is);
-  assert.match(changelog, /\[Unreleased\]: .*\/compare\/v0\.2\.1\.\.\.HEAD/);
+  assert.match(changelog, /## \[0\.3\.0\] - 2026-08-28.*composite Generation Manifest.*## \[0\.2\.1\] - 2026-08-21/is);
+  assert.match(changelog, /\[Unreleased\]: .*\/compare\/v0\.3\.0\.\.\.HEAD/);
+  assert.match(changelog, /\[0\.3\.0\]: .*\/compare\/v0\.2\.1\.\.\.v0\.3\.0/);
   assert.match(changelog, /\[0\.2\.1\]: .*\/compare\/v0\.2\.0\.\.\.v0\.2\.1/);
   assert.match(changelog, /\[0\.2\.0\]: .*\/compare\/v0\.1\.0\.\.\.v0\.2\.0/);
   assert.match(changelog, /persistent.*Approval Receipt/is);
@@ -63,23 +64,23 @@ test("public documentation covers install, configuration, CLI, data, operations,
 });
 
 test("exact-host evidence records the stable package acceptance command", async () => {
-  const evidence = await read("docs/evidence/openclaw-2026.6.34.md");
+  const evidence = await read("docs/evidence/openclaw-2026.7.1-2.md");
 
-  assert.match(evidence, /Published stable release: `0\.2\.1` on Node\.js `24\.18\.0`/);
-  assert.match(evidence, /Previous rollback version: published `0\.2\.0`/);
-  assert.match(evidence, /npm run test:pack-install/);
-  assert.match(evidence, /OpenClaw 2026\.6\.34 \(5c38f99\)/);
+  assert.match(evidence, /Release target: `0\.3\.0` on Node\.js `24\.18\.0`/);
+  assert.match(evidence, /Previous rollback version: published `0\.2\.1`/);
+  assert.match(evidence, /openclaw-discovery\.test\.mjs/);
+  assert.match(evidence, /2026\.7\.1-2 \(0790d9f\)/);
   assert.match(evidence, /synthetic/i);
 });
 
 test("Generation Consumption evidence names the unified release profile and exact scope", async () => {
-  const evidence = await read("docs/evidence/openclaw-2026.6.34.md");
+  const evidence = await read("docs/evidence/openclaw-2026.7.1-2.md");
 
   assert.match(evidence, /npm run verify:env -- release --json/);
   assert.match(evidence, /generation-consumption-public-runner/);
-  assert.match(evidence, /OpenClaw `2026\.6\.34 \(5c38f99\)` and Node\.js `24\.18\.0`/);
-  assert.match(evidence, /published on 2026-08-20/);
-  assert.match(evidence, /source-bound.*revision/is);
+  assert.match(evidence, /exact Host and Node versions above/);
+  assert.match(evidence, /published registry artifact/);
+  assert.match(evidence, /source-bound packed acceptance/is);
 });
 
 test("historical V1 documents defer to the completed v2 release baseline", async () => {

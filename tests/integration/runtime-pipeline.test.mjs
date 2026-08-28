@@ -112,7 +112,7 @@ const register = async ({
   const calls = [];
   const controller = registerRuntimeHooks({
     runtime: {
-      version: "2026.6.34",
+      version: "2026.7.1-2",
       llm: {
         complete: complete ?? (async (request) => {
           calls.push(request);
@@ -239,7 +239,7 @@ test("expired Run state fails closed instead of recompiling a drifting binding",
   let calls = 0;
   const runtime = await import("../../dist/openclaw/runtime.js");
   runtime.registerRuntimeHooks({
-    runtime: { version: "2026.6.34", llm: { complete: async () => {
+    runtime: { version: "2026.7.1-2", llm: { complete: async () => {
       calls += 1;
       return { text: JSON.stringify(routerResult()) };
     } } },
@@ -487,7 +487,7 @@ test("enforce rejects lifecycle invalidation and unexpected Runtime failures wit
   const barrier = new Promise((resolve) => { release = resolve; });
   const hooks = new Map();
   const controller = registerRuntimeHooks({
-    runtime: { version: "2026.6.34", llm: { complete: async () => {
+    runtime: { version: "2026.7.1-2", llm: { complete: async () => {
       await barrier;
       return { text: JSON.stringify(routerResult()) };
     } } },
@@ -565,7 +565,7 @@ test("agent end records a minimal privacy-safe overlay and always clears the Run
   const hooks = new Map();
   const runtime = await import("../../dist/openclaw/runtime.js");
   const api = {
-    runtime: { version: "2026.6.34", llm: { complete: async () => ({ text: JSON.stringify(requiredRouterResult()) }) } },
+    runtime: { version: "2026.7.1-2", llm: { complete: async () => ({ text: JSON.stringify(requiredRouterResult()) }) } },
     on(name, handler) { hooks.set(name, handler); },
     registerCli() {},
     logger: { info() {}, warn() {} },
@@ -621,7 +621,7 @@ test("provenance failures log only a fixed bounded reason", async () => {
   const logs = [];
   const runtime = await import("../../dist/openclaw/runtime.js");
   runtime.registerRuntimeHooks({
-    runtime: { version: "2026.6.34", llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
+    runtime: { version: "2026.7.1-2", llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
     on(name, handler) { hooks.set(name, handler); },
     registerCli() {},
     logger: { info() {}, warn(message) { logs.push(message); } },
@@ -644,7 +644,7 @@ test("successful Runtime provenance persists through the real SQLite store", asy
   t.after(() => store.close());
   const hooks = new Map();
   runtime.registerRuntimeHooks({
-    runtime: { version: "2026.6.34", llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
+    runtime: { version: "2026.7.1-2", llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
     on(name, handler) { hooks.set(name, handler); },
     registerCli() {},
   }, runtime.readRuntimeConfig({ runtime: runtimeConfig() }), {
@@ -672,7 +672,7 @@ test("packet includes only Router-selected optional context and lifecycle cleanu
     { id: "sem-synthetic", content: "MUST_NOT_BE_INJECTED" },
   ];
   const api = {
-    runtime: { version: "2026.6.34", llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
+    runtime: { version: "2026.7.1-2", llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
     on(name, handler) { hooks.set(name, handler); },
     registerCli() {},
   };
@@ -719,7 +719,7 @@ test("host completion nested prompt hook is excluded from Runtime routing", asyn
   let completionCalls = 0;
   const api = {
     runtime: {
-      version: "2026.6.34",
+      version: "2026.7.1-2",
       llm: {
         complete: async () => {
           completionCalls += 1;
@@ -750,7 +750,7 @@ test("plugin lifecycle cleanup clears active Run scratch", async () => {
   const hooks = new Map();
   let lifecycle;
   const api = {
-    runtime: { version: "2026.6.34", llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
+    runtime: { version: "2026.7.1-2", llm: { complete: async () => ({ text: JSON.stringify(routerResult()) }) } },
     on(name, handler) { hooks.set(name, handler); },
     lifecycle: { registerRuntimeLifecycle(value) { lifecycle = value; } },
     registerCli() {},
@@ -781,7 +781,7 @@ test("lifecycle cleanup invalidates an in-flight Router completion", async () =>
   let release;
   const barrier = new Promise((resolve) => { release = resolve; });
   const api = {
-    runtime: { version: "2026.6.34", llm: { complete: async () => {
+    runtime: { version: "2026.7.1-2", llm: { complete: async () => {
       await barrier;
       return { text: JSON.stringify(routerResult()) };
     } } },

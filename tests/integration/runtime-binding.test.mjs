@@ -150,7 +150,7 @@ const createRuntime = ({ mode = "enforce", compile, revalidate, complete, paths 
   const calls = [];
   const controller = registerRuntimeHooks({
     runtime: {
-      version: "2026.6.34",
+      version: "2026.7.1-2",
       llm: { complete: async (request) => {
         calls.push(request);
         return complete === undefined
@@ -184,7 +184,7 @@ const eligible = (runId) => ({
 test("Eligible Run binding rejects an engine-compatible Host absent from the matrix", async () => {
   await assert.rejects(new FileBindingCompiler().compile({
     config: config("enforce"),
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: "24.17.0",
   }), { message: "INCOMPATIBLE_HOST" });
 });
@@ -567,7 +567,7 @@ test("filesystem compiler validates Pointer, Receipt, Manifest, Host identity, a
       get_sentinel_checksum: `sha256:${"4".repeat(64)}`,
     },
     release_channel: "extended-stable",
-    openclaw_version: "2026.6.34",
+    openclaw_version: "2026.7.1-2",
     node_version: process.versions.node,
     verified_at: "2026-08-17T00:00:00.000Z",
   };
@@ -586,7 +586,7 @@ test("filesystem compiler validates Pointer, Receipt, Manifest, Host identity, a
   const hooks = new Map();
   registerRuntimeHooks({
     runtime: {
-      version: "2026.6.34",
+      version: "2026.7.1-2",
       llm: { complete: async () => ({ text: JSON.stringify({
         ...routerResult,
         state_refs: [],
@@ -610,7 +610,7 @@ test("filesystem compiler validates Pointer, Receipt, Manifest, Host identity, a
   await plugin.register({
     pluginConfig: { runtime: { ...runtimeConfig, mode: "observe" } },
     runtime: {
-      version: "2026.6.34",
+      version: "2026.7.1-2",
       llm: { complete: async () => ({ text: JSON.stringify({
         ...routerResult,
         state_refs: [],
@@ -679,7 +679,7 @@ test("filesystem compiler negotiates v3 and fail-closes domain tuple drift", asy
     config: runtimeConfig,
     sourceRevision,
     packageVersion: "0.2.1-test",
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
     domainProjections: [domain],
     domainProjectionReader: { async read() { return expected; } },
@@ -723,7 +723,7 @@ test("filesystem compiler negotiates v3 and fail-closes domain tuple drift", asy
   });
   const compiled = await compiler.compile({
     config: runtimeConfig,
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
   });
   assert.deepEqual(compiled.domainInputs, [expected]);
@@ -732,7 +732,7 @@ test("filesystem compiler negotiates v3 and fail-closes domain tuple drift", asy
   await assert.rejects(
     compiler.revalidate(compiled, {
       config: runtimeConfig,
-      hostVersion: "2026.6.34",
+      hostVersion: "2026.7.1-2",
       nodeVersion: process.versions.node,
     }),
     /ACTIVE_DOMAIN_POINTER_DRIFT/,
@@ -745,7 +745,7 @@ test("filesystem compiler negotiates v3 and fail-closes domain tuple drift", asy
   await assert.rejects(
     compiler.compile({
       config: runtimeConfig,
-      hostVersion: "2026.6.34",
+      hostVersion: "2026.7.1-2",
       nodeVersion: process.versions.node,
     }),
     /ACTIVE_DOMAIN_INDEX_EVIDENCE_MISMATCH/,
@@ -758,7 +758,7 @@ test("filesystem compiler negotiates v3 and fail-closes domain tuple drift", asy
   await assert.rejects(
     compiler.compile({
       config: runtimeConfig,
-      hostVersion: "2026.6.34",
+      hostVersion: "2026.7.1-2",
       nodeVersion: process.versions.node,
     }),
     /ACTIVE_DOMAIN_INDEX_EVIDENCE_MISMATCH/,
@@ -772,7 +772,7 @@ test("filesystem compiler negotiates v3 and fail-closes domain tuple drift", asy
   await assert.rejects(
     compiler.compile({
       config: runtimeConfig,
-      hostVersion: "2026.6.34",
+      hostVersion: "2026.7.1-2",
       nodeVersion: process.versions.node,
     }),
     /ACTIVE_DOMAIN_INPUT_MISMATCH/,

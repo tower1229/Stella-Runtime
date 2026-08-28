@@ -25,8 +25,8 @@ jobs:
       - run: npm ci
       - name: Install the exact supported OpenClaw host
         run: |
-          npm install --global openclaw@2026.6.34
-          openclaw --version | grep -F "2026.6.34 (5c38f99)"
+          npm install --global openclaw@2026.7.1-2
+          openclaw --version | grep -F "2026.7.1-2 (0790d9f)"
       - name: Prepare the exact Fitness source package
         run: node scripts/prepare-exact-fitness.mjs "$RUNNER_TEMP/stella-fitness"
       - name: Verify immutable release identity
@@ -186,8 +186,8 @@ jobs:
       - run: npm ci
       - name: Install the exact supported OpenClaw host
         run: |
-          npm install --global openclaw@2026.6.34
-          openclaw --version | grep -F "2026.6.34 (5c38f99)"
+          npm install --global openclaw@2026.7.1-2
+          openclaw --version | grep -F "2026.7.1-2 (0790d9f)"
       - name: Prepare the exact Fitness source package
         run: node scripts/prepare-exact-fitness.mjs "$RUNNER_TEMP/stella-fitness"
       - name: Smoke the published registry artifact on the exact Host

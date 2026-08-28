@@ -1,12 +1,12 @@
 {
   "schemaVersion": "cognitive-runtime.openclaw-compatibility/v2",
-  "packageVersion": "0.2.1",
+  "packageVersion": "0.3.0",
   "hosts": [
     {
       "releaseChannel": "extended-stable",
-      "openclawVersion": "2026.6.34",
+      "openclawVersion": "2026.7.1-2",
       "nodeVersion": "24.18.0",
-      "evidence": "docs/evidence/openclaw-2026.6.34.md",
+      "evidence": "docs/evidence/openclaw-2026.7.1-2.md",
       "generationConsumptionAcceptance": {
         "status": "passed",
         "profile": "packed-exact-host",

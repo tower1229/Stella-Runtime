@@ -105,7 +105,7 @@ async function runPackedFailClosedMatrix(config, hostApi) {
     },
   }).compile({
     config,
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: process.versions.node,
   });
   const accepted = acceptedRouterResult(binding);
@@ -114,7 +114,7 @@ async function runPackedFailClosedMatrix(config, hostApi) {
     const hooks = new Map();
     const controller = hookRuntime.registerRuntimeHooks({
       runtime: {
-        version: "2026.6.34",
+        version: "2026.7.1-2",
         llm: {
           complete: complete ?? (async () => ({ text: JSON.stringify(accepted) })),
         },

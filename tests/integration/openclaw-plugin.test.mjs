@@ -74,7 +74,7 @@ test("OpenClaw discovers cognitive self-check through the plugin entry", async (
   let interactiveRegistration;
   const api = {
     runtime: {
-      version: "2026.6.34",
+      version: "2026.7.1-2",
       llm: {
         complete: async () => {
           throw new Error("not invoked by self-check");
@@ -118,7 +118,7 @@ test("OpenClaw discovers cognitive self-check through the plugin entry", async (
   }
 
   assert.deepEqual(output, [
-    '{"status":"ok","pluginId":"cognitive-runtime","compatibilityMatrixRow":{"releaseChannel":"extended-stable","openclawVersion":"2026.6.34","nodeVersion":"24.18.0","evidence":"docs/evidence/openclaw-2026.6.34.md"},"hostCapabilities":{"hostModelCompletion":"llm.complete"}}',
+    '{"status":"ok","pluginId":"cognitive-runtime","compatibilityMatrixRow":{"releaseChannel":"extended-stable","openclawVersion":"2026.7.1-2","nodeVersion":"24.18.0","evidence":"docs/evidence/openclaw-2026.7.1-2.md"},"hostCapabilities":{"hostModelCompletion":"llm.complete"}}',
   ]);
 });
 
@@ -169,7 +169,7 @@ test("OpenClaw resolves a relative cutover plan before proxying sync to Gateway"
   const program = new FakeCommand();
   await plugin.register({
     runtime: {
-      version: "2026.6.34",
+      version: "2026.7.1-2",
       llm: { complete: async () => ({}) },
     },
     registerGatewayMethod() {},
@@ -264,7 +264,7 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
     version: "0.1.0-beta.0",
     pluginConfig: { runtime: runtimeConfig },
     runtime: {
-      version: "2026.6.34",
+      version: "2026.7.1-2",
       config: {
         current: () => hostConfig,
         async mutateConfigFile({ mutate }) {
@@ -637,7 +637,7 @@ test("OpenClaw sync consumes configured Fitness projection and gates domain drif
     version: "0.2.1-test",
     pluginConfig: { runtime: runtimeConfig },
     runtime: {
-      version: "2026.6.34",
+      version: "2026.7.1-2",
       config: { current: () => hostConfig },
       llm: { complete: async () => ({ text: JSON.stringify({
         memory_route: "none",
@@ -777,7 +777,7 @@ test("self-check fails Plugin discovery when the Host cannot register hooks", as
       adapters: { authority_checkout: authorityDirectory, host_retrieval: "synthetic" },
     } },
     runtime: {
-      version: "2026.6.34",
+      version: "2026.7.1-2",
       llm: { complete: async () => ({ text: "{}" }) },
       config: { current: () => ({ agents: { list: [] } }) },
     },
@@ -857,7 +857,7 @@ test("OpenClaw startup attempts interrupted sync recovery and keeps admission cl
       limits: { max_active_runs: 4, drain_timeout_ms: 30_000 },
       adapters: { authority_checkout: join(root, "authority"), host_retrieval: "openclaw-memory" },
     } },
-    runtime: { version: "2026.6.34", llm: { complete: async () => ({}) } },
+    runtime: { version: "2026.7.1-2", llm: { complete: async () => ({}) } },
     on(name, handler) { hooks.set(name, handler); },
     logger: { info() {}, warn(message) { logs.push(JSON.parse(message)); } },
     cognitiveRuntimeHostTransition: {

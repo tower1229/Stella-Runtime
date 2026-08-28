@@ -91,7 +91,7 @@ const createLifecycle = ({ failOperation } = {}) => {
         packageVersion: installed?.version ?? "",
         packageIntegrity: installed?.integrity ?? "",
         openclawReleaseChannel: "extended-stable",
-        openclawVersion: "2026.6.34",
+        openclawVersion: "2026.7.1-2",
         capabilityChecksum: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         contractVersions: [
           "cognitive-runtime.runtime-recovery-snapshot-manifest/v2",

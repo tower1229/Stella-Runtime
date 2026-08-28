@@ -2,7 +2,7 @@
   "schemaVersion": "cognitive-runtime.capability-fixture/v2",
   "synthetic": true,
   "releaseChannel": "extended-stable",
-  "openclawVersion": "2026.6.34",
+  "openclawVersion": "2026.7.1-2",
   "expectations": {
     "typedHooks": [
       "before_prompt_build",

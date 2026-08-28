@@ -47,13 +47,13 @@ test("stable release verifies the immutable tag, package, tarball, and published
   assert.match(workflow, /TARBALL="\.\/release\//);
   assert.match(workflow, /test -f "\$TARBALL"/);
   assert.match(workflow, /npm ci/);
-  assert.match(workflow, /npm install --global openclaw@2026\.6\.34/);
+  assert.match(workflow, /npm install --global openclaw@2026\.7\.1-2/);
   assert.equal(
     [...workflow.matchAll(/node-version:\s*24\.18\.0/g)].length,
     3,
   );
   assert.doesNotMatch(workflow, /node-version:\s*24\s*(?:#.*)?$/m);
-  assert.match(workflow, /2026\.6\.34 \(5c38f99\)/);
+  assert.match(workflow, /2026\.7\.1-2 \(0790d9f\)/);
   assert.match(workflow, /npm run verify:env -- release --json/);
   assert.match(workflow, /\.stella\/verification\/release\.json/);
   assert.match(workflow, /npm publish .*--access public/);
@@ -98,7 +98,7 @@ test("stable release installs the published registry artifact on the exact Host"
   const registrySmokeJob = workflow.slice(registrySmokeIndex);
   assert.match(registrySmokeJob, /needs: publish/);
   assert.match(registrySmokeJob, /node-version:\s*24\.18\.0/);
-  assert.match(registrySmokeJob, /openclaw@2026\.6\.34/);
+  assert.match(registrySmokeJob, /openclaw@2026\.7\.1-2/);
   assert.match(
     registrySmokeJob,
     /STELLA_RUNTIME_INSTALL_SPEC:\s*"@tower1229\/stella-cognitive-runtime@\$\{\{ needs\.publish\.outputs\.version \}\}"/,
@@ -128,7 +128,7 @@ test("pull requests and master pushes run capability-separated verification", as
   assert.match(workflow, /profile: \[pure, network-install, exact-host\]/);
   assert.match(workflow, /fetch-depth: 0/);
   assert.match(workflow, /npm run verify:env -- "\$VERIFICATION_PROFILE" --json/);
-  assert.match(workflow, /openclaw@2026\.6\.34/);
+  assert.match(workflow, /openclaw@2026\.7\.1-2/);
   assert.match(workflow, /if: always\(\)/);
   assert.match(workflow, /actions\/upload-artifact@v7/);
   assert.match(workflow, /\.stella\/verification\/\$\{\{ matrix\.profile \}\}\.json/);
@@ -150,7 +150,7 @@ test("every exact-host workflow prepares one pinned Fitness source package", asy
 
   assert.match(
     preparation,
-    /FITNESS_REVISION = "ac1b8eaf55cf0cba4f5035b82ff74ac5ddd8cf8e"/,
+    /FITNESS_REVISION = "93612d25e65b631e20ab4a7ba51bf5011c2d1c0b"/,
   );
   assert.match(preparation, /STELLA_FITNESS_PACKAGE_ROOT=/);
   assert.match(preparation, /STELLA_FITNESS_EXPECTED_REVISION=/);

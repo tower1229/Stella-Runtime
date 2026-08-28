@@ -30,7 +30,7 @@ async function installPackedRuntime(root) {
     },
   );
   const [pack] = JSON.parse(stdout);
-  assert.equal(pack.version, "0.2.1");
+  assert.equal(pack.version, "0.3.0");
   await execFileAsync("tar", ["-xzf", join(packRoot, pack.filename), "-C", consumerRoot]);
   await symlink(new URL("../../node_modules", import.meta.url), join(consumerRoot, "node_modules"));
   const packageRoot = join(consumerRoot, "package");
@@ -285,8 +285,8 @@ test("packed Runtime proves approval through publication, recovery, and next-Run
   const activated = await runtime.syncGeneration({
     config,
     sourceRevision,
-    packageVersion: "0.2.1",
-    hostVersion: "2026.6.34",
+    packageVersion: "0.3.0",
+    hostVersion: "2026.7.1-2",
     nodeVersion: "24.18.0",
     host,
     runs,
@@ -294,7 +294,7 @@ test("packed Runtime proves approval through publication, recovery, and next-Run
   assert.equal(admissionClosed, false);
   const binding = await new runtime.FileBindingCompiler().compile({
     config,
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: "24.18.0",
   });
   assert.equal(binding.syncGeneration, activated.syncGeneration);
@@ -322,8 +322,8 @@ test("packed Runtime proves approval through publication, recovery, and next-Run
     await assert.rejects(runtime.syncGeneration({
       config,
       sourceRevision: failedRevision,
-      packageVersion: "0.2.1",
-      hostVersion: "2026.6.34",
+      packageVersion: "0.3.0",
+      hostVersion: "2026.7.1-2",
       nodeVersion: "24.18.0",
       host,
       runs,
@@ -332,7 +332,7 @@ test("packed Runtime proves approval through publication, recovery, and next-Run
     assert.equal(admissionClosed, false);
     const recovered = await new runtime.FileBindingCompiler().compile({
       config,
-      hostVersion: "2026.6.34",
+      hostVersion: "2026.7.1-2",
       nodeVersion: "24.18.0",
     });
     assert.equal(recovered.syncGeneration, activated.syncGeneration);
@@ -343,7 +343,7 @@ test("packed Runtime proves approval through publication, recovery, and next-Run
   assert.deepEqual(await runtime.validateActiveReceipt(
     { ...active, receipt: { ...active.receipt, generation_id: `generation-${"f".repeat(64)}` } },
     config,
-    "2026.6.34",
+    "2026.7.1-2",
     "24.18.0",
   ), { valid: false, reasonCodes: ["STALE_RECEIPT"] });
   assert.deepEqual(await runtime.validateActiveReceipt(
@@ -352,13 +352,13 @@ test("packed Runtime proves approval through publication, recovery, and next-Run
       ...config,
       adapters: { ...config.adapters, host_retrieval: "drifted-memory" },
     },
-    "2026.6.34",
+    "2026.7.1-2",
     "24.18.0",
   ), { valid: false, reasonCodes: ["CONFIG_DRIFT"] });
 
   const monitor = new runtime.RuntimeHealthMonitor({
     config,
-    hostVersion: "2026.6.34",
+    hostVersion: "2026.7.1-2",
     nodeVersion: "24.18.0",
     pluginDiscovered: () => true,
     hostCapabilities: () => true,

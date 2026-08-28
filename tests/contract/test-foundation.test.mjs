@@ -13,12 +13,12 @@ const readFixture = async (relativePath) => JSON.parse(
 
 test("capability fixture pins one exact release channel and host version", async () => {
   const fixture = await readFixture(
-    "capabilities/extended-stable/2026.6.34.json",
+    "capabilities/extended-stable/2026.7.1-2.json",
   );
 
   assert.equal(fixture.synthetic, true);
   assert.equal(fixture.releaseChannel, "extended-stable");
-  assert.equal(fixture.openclawVersion, "2026.6.34");
+  assert.equal(fixture.openclawVersion, "2026.7.1-2");
   assert.doesNotMatch(fixture.openclawVersion, /[<>=~^*]/);
   assert.doesNotMatch(JSON.stringify(fixture), /minimumVersion/i);
 });

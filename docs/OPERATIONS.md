@@ -3,18 +3,18 @@
 This guide operates exact artifacts. Replace no version or integrity value with
 a range, tag such as `latest`, or floating branch.
 
-## Install 0.2.1
+## Install 0.3.0
 
-`0.2.1` is the published stable release. Use only the immutable exact package;
+`0.3.0` is the published stable release. Use only the immutable exact package;
 do not replace it with a tag or range.
 
 1. Confirm Node.js is exactly `24.18.0` and OpenClaw reports exactly
-   `2026.6.34 (5c38f99)`. The package `engines` range is only an install boundary;
+   `2026.7.1-2 (0790d9f)`. The package `engines` range is only an install boundary;
    Compatibility Matrix admission remains exact.
 2. Install the exact public package:
 
    ```sh
-   openclaw plugins install @tower1229/stella-cognitive-runtime@0.2.1
+   openclaw plugins install @tower1229/stella-cognitive-runtime@0.3.0
    ```
 
 3. Configure `runtime.mode` as `off`, the bounded limits, immutable binding,
@@ -25,7 +25,7 @@ do not replace it with a tag or range.
    `enforce` when any exact-host capability or continuity check fails.
 
 For a plain npm consumer, use
-`npm install --save-exact @tower1229/stella-cognitive-runtime@0.2.1`.
+`npm install --save-exact @tower1229/stella-cognitive-runtime@0.3.0`.
 
 ## Upgrade
 
@@ -154,12 +154,12 @@ compatibility or integrity requires it; package rollback and data recovery are
 separate operations. Re-run self-check, exact-host conformance, and restart
 continuity before moving to `observe`.
 
-The previous verified rollback version for `0.2.1` is the published stable
-`@tower1229/stella-cognitive-runtime@0.2.0` at source revision
-`4e0000f4227a9ec7bf12e9b9ac0d7ca87f2f515b`, with registry integrity
-`sha512-FlVyQ97ZUvxr/U0Az+c7OlxbWcGm/1ZIV7mcqSk6wswUnhPrCWFqXOe7cxsIqvDxTGe53eRGiyUyIqhM7wDG3Q==`.
+The previous verified rollback version for `0.3.0` is the published stable
+`@tower1229/stella-cognitive-runtime@0.2.1` at source revision
+`8109fef56baa66de5f7b65a1a09a5b7fc9dc27c8`, with registry integrity
+`sha512-y6cKaGW+P8r1ekq1VwkOKDwVo2oyiPZ1JV1nRHMLr7RRvCGdprMZcTIZtPZCtDPU60Iw3W4C5t4F/yGNuQ3SvQ==`.
 Pack-install retrieves or builds that fixed prior artifact, upgrades to the
-`0.2.1` stable tarball, and checks the installed package and lockfile identity.
+`0.3.0` stable tarball, and checks the installed package and lockfile identity.
 
 ## Stable 0.2.0 release receipt
 
@@ -178,13 +178,13 @@ repeats Plugin discovery, Gateway restart continuity, Generation Consumption,
 fail-closed, recovery, uninstall, and configuration-restoration acceptance
 against those installed bytes.
 
-OpenClaw `2026.6.34` removes the complete Plugin entry during uninstall, so it
+OpenClaw `2026.7.1-2` removes the complete Plugin entry during uninstall, so it
 does not retain `config.stella` for an uninstalled Runtime. Runtime/Fitness
 uninstall must preserve canonical data and last verified projections, but the
 remaining consumer fails closed while the locator is absent. Reinstall does not
 guess or duplicate the repository path: the operator must explicitly restore
 the same validated locator before live synchronization resumes. For the
-OpenClaw `2026.6.34` compatibility row, this fail-closed lifecycle is the
+OpenClaw `2026.7.1-2` compatibility row, this fail-closed lifecycle is the
 accepted uninstall boundary: locator persistence across Plugin uninstall is a
 future Host capability, not a Runtime-owned fallback. Runtime must not satisfy
 it by adding a second locator, guessing a repository path, or reading private

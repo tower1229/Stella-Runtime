@@ -11,7 +11,7 @@ import type {
   CandidateReviewArtifact,
 } from "../contracts/index.js";
 
-export const OPENCLAW_TELEGRAM_CONFIRMATION_VERSION = "2026.6.34";
+export const OPENCLAW_TELEGRAM_CONFIRMATION_VERSION = "2026.7.1-2";
 export const TELEGRAM_CONFIRMATION_NAMESPACE = "crad";
 
 interface TelegramConfirmationContext {

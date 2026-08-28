@@ -3,7 +3,7 @@ import { appendFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { spawn } from "node:child_process";
 
-const FITNESS_REVISION = "ac1b8eaf55cf0cba4f5035b82ff74ac5ddd8cf8e";
+const FITNESS_REVISION = "93612d25e65b631e20ab4a7ba51bf5011c2d1c0b";
 const destination = process.argv[2];
 
 if (destination === undefined || !isAbsolute(destination)) {
