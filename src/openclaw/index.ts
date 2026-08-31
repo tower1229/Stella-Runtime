@@ -84,6 +84,63 @@ export type {
   MemoryToolResult,
 } from "./ports.js";
 
+export const RUNTIME_PACKAGE_VERSION = "0.3.0";
+
+export interface CognitiveRuntimeOpenClawComposition {
+  readonly cutoverPublication?: NonNullable<
+    CognitiveRuntimePluginApi["cognitiveRuntimeCutoverPublication"]
+  >;
+  readonly publicCorpus?: NonNullable<
+    CognitiveRuntimePluginApi["cognitiveRuntimePublicCorpus"]
+  >;
+  readonly publicCorpusHealth?: NonNullable<
+    CognitiveRuntimePluginApi["cognitiveRuntimePublicCorpusHealth"]
+  >;
+  readonly instanceCutover?: NonNullable<
+    CognitiveRuntimePluginApi["cognitiveRuntimeInstanceCutover"]
+  >;
+}
+
+export type CognitiveRuntimeOpenClawCompositionProvider =
+  | CognitiveRuntimeOpenClawComposition
+  | ((hostApi: CognitiveRuntimePluginApi) => CognitiveRuntimeOpenClawComposition);
+
+const composePluginApi = (
+  hostApi: CognitiveRuntimePluginApi,
+  composition: CognitiveRuntimeOpenClawComposition,
+): CognitiveRuntimePluginApi => {
+  const overrides = new Map<PropertyKey, unknown>();
+  overrides.set("version", RUNTIME_PACKAGE_VERSION);
+  if (composition.cutoverPublication !== undefined) {
+    overrides.set(
+      "cognitiveRuntimeCutoverPublication",
+      composition.cutoverPublication,
+    );
+  }
+  if (composition.publicCorpus !== undefined) {
+    overrides.set("cognitiveRuntimePublicCorpus", composition.publicCorpus);
+  }
+  if (composition.publicCorpusHealth !== undefined) {
+    overrides.set(
+      "cognitiveRuntimePublicCorpusHealth",
+      composition.publicCorpusHealth,
+    );
+  }
+  if (composition.instanceCutover !== undefined) {
+    overrides.set(
+      "cognitiveRuntimeInstanceCutover",
+      composition.instanceCutover,
+    );
+  }
+  return new Proxy(hostApi, {
+    get(target, property) {
+      if (overrides.has(property)) return overrides.get(property);
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+};
+
 interface RecoveryInstanceConfig {
   readonly authorityRevision: string;
 }
@@ -288,12 +345,18 @@ const requireInstance = (
   return instance;
 };
 
-const plugin = {
+export const createCognitiveRuntimeOpenClawPlugin = (
+  compositionProvider: CognitiveRuntimeOpenClawCompositionProvider = {},
+) => ({
   id: "cognitive-runtime",
   name: "Stella Runtime",
   description: "Instance-neutral cognitive runtime for OpenClaw",
-  register(api: CognitiveRuntimePluginApi): void {
-    const packageVersion = api.version ?? "0.0.0";
+  register(hostApi: CognitiveRuntimePluginApi): void {
+    const composition = typeof compositionProvider === "function"
+      ? compositionProvider(hostApi)
+      : compositionProvider;
+    const api = composePluginApi(hostApi, composition);
+    const packageVersion = RUNTIME_PACKAGE_VERSION;
     const runtimeConfig = readRuntimeConfig(api.pluginConfig);
     const readFitnessDomain = async (): Promise<GenerationDomainProjectionInput | null> => {
       if (runtimeConfig === null || api.runtime.config === undefined) return null;
@@ -1118,6 +1181,8 @@ const plugin = {
       },
     );
   },
-};
+});
+
+const plugin = createCognitiveRuntimeOpenClawPlugin();
 
 export default plugin;

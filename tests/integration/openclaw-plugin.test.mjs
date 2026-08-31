@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
 
-import plugin from "../../dist/openclaw/index.js";
+import plugin, {
+  createCognitiveRuntimeOpenClawPlugin,
+  RUNTIME_PACKAGE_VERSION,
+} from "../../dist/openclaw/index.js";
 import { calculateInstanceCutoverPlanChecksum } from "../../dist/cutover/index.js";
 import {
   provenanceDatabasePath,
@@ -197,7 +200,7 @@ test("OpenClaw resolves a relative cutover plan before proxying sync to Gateway"
   assert.equal(output[0].operation, "sync");
 });
 
-test("OpenClaw exposes validate, build, generation show, and the full sync Barrier", async (t) => {
+test("a consumer-composed OpenClaw plugin preserves Runtime identity and injects instance ports", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-openclaw-generation-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const authorityDirectory = join(root, "authority");
@@ -261,7 +264,7 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
   let lastSearchResult;
   const cutoverEvents = [];
   const api = {
-    version: "0.1.0-beta.0",
+    version: "9.9.9-consumer-wrapper",
     pluginConfig: { runtime: runtimeConfig },
     runtime: {
       version: "2026.7.1-2",
@@ -352,11 +355,18 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
         };
       },
     },
-    cognitiveRuntimeCutoverPublication: {
+    registerCli(registrar) {
+      return registrar({ program });
+    },
+  };
+  const composedPlugin = createCognitiveRuntimeOpenClawPlugin((hostApi) => {
+    assert.equal(hostApi, api);
+    return {
+    cutoverPublication: {
       async verifyRemoteBase() { cutoverEvents.push("remote-base"); },
       async verifyPushedRevision() { cutoverEvents.push("pushed-revision"); },
     },
-    cognitiveRuntimePublicCorpus: {
+    publicCorpus: {
       async verifyBefore() {
         cutoverEvents.push("public-before");
         return {
@@ -379,7 +389,7 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
       },
       async indexTarget() { cutoverEvents.push("public-index"); },
     },
-    cognitiveRuntimeInstanceCutover: {
+      instanceCutover: {
       async capture() {
         cutoverEvents.push("capture-cutover");
         return { active_memory: true, bootstrap_targets: [] };
@@ -394,12 +404,10 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
       async verifyTarget() { cutoverEvents.push("verify-cutover"); },
       async restore() { cutoverEvents.push("restore-cutover"); },
       async verifyPrior() { cutoverEvents.push("verify-prior-cutover"); },
-    },
-    registerCli(registrar) {
-      return registrar({ program });
-    },
-  };
-  await plugin.register(api);
+      },
+    };
+  });
+  await composedPlugin.register(api);
   const cognitive = program.children.get("cognitive");
   const generation = cognitive.children.get("generation");
   const output = [];
@@ -440,6 +448,7 @@ test("OpenClaw exposes validate, build, generation show, and the full sync Barri
   assert.equal(output[0].source_revision, sourceRevision);
   assert.equal(output[0].record_count, 3);
   assert.equal(output[1].operation, "build");
+  assert.equal(output[1].package_version, RUNTIME_PACKAGE_VERSION);
   assert.equal(output[1].source_revision, sourceRevision);
   assert.equal(output[1].reused, false);
   assert.deepEqual(output[1].bootstrap_projections.map((projection) => projection.target), [
