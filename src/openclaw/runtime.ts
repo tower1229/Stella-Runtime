@@ -256,6 +256,10 @@ const serializeRecentMessage = (value: unknown): string => {
   }
 };
 
+const isRouterConversationMessage = (value: unknown): boolean =>
+  !isRecord(value) || value.role === undefined ||
+  value.role === "user" || value.role === "assistant";
+
 const selectPacketBinding = (
   prompt: string,
   configured: ActiveRunBinding["context"],
@@ -509,7 +513,10 @@ export const registerRuntimeHooks = (
     }
     const prompt = typeof event.prompt === "string" ? event.prompt : "";
     const recentContext = Array.isArray(event.messages)
-      ? event.messages.slice(-4).map(serializeRecentMessage)
+      ? event.messages
+          .filter(isRouterConversationMessage)
+          .slice(-4)
+          .map(serializeRecentMessage)
       : [];
     const inputCharacters = prompt.length + recentContext.reduce(
       (total, item) => total + item.length,

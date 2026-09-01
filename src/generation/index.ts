@@ -409,7 +409,7 @@ const authorityRecordFromNormalized = (value: unknown): AuthorityRecord => {
     if (sections.has(title)) {
       throw new Error("NORMALIZED_RECORD_INVALID");
     }
-    sections.set(title, requireString(item.content, "NORMALIZED_RECORD_INVALID"));
+    sections.set(title, requireText(item.content, "NORMALIZED_RECORD_INVALID"));
   }
   const record: AuthorityRecord = {
     id: requireString(value.id, "NORMALIZED_RECORD_INVALID"),

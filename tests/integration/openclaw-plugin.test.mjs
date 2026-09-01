@@ -21,6 +21,7 @@ import {
   createStateManagementPort,
   prepareStateImportManifest,
 } from "../../dist/state/management.js";
+
 import {
   commitSyntheticPersonalDataRepository,
   commitSyntheticAuthority,
@@ -32,6 +33,11 @@ import {
   ProjectionDeterminismLedger,
   runProjectionProducerConformance,
 } from "../../dist/index.js";
+
+test("OpenClaw Runtime identity comes from the installed package metadata", async () => {
+  const packageMetadata = JSON.parse(await readFile(new URL("../../package.json", import.meta.url)));
+  assert.equal(RUNTIME_PACKAGE_VERSION, packageMetadata.version);
+});
 
 class FakeCommand {
   children = new Map();
@@ -600,12 +606,6 @@ test("OpenClaw sync consumes configured Fitness projection and gates domain drif
     as_of: publication.manifest.source.as_of,
     changed_at: "2026-08-24T00:02:00Z",
   };
-  await writeFile(
-    join(stellaProjectionRoot, "active.json"),
-    jcsCanonicalJson(domainPointer),
-    { mode: 0o600 },
-  );
-
   const runtimeStorage = join(root, "runtime");
   const generationStorage = join(root, "generation-state", "generations");
   const runtimeConfig = {
@@ -695,6 +695,21 @@ test("OpenClaw sync consumes configured Fitness projection and gates domain drif
   const originalLog = console.log;
   console.log = (value) => output.push(JSON.parse(value));
   try {
+    await program.children.get("cognitive").children.get("sync").handler({
+      revision: sourceRevision,
+      json: true,
+    });
+    const emptyPointer = JSON.parse(await readFile(
+      join(runtimeStorage, "active-generation.json"),
+      "utf8",
+    ));
+    assert.equal(emptyPointer.schema_version, "cognitive-runtime.active-generation-pointer/v2");
+
+    await writeFile(
+      join(stellaProjectionRoot, "active.json"),
+      jcsCanonicalJson(domainPointer),
+      { mode: 0o600 },
+    );
     await program.children.get("cognitive").children.get("sync").handler({
       revision: sourceRevision,
       json: true,

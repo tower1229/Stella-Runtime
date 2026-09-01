@@ -217,6 +217,25 @@ test("build reads only the committed Authority subtree from one Personal Data Re
   );
 });
 
+test("Generation verification accepts an explicitly empty Markdown section", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "stella-generation-empty-section-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const authorityDirectory = join(root, "authority");
+  const sourcePath = join(authorityDirectory, "evidence", "src-synthetic-note", "source.md");
+  await writeSyntheticAuthority(authorityDirectory);
+  await writeFile(sourcePath, `${await readFile(sourcePath, "utf8")}\n## Intentionally empty\n`);
+  const sourceRevision = await commitSyntheticAuthority(authorityDirectory);
+
+  const built = await buildGeneration({
+    authorityDirectory,
+    stateDirectory: join(root, "state"),
+    sourceRevision,
+    packageVersion: "0.3.0-empty-section",
+  });
+
+  assert.equal((await verifyGeneration(built.generationDirectory)).valid, true);
+});
+
 test("Authority subtree validation fails closed on symlinks, submodules, nested Git, and traversal", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "stella-generation-subtree-negative-"));
   t.after(() => rm(root, { recursive: true, force: true }));

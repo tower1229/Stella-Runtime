@@ -154,6 +154,29 @@ test("enforce pipeline routes once, reuses binding, and injects an explicit pack
   assert.deepEqual(repeated, first);
 });
 
+test("router input excludes Host system bootstrap and tool messages", async () => {
+  const { hooks, calls } = await register();
+  const result = await hooks.get("before_prompt_build")(
+    {
+      prompt: "Choose",
+      messages: [
+        { role: "system", content: "x".repeat(20_000) },
+        { role: "tool", content: "y".repeat(20_000) },
+        { role: "user", content: "Earlier user message" },
+        { role: "assistant", content: "Earlier assistant reply" },
+      ],
+    },
+    runContext("run-host-bootstrap"),
+  );
+
+  assert.match(result.prependContext, /Synthetic state/);
+  assert.equal(calls.length, 1);
+  const routerPrompt = calls[0].messages[0].content;
+  assert.match(routerPrompt, /Earlier user message/);
+  assert.match(routerPrompt, /Earlier assistant reply/);
+  assert.doesNotMatch(routerPrompt, /x{100}|y{100}/);
+});
+
 test("required retrieval accepts only declared memory refs and revises at most once", async () => {
   const { hooks } = await register({ result: requiredRouterResult() });
   const context = runContext("run-synthetic-2");

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -84,7 +85,17 @@ export type {
   MemoryToolResult,
 } from "./ports.js";
 
-export const RUNTIME_PACKAGE_VERSION = "0.3.0";
+const packageMetadata: unknown = createRequire(import.meta.url)("../../package.json");
+if (
+  typeof packageMetadata !== "object" ||
+  packageMetadata === null ||
+  !("version" in packageMetadata) ||
+  typeof packageMetadata.version !== "string" ||
+  packageMetadata.version.length === 0
+) {
+  throw new Error("RUNTIME_PACKAGE_VERSION_INVALID");
+}
+export const RUNTIME_PACKAGE_VERSION = packageMetadata.version;
 
 export interface CognitiveRuntimeOpenClawComposition {
   readonly cutoverPublication?: NonNullable<
@@ -366,11 +377,24 @@ export const createCognitiveRuntimeOpenClawPlugin = (
         apiConfig,
         runtimeInstanceId: runtimeConfig.instance_id,
       });
-      const projection = await new FileProjectionExchange({
-        layout,
-        instanceId: runtimeConfig.instance_id,
-        ownerId: "runtime-generation-consumer",
-      }).readStellaProjection("fitness_history");
+      let projection: GenerationDomainProjectionInput["projection"];
+      try {
+        projection = await new FileProjectionExchange({
+          layout,
+          instanceId: runtimeConfig.instance_id,
+          ownerId: "runtime-generation-consumer",
+        }).readStellaProjection("fitness_history");
+      } catch (error: unknown) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "ENOENT"
+        ) {
+          return null;
+        }
+        throw error;
+      }
       return { domainId: "fitness", projection };
     };
     const domainProjectionReader = {
