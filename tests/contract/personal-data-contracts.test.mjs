@@ -27,6 +27,23 @@ test("Personal Data locator contract requires one real instance and absolute rep
   }
 });
 
+test("Personal Data Repository initialization contract is closed and instance-bound", () => {
+  const manifest = {
+    schema_version: "stella.personal-data-repository/v1",
+    instance_id: "instance-synthetic",
+    layout_version: "stella.personal-data-layout/v1",
+    initialized_at: "2026-09-01T00:00:00.000Z",
+  };
+  assert.deepEqual(validateContract("personal-data-repository", manifest), {
+    valid: true,
+    errors: [],
+  });
+  assert.equal(validateContract("personal-data-repository", {
+    ...manifest,
+    unexpected: true,
+  }).valid, false);
+});
+
 test("projection pointer, manifest, and identity context contracts are closed and bounded", async () => {
   for (const contract of [
     "context-projection-pointer",

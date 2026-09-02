@@ -26,6 +26,7 @@ import type {
 } from "../generation/index.js";
 import {
   FileProjectionExchange,
+  initializePersonalDataRepository,
   resolvePersonalDataLocator,
 } from "../personal-data/index.js";
 import {
@@ -756,6 +757,34 @@ export const createCognitiveRuntimeOpenClawPlugin = (
               operation: "metrics",
               metrics: runtimeController?.metrics() ?? null,
               health: healthMonitor?.metrics() ?? null,
+            }));
+          });
+
+        const personalData = cognitive
+          .command("personal-data")
+          .description("Manage the configured Personal Data Repository");
+
+        personalData
+          .command("initialize")
+          .description("Explicitly initialize the configured Personal Data Repository")
+          .option("--json", "Emit a machine-readable result")
+          .action(async (options) => {
+            requireJson(options);
+            if (runtimeConfig === null || api.runtime.config === undefined) {
+              throw new Error("RUNTIME_CONFIG_REQUIRED");
+            }
+            const result = await initializePersonalDataRepository({
+              apiConfig: api.runtime.config.current(),
+              runtimeInstanceId: runtimeConfig.instance_id,
+            });
+            console.log(JSON.stringify({
+              operation: "personal_data_initialize",
+              created: result.created,
+              instance_id: result.manifest.instance_id,
+              repository: result.layout.repository,
+              manifest_path: result.manifestPath,
+              layout_version: result.manifest.layout_version,
+              initialized_at: result.manifest.initialized_at,
             }));
           });
 

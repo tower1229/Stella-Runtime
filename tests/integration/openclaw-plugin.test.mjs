@@ -131,6 +131,61 @@ test("OpenClaw discovers cognitive self-check through the plugin entry", async (
   ]);
 });
 
+test("OpenClaw exposes explicit Personal Data Repository initialization", async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "stella-openclaw-personal-data-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repository = join(root, "personal-data");
+  const authority = join(repository, "stella", "authority");
+  const runtimeConfig = {
+    schema_version: "cognitive-runtime.instance-runtime-config/v2",
+    instance_id: "instance-synthetic",
+    mode: "off",
+    runtime_storage: join(root, "runtime"),
+    generation_storage: join(root, "generations"),
+    host: { agent_id: "main", eligible_scope: ["private_main_session"] },
+    authority_owner: { provider: "telegram", actor_id: "owner-synthetic" },
+    limits: { max_active_runs: 1, drain_timeout_ms: 1_000 },
+    adapters: { authority_checkout: authority, host_retrieval: "openclaw-memory" },
+  };
+  const hostConfig = {
+    plugins: { entries: { "cognitive-runtime": { config: {
+      runtime: runtimeConfig,
+      stella: {
+        schema_version: "stella.personal-data-locator/v1",
+        instance_id: "instance-synthetic",
+        personal_data_repository: repository,
+      },
+    } } } },
+  };
+  const program = new FakeCommand();
+  await plugin.register({
+    pluginConfig: { runtime: runtimeConfig },
+    runtime: {
+      version: "2026.7.1-2",
+      config: { current: () => hostConfig },
+      llm: { complete: async () => ({}) },
+    },
+    registerCli(registrar) { return registrar({ program }); },
+  });
+
+  const initialize = program.children.get("cognitive")
+    .children.get("personal-data").children.get("initialize");
+  const output = [];
+  const originalLog = console.log;
+  console.log = (value) => output.push(JSON.parse(value));
+  try {
+    await initialize.handler({ json: true });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(output[0].operation, "personal_data_initialize");
+  assert.equal(output[0].created, true);
+  assert.equal(output[0].instance_id, "instance-synthetic");
+  assert.equal(output[0].repository, repository);
+  assert.equal(JSON.parse(await readFile(join(repository, "stella", "repository.json"), "utf8")).instance_id, "instance-synthetic");
+});
+
 test("self-check rejects an unlisted Host without Runtime configuration", async () => {
   const program = new FakeCommand();
   await plugin.register({

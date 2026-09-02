@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
-import { resolvePersonalDataLocator } from "../../dist/index.js";
+import {
+  initializePersonalDataRepository,
+  resolvePersonalDataLocator,
+} from "../../dist/index.js";
 
 const hostConfig = (repository, instanceId = "instance-synthetic") => ({
   plugins: {
@@ -65,6 +68,70 @@ test("locator resolves only the fixed Personal Data layout from public api.confi
       stella: join(repository, "stella", "projections", "stella"),
     },
   });
+});
+
+test("Runtime explicitly initializes an empty Personal Data Repository and is idempotent", async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "stella-initialize-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repository = join(root, "personal-data");
+  const apiConfig = hostConfig(repository);
+
+  const first = await initializePersonalDataRepository({
+    apiConfig,
+    runtimeInstanceId: "instance-synthetic",
+    initializedAt: "2026-09-01T00:00:00.000Z",
+  });
+  const second = await initializePersonalDataRepository({
+    apiConfig,
+    runtimeInstanceId: "instance-synthetic",
+    initializedAt: "2026-09-02T00:00:00.000Z",
+  });
+
+  assert.equal(first.created, true);
+  assert.equal(second.created, false);
+  assert.deepEqual(second.manifest, first.manifest);
+  assert.deepEqual(JSON.parse(await readFile(join(repository, "stella", "repository.json"), "utf8")), {
+    initialized_at: "2026-09-01T00:00:00.000Z",
+    instance_id: "instance-synthetic",
+    layout_version: "stella.personal-data-layout/v1",
+    schema_version: "stella.personal-data-repository/v1",
+  });
+  await resolvePersonalDataLocator({ apiConfig, runtimeInstanceId: "instance-synthetic" });
+});
+
+test("repository initialization does not require the user-owned parent directory to be private", async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "stella-initialize-parent-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await chmod(root, 0o755);
+  const repository = join(root, "personal-data");
+
+  const result = await initializePersonalDataRepository({
+    apiConfig: hostConfig(repository),
+    runtimeInstanceId: "instance-synthetic",
+    initializedAt: "2026-09-01T00:00:00.000Z",
+  });
+
+  assert.equal(result.created, true);
+});
+
+test("repository initialization rejects a conflicting existing manifest without overwriting it", async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "stella-initialize-conflict-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repository = await createLayout(root);
+  const manifestPath = join(repository, "stella", "repository.json");
+  const conflicting = `${JSON.stringify({
+    initialized_at: "2026-09-01T00:00:00.000Z",
+    instance_id: "another-instance",
+    layout_version: "stella.personal-data-layout/v1",
+    schema_version: "stella.personal-data-repository/v1",
+  })}\n`;
+  await writeFile(manifestPath, conflicting, { mode: 0o600 });
+
+  await assert.rejects(initializePersonalDataRepository({
+    apiConfig: hostConfig(repository),
+    runtimeInstanceId: "instance-synthetic",
+  }), /PERSONAL_DATA_REPOSITORY_INSTANCE_MISMATCH/);
+  assert.equal(await readFile(manifestPath, "utf8"), conflicting);
 });
 
 test("locator fails closed on instance mismatch, unsafe permissions, traversal, and symlinks", async (t) => {

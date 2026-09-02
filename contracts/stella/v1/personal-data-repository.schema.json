@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stella.personal-data-repository/v1",
+  "title": "Stella Personal Data Repository Initialization",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "instance_id", "layout_version", "initialized_at"],
+  "properties": {
+    "schema_version": { "const": "stella.personal-data-repository/v1" },
+    "instance_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "layout_version": { "const": "stella.personal-data-layout/v1" },
+    "initialized_at": { "type": "string", "format": "date-time" }
+  }
+}

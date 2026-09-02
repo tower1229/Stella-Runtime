@@ -148,6 +148,7 @@ All structured operational commands require `--json` where offered.
 | --- | --- |
 | `openclaw cognitive self-check` | Read-only Authority-input validation plus Runtime storage, Plugin discovery, exact Host/Node, config identity, index/retrieval, and independent Public Corpus health. |
 | `openclaw cognitive metrics --json` | Read bounded Runtime and lifecycle outcome counters without private content. |
+| `openclaw cognitive personal-data initialize --json` | Explicitly create or validate the configured fixed Personal Data Repository layout and its Runtime-owned initialization manifest. |
 | `openclaw cognitive validate --authority DIR --revision SHA --json` | Read-only validation of one exact clean committed Authority Source Revision. |
 | `openclaw cognitive build --authority DIR --state DIR --revision SHA [--bootstrap USER.md,MEMORY.md] --json` | Build or reuse one immutable Generation without activation, optionally deriving Bootstrap projections outside the Generation manifest. |
 | `openclaw cognitive sync --revision SHA [--cutover-plan FILE] --json` | Build or reuse the configured committed Authority target, optionally enforce one checksummed Instance Cutover Plan, drain Eligible Runs, prove the Host transition, write its Receipt, and switch the Active Pointer last. |

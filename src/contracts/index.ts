@@ -34,6 +34,7 @@ export type { ActivationReceipt } from "./generated/activation-receipt.schema.js
 export type { InstanceRuntimeConfig } from "./generated/instance-runtime-config.schema.js";
 export type { InstanceCutoverPlan } from "./generated/instance-cutover-plan.schema.js";
 export type { StellaPersonalDataLocator } from "./generated/personal-data-locator.schema.js";
+export type { StellaPersonalDataRepositoryInitialization } from "./generated/personal-data-repository.schema.js";
 export type { StellaContextProjectionPointer } from "./generated/context-projection-pointer.schema.js";
 export type { StellaContextProjectionManifest } from "./generated/context-projection-manifest.schema.js";
 export type { StellaIdentityContext } from "./generated/identity-context.schema.js";
@@ -73,6 +74,7 @@ const contractNames = [
   "instance-runtime-config",
   "instance-cutover-plan",
   "personal-data-locator",
+  "personal-data-repository",
   "context-projection-pointer",
   "context-projection-manifest",
   "identity-context",
@@ -114,6 +116,7 @@ for (const name of contractNames) {
     ? "../../contracts/v3"
     : [
     "personal-data-locator",
+    "personal-data-repository",
     "context-projection-pointer",
     "context-projection-manifest",
     "identity-context",

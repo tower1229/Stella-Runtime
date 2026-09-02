@@ -108,6 +108,7 @@ export type {
   InstanceRuntimeConfig,
   InstanceCutoverPlan,
   StellaPersonalDataLocator,
+  StellaPersonalDataRepositoryInitialization,
   StellaContextProjectionPointer,
   StellaContextProjectionManifest,
   StellaIdentityContext,
@@ -130,6 +131,7 @@ export {
   ProjectionDeterminismLedger,
   buildRuntimeIdentityProjection,
   FileProjectionExchange,
+  initializePersonalDataRepository,
   resolvePersonalDataLocator,
   runProjectionConsumerConformance,
   runProjectionProducerConformance,
@@ -172,6 +174,8 @@ export type {
   ProjectionPublishFailpoint,
   ProjectionPublishResult,
   ProjectionRecoveryResult,
+  InitializePersonalDataRepositoryOptions,
+  PersonalDataRepositoryInitializationResult,
   ResolvePersonalDataLocatorOptions,
 } from "./personal-data/index.js";
 export {
